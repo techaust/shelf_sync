@@ -93,7 +93,102 @@ _(Tier B: none.)_
 _(none: the designer does the one backend change)_
 
 ## 4. Designer report
-_(empty)_
+_(designer, Opus 5.5 high, 2026-10-27; branch `feat/m1a.3-app-shell` from `872dea4` + the brief `15b667a`; not pushed)_
+
+**Skills and tools loaded:** `frontend-design` first (before any screen or component). It changed two things: the visual direction is pinned by the approved mockup, so the one bold element stays the diagonal cut on the active nav item and nothing new is decorated; and every new state (signed out, no answer, not found, nothing connected) was written as "what happened + what to do", with an action only where it works today. `dataviz`: not loaded (no chart, KPI tile or meter is built; the trust-ramp bar is the mockup's existing decorative meter, `aria-hidden`, with the count in text). Context7 for every library (below). Built-in browser (`mcp__Claude_Browser__*`) for every visual check. No Playwright MCP, no headless Chrome.
+
+**Files** (all new unless marked):
+- `backend/shelfsync/api/app.py` (changed): the static mount (`_UiMount`, `_mount_ui`, `UI_DIR`, `create_app(..., ui_dir=UI_DIR)`).
+- `tests/support.py` (changed: `make_harness(ui_dir=None)`), `tests/test_guard.py` (changed: `ALLOWED_OUTSIDE_API = {""}`, route-table tests run with and without the mount, a test that the mount is the only route outside `/api`), `tests/test_static_ui.py` (new, 25 tests).
+- `.github/workflows/checks.yml` (changed): the `ui` job.
+- `frontend/`: `package.json`, `package-lock.json` (199 integrity hashes), `.npmrc`, `index.html`, `vite.config.ts`, `vitest.config.ts`, `tsconfig.json`, `biome.json`, `playwright.config.ts`; `scripts/sync-tokens.mjs`, `scripts/schema.mjs`, `scripts/export_openapi.py`; `e2e/server.py`, `e2e/support.ts`, `e2e/shell.spec.ts`; `public/favicon.svg`, `public/favicon.ico` (copied by script); `src/main.tsx`; `src/api/` (`client.ts`, `session.ts`, `placeholder.ts`, `schema.d.ts` generated, two test files); `src/app/` (`App.tsx`, `router.tsx`, `nav.ts`); `src/components/` (`AppShell`, `AppBar`, `SideNav`, `StatusStrip`, `HealthArea`, `StoreBadge`, `PauseButton`, `ThemeMenu`, `Tip`, `Page` with `EmptyState`, `useCollapsedNav`); `src/screens/` (`screens.tsx`, `SessionGate.tsx`); `src/theme/` (`theme.ts`, `early.ts`, `useTheme.ts`, test); `src/lib/time.ts`; `src/styles/` (`app.css`, `fonts.css`, `generated/tokens.css`, `generated/theme.css`, `generated/shelfsync-tokens.css`, `contrast.test.ts`, `tokens.test.ts`); `src/assets/brand/logo-primary-dark.svg` (copied by script).
+- `docs/05-design-system-appendix/screenshots/m1a.3/` (16 images) and this §4.
+
+**Decisions inside the brief:**
+- **Tokens: copied by script, not imported.** `npm run tokens` (`scripts/sync-tokens.mjs`) copies `brand/generated/tokens.css` byte for byte, generates the Tailwind `@theme` from its light `:root` block (`--*: initial` first, so no Tailwind default colour or size exists) and the ShelfSync token layer (`generated/shelfsync-tokens.css`) from `brand/tokens.json`, and copies the dark lockup and the favicons. Why a copy: Vite, Tailwind and Biome then read only `frontend/`, and `npm run build` runs `sync-tokens.mjs --check` first, so a copy out of step with `brand/` fails the build instead of shipping; a Vitest test also compares the copy with `brand/` byte for byte. Tailwind's theme layer holds the light values; the unlayered `tokens.css` after it holds the same values plus the dark ones, so every utility follows the theme.
+- **The ShelfSync token layer** (one generated file): app-bar tokens (`ink-900` light, `ink-750` dark; mist and `ink-300`), the `.tone-dark` scope (every semantic dark value), the fixed sizes from `tokens.json` (`--app-text-title` 36 px = `display-2.min`, `--app-text-kpi` 28 px = `h2.min`), code at 14 px (`--app-text-code`, `text.sm`), `--app-bar-height`, `--app-cut`, and the twelve `color-mix()` amounts from P3.4 §4 as `--tint-*` percentages (a mix that names `--tone` can't be resolved on `:root`, so components mix with these amounts).
+- **Fonts:** `@font-face` for "Archivo" (variable, weight and width axes) and "IBM Plex Mono" 400/500, Latin and Latin Extended, pointing at the pinned `@fontsource` files; Vite bundles them as files. Declared by hand (not the packages' CSS) because the packages name the family "Archivo Variable" and the brand's stacks say "Archivo".
+- **Routing: hash routes** (`#/review`), not a server fallback. The server serves files only, so a refresh asks for `/`; there is no catch-all that could ever answer under `/api`. The sign-in fragment is taken out before the router exists.
+- **Static mount:** `_UiMount` at `/` declines every `/api` path. Found by test: a plain mount at `/` took any `/api` request whose route exists with another method (Starlette keeps looking after a partial match), so GET on a POST-only route became the files' 404 instead of the route's 405. Mounted last, inside `GuardMiddleware` and the headers; without `frontend/dist/index.html` the app serves the API only and logs one line (`UI files not found, so only the API is served (looked in …)`). `ui_dir=None` (most tests) is API-only and silent.
+- **Theme before first paint:** `src/theme/early.ts` is the first import of `main.tsx` and sets `data-theme` before React renders (no inline script). Until it runs the stylesheet already follows Windows, and the page is empty. Residual: a manual override that differs from Windows can show one frame of the Windows background before the module runs; only a render-blocking classic script file would close that.
+- **Unit tests run in Node** (no DOM package is in the 22 pins), so `theme.ts`, `client.ts` and `session.ts` take their window objects as arguments; components are checked by Playwright + axe (CI) and in the built-in browser.
+- **"Pause everything"** is `aria-disabled` (not `disabled`), so keyboard users reach it and hear the tooltip.
+- **Count badges:** static 0 from the placeholder; a 0 shows no badge, as in the approved mockup (the component shows the number and reads "Review, 3 waiting" when it isn't 0).
+- **Sign-in in an already-open tab:** a `#t=` that arrives by `hashchange` (no page load) goes through the same steps (outside the contract's letter, same rules).
+
+**Context7 and docs, and what changed because of them:**
+- Vite 8 (`/vitejs/vite/v8.0.10`): small assets become `data:` URLs by default, which `font-src 'self'` and `img-src 'self'` refuse → `assetsInlineLimit: 0`; the module-preload polyfill is injected into the entry chunk (not inline) → turned off anyway (Edge and Chrome support it).
+- Tailwind 4 (`/tailwindlabs/tailwindcss.com`): `@theme { --*: initial }` clears the defaults; `@theme inline` would bake light values into utilities, so the non-inline theme plus the unlayered `tokens.css` is used.
+- MDN (`/mdn/content`): without `'unsafe-inline'`, `style-src` blocks `<style>` elements and `style=""` in HTML, and also `setAttribute("style", …)` and `style.cssText` from script; single properties set through the CSSOM (`el.style.x`, `setProperty`) are allowed. React DOM 19.3 writes styles with `style[name] =` and `setProperty` (read in `react-dom-client.production.js`; Context7's React results didn't cover it).
+- Radix (`/radix-ui/primitives`, and the installed source): the menu's modal mode wraps content in `react-remove-scroll`, whose `react-style-singleton` creates a `<style>` element → refused by the CSP. So the theme menu is `modal={false}`; checked in the browser: 0 `<style>` elements with the menu open, no CSP report. Tooltip and Popper only set styles through React's `style` prop (CSSOM). **`@radix-ui/react-dialog` (pinned, unused here) uses the same scroll lock for every modal dialog** (open question 3).
+- React Router 8 (`/remix-run/react-router`): `createHashRouter` + `RouterProvider` from `react-router`; `NavLink` sets `aria-current="page"`.
+- TanStack Query 5: `retry` and `refetchOnWindowFocus` defaults; only a request that got no answer is retried (twice).
+- Lucide 1.x (`/websites/lucide_dev_guide`): icons are `aria-hidden` by default; named imports, tree-shaken (the bundle is 466 KB, 149 KB gzip, for React, React Router, Radix, TanStack Query and the 26 icons used).
+- Vitest 5: `environment: "node"`, `unstubGlobals`; Playwright 1.64: `webServer`, `emulateMedia({ colorScheme })`, console and `pageerror` events; @axe-core/playwright: `withTags`; `bypassCSP` stays false. openapi-typescript 7: the Node API (`openapiTS` + `astToString`). Biome 2.5: `files.includes` negations, `vcs.root`, `css.parser.tailwindDirectives`.
+
+**Commands and results** (heavy ones through `tools/heavy.sh`, logs in `.logs/m1a.3-*.log`):
+- `npm install --prefix frontend` (first lock): 146 packages, 0 vulnerabilities. `npm ls --depth=0`: exactly the 22 pinned versions. Then `npm ci --prefix frontend`: 146 packages, 0 vulnerabilities.
+- `npx biome ci .`: 42 files, no findings. `npx tsc --noEmit -p tsconfig.json`: no errors.
+- `npm test` (Vitest): **5 files, 223 tests passed** (client 24, session 27, theme 15, contrast 101, tokens 56).
+- `npm run build`: tokens and brand files in step (6 files); `dist/` holds `index.html`, the JS and CSS, 4 woff2, the logo SVG, the favicons; no `data:` URL in the CSS or JS.
+- `npm audit --omit=dev --audit-level=high`: 0 vulnerabilities. `npm run schema:check`: current. `npm run tokens:check`: in step.
+- `npx playwright test --list`: 17 tests listed (config and specs load). **Not run** (CI only, owner's rule).
+- `uv sync --locked`: ok. `uv run ruff check`: all passed. `uv run ruff format --check`: 56 files formatted. `uv run mypy`: no issues in 26 files. `uv run pytest`: **450 passed, 2 skipped, 9 deselected**. `coverage report --include=backend/shelfsync/secure/* --fail-under=90`: 100 %. `uv run bandit -r backend`: no issues.
+- `npm ci --prefix brand` then `npm test --prefix brand`: **221 passed**.
+- In the built-in browser, backend `frontend/e2e/server.py` on 127.0.0.1:47699 serving the build, test token in memory, tickets from the ticket route: sign-in with a real ticket works (the address becomes `/#/`; `localStorage` empty; `document.cookie` empty, the cookie is HttpOnly); a refresh stays signed in; no ticket shows the signed-out state; **no CSP violation and no `<style>` element** on any screen or with the menu and tooltips open; every resource from 127.0.0.1:47699; Archivo loaded from the bundle. Console: only "Failed to load resource" 401 (signed out) and 405 (the session check, open question 1). Keyboard pass: Skip to content, logo, Theme, Pause everything, the seven nav items, Collapse menu, the two strip tooltips, the screen's action, each with the 2 px focus ring; Enter on the theme button opens the menu on "Same as Windows", Enter picks it and focus returns. At 1024 px the nav is collapsed, nothing overflows, and the strip is one line (it ends at 843 px). Server stopped afterwards.
+
+**Screenshots** (built-in browser; `.jpg`, also in `.logs/shots/m1a.3/`):
+- `docs/05-design-system-appendix/screenshots/m1a.3/01-shell-dashboard-1440-light-whole.jpg`: the whole 1440 × 900 shell, scaled to 800 × 500
+- `…/02-shell-dashboard-1440-light.jpg`, `…/03-shell-dashboard-1440-dark.jpg`: Dashboard, light and dark
+- `…/04-upload-1440-light.jpg`, `…/05-review-1440-light.jpg`, `…/06-review-1440-dark.jpg`, `…/07-catalog-1440-light.jpg`, `…/08-cleanup-1440-light.jpg`, `…/09-activity-1440-light.jpg`, `…/10-settings-1440-light.jpg`: each screen's title and empty state
+- `…/11-review-1440-light-override-while-windows-dark.jpg`: the Light override while Windows is dark
+- `…/12-skip-link-focus-1440-dark.jpg`: the skip link with its focus ring
+- `…/13-review-1024-collapsed-light.jpg`, `…/14-review-1024-collapsed-dark.jpg`: the nav collapsed at 1024 px
+- `…/15-signed-out-1440-light-whole.jpg`, `…/16-signed-out-1440-dark-whole.jpg`: the signed-out state
+- **Limits:** the pane returns at most 800 × 500 per capture. Files 01, 15 and 16 are the whole viewport scaled down; the others are the top-left 800 × 500 CSS px at 1:1 (the right end of the app bar, with Theme and Pause everything, isn't in them; it was checked through the page's DOM and computed styles instead). The 2× full-page capture helper can't run under the app's CSP (open question 4).
+
+**Differences from the mockup, with reasons:**
+1. No "?" help button: the help panel isn't built; a button that does nothing would mislead.
+2. A Theme button in the app bar (Monitor, Sun or Moon icon): the brief puts the override there; the mockup had it only in its controls bar and Settings, App.
+3. Health area with nothing connected: one dashed, muted chip "No stores or storage yet" (the mockup always had at least the S3 chip).
+4. "Pause everything": dashed border and muted label, `aria-disabled`, tooltip.
+5. No "N products in the catalog" under the nav and no "Sample data" tag: there's no data and nothing is sample.
+6. Empty states keep the mockup's words but show an action only where it works now: Dashboard and Review "Open Upload", Activity "Upload a ZIP"; no "Add a store" (Catalog), "Sync now" and "Last check at" (Cleanup), or "Drop ZIPs above, or use Browse files" (Upload); the Dashboard shows only the latest-updates empty card (KPI tiles, drop zone, connections and chart are M3 to M5).
+7. Status strip: "Last sync not yet" (new), trust ramp 0 / 50; the mockup's measured compaction steps are replaced by two CSS breakpoints (the meter and the chip latencies hide below 1152 px); at 1024 px it stays on one line.
+8. The skip link is a button (an `<a href="#main">` would be read by the hash router as a screen).
+9. New: the signed-out, no-answer and refused panels, and a "Not found" screen.
+10. Empty-state text up to 64 characters wide with balanced lines (the mockup's 52 broke the Dashboard line one word short).
+
+**Placeholder data** (`src/api/placeholder.ts`, marked PLACEHOLDER): counts 0 and 0; no stores; no storage; auto-apply off for the trust ramp; trust ramp 0 / 50 (fresh install; 50 from 03 D-6); last sync none; sync every 15 minutes (03 SYNC-01 default, named in Cleanup's empty state); next snapshot 02:00 (03 SYNC-03 default). No sample data anywhere. In tests only: the two stores' dot colours from 05 §2.3 (contrast test) and a throwaway ticket-shaped string.
+
+**Proposed wording for 13** (new strings; everything else is the mockup's or 13's):
+- Pause everything, tooltip until M5: "Nothing runs yet, so there's nothing to pause."
+- Health area, nothing connected: "No stores or storage yet"
+- Status strip before the first sync: "Last sync **not yet**"
+- No answer at sign-in: "ShelfSync didn't answer, so this tab can't sign in." + "Open ShelfSync from the tray icon or the Start menu." + button "Try again"
+- Refused at sign-in: "ShelfSync refused to sign this tab in (HTTP <status>)." + the same line
+- Unknown address in the app: title "Not found", "There's no screen at this address.", button "Open Dashboard"
+- Theme menu: label "Theme"; button name "Theme: <Same as Windows | Light | Dark>" (items from the mockup's Settings, App)
+- Collapsed-nav tooltips: each item's own label; tab title "<Screen>, ShelfSync"
+
+**`.gitignore` lines for the lead:** `frontend/playwright-report/` and `frontend/test-results/` (Playwright output). `frontend/node_modules` and `frontend/dist` are already covered by the existing `node_modules/` and `dist/` lines (checked with `git status`).
+
+**Not verified:**
+- Playwright + axe, the CSP-violation test and the keyboard test: written and listed, **not run** (CI only); CI: **not run on GitHub yet**. axe was not run locally either.
+- `tsc` checks `src/` only: `@types/node` isn't in the pins, so `playwright.config.ts`, `vite.config.ts` and `e2e/*.ts` aren't type-checked (Playwright and Vite compile them; Biome lints them).
+- Reduced motion and forced colours: checked in the code only (the duration tokens go to 0 ms and an unlayered rule turns transitions off), not emulated.
+- Screenshots are 800 × 500 pane captures (see Limits), not 2× full-page images; dark shots exist for Dashboard and Review only (all seven routes in both themes are in the Playwright axe test).
+- The ticket never in logs: covered by the unit tests (console spied, storage stubbed, error text and state checked) and by the backend's existing never-logged tests; the browser console was read and holds no ticket.
+- Linux: nothing ran on Linux; the UI job's `uv run` and `npm ci` steps are as in the other jobs.
+
+**Open questions for the lead:**
+1. **"Am I signed in?" has no route.** Without a ticket (refresh, second tab) the page must know whether its cookie is still good. The contract has no such route, and adding one is the builder's lane. Until there is one, the page sends `GET /api/session/reset-token` (`SESSION_PROBE_PATH`, one place): 401 means signed out, 405 means the cookie got through (GET never resets anything). It works, but Chrome logs the 405 as a console error on every refresh, and the Playwright fixture has to excuse 401/405 on those two paths. Recommended: the builder adds `GET /api/session` (204 signed in, 401 `signed_out`, no body), then the probe and the excuse go.
+2. **"A test ticket issued in-process":** `create_app` keeps its `SessionStore` inside, so the Playwright server (`e2e/server.py`) holds a throwaway token in memory and each test asks the real ticket route for a fresh ticket, as the launcher does (tickets last 60 s, so one ticket made at start-up couldn't serve 17 tests). Nothing is loosened. Confirm that reading.
+3. **Radix Dialog and the CSP:** every modal Radix Dialog (and a modal DropdownMenu) injects a `<style>` element, which `style-src 'self'` refuses (the scroll lock still works through other means, but the browser reports a violation and the Playwright test fails). It matters from the first ConfirmDialog (M2+). Options for the lead: the native `<dialog>` element for modals, or Radix with `modal={false}` and our own focus handling; loosening the CSP isn't proposed.
+4. **Screenshots under the CSP:** the P3.5 capture helper draws through `data:`/`blob:` images and posts to a second port; the app's CSP refuses both, by design. If 2× full-page images of the real app are wanted, the lead's pane can take them, or a later task builds a capture path that doesn't need the page's permission.
+5. **Where the installer puts the UI:** `UI_DIR` is the source layout (`<repo>/frontend/dist`); M1b's packaging decides the installed path.
+6. A Playwright browser (chromium 1248, dated 2026-10-11, from another project) already exists in `%LOCALAPPDATA%\ms-playwright` and matches Playwright 1.64's revision. Not used here; noted so nobody downloads a second one.
+7. The Playwright test server logs its refusals ("request refused by the session check: GET /api/session/reset-token") to stderr through Python's handler of last resort, because it doesn't set up ShelfSync's log file. Test-only, path and method only.
 
 ## 5. Review
 _(empty)_
