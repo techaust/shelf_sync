@@ -3,6 +3,7 @@
 
 import logging
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -43,32 +44,35 @@ def toast_text_fields(message: str) -> list[str | None]:
     return [lines[0], lines[1], "\n".join(lines[2:])]
 
 
-def _real_toaster() -> Any:
-    """The windows-toasts toaster. `InteractableWindowsToaster` with no AUMID uses the one Windows already knows
-    (Command Prompt's) and puts "ShelfSync" in the toast's attribution line. Registering ShelfSync's own
-    AppUserModelID (so the toast carries ShelfSync's name and icon) is M1b (V14)."""
-    from windows_toasts import InteractableWindowsToaster
+_toaster: Any = None
+_toaster_lock = threading.Lock()
 
-    return InteractableWindowsToaster(APP_NAME)
+
+def show_toast(fields: list[str | None]) -> None:
+    """Show one toast through windows-toasts (Windows only). `InteractableWindowsToaster` with no AUMID uses the one
+    Windows already knows (Command Prompt's) and puts "ShelfSync" in the toast's attribution line. Registering
+    ShelfSync's own AppUserModelID, so the toast carries ShelfSync's name and icon, is M1b (V14)."""
+    global _toaster
+    from windows_toasts import InteractableWindowsToaster, Toast
+
+    with _toaster_lock:
+        if _toaster is None:
+            _toaster = InteractableWindowsToaster(APP_NAME)
+        toaster = _toaster
+    toaster.show_toast(Toast(fields))
 
 
 class ToastNotifier:
     """Shows each message as a Windows toast, and also writes it to the log. It never raises: a toast that can't be
     shown (the service is off, Focus Assist, no desktop) is logged and the app carries on."""
 
-    def __init__(self, toaster_factory: Callable[[], Any] | None = None) -> None:
-        self._factory = toaster_factory or _real_toaster
-        self._toaster: Any = None
+    def __init__(self, show: Callable[[list[str | None]], None] = show_toast) -> None:
+        self._show = show
 
     def notify(self, message: str) -> None:
         _log.warning(message)
         try:
-            from windows_toasts import Toast
-
-            if self._toaster is None:
-                self._toaster = self._factory()
-            toast = Toast(toast_text_fields(message))
-            self._toaster.show_toast(toast)
+            self._show(toast_text_fields(message))
         except Exception as error:
             # Not the message again, and nothing from the exception beyond its type
             _log.warning("A notification couldn't be shown (%s)", type(error).__name__)

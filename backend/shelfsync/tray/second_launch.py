@@ -62,10 +62,10 @@ def read_runtime(paths: DataPaths) -> Running | None:
     return Running(port, pid)
 
 
-def make_client() -> httpx.Client:
+def make_client(transport: httpx.BaseTransport | None = None) -> httpx.Client:
     """A client for ShelfSync's own address only: no proxy or other settings from the environment (a proxy variable
-    would send the install token to the proxy), no redirects."""
-    return httpx.Client(trust_env=False, follow_redirects=False, timeout=_HTTP_TIMEOUT_SECONDS)
+    would send the install token to the proxy), no redirects. `transport` is for tests."""
+    return httpx.Client(transport=transport, trust_env=False, follow_redirects=False, timeout=_HTTP_TIMEOUT_SECONDS)
 
 
 def answers_as_shelfsync(client: httpx.Client, port: int) -> bool:
