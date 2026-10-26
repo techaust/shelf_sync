@@ -191,7 +191,27 @@ _(designer, Opus 5.5 high, 2026-10-27; branch `feat/m1a.3-app-shell` from `872de
 7. The Playwright test server logs its refusals ("request refused by the session check: GET /api/session/reset-token") to stderr through Python's handler of last resort, because it doesn't set up ShelfSync's log file. Test-only, path and method only.
 
 ## 5. Review
-_(empty)_
+**Review** _(reviewer, Opus 5.5 high, `code-review` + `security-review` by hand on `872dea4..3d6007e`, visual review in the built-in browser, 2026-10-27)_ **SEND BACK** for one high (expected APPROVE once fixed). No high-confidence vulnerability; static mount, sign-in, CSP, tokens, landmarks and the CI job checked sound; geometry matches the mockup (app bar 56, nav 248, items 44). Ran: `npm ci`, Biome, tsc, Vitest 223, build, `schema:check`, `npm audit` 0, `pytest` 450 passed. Not run: Playwright and axe (CI only). Note: `frontend-design` was not actually loaded by the reviewer; the visual review used 05 and the mockup directly.
+
+**Triage** _(lead, Opus 5.5 medium, 2026-10-27; Tier B)_
+
+| # | Sev | Finding | Decision |
+|---|---|---|---|
+| 1 | H | Theme menu highlight invisible in forced colours | **Fix now:** an outline on `.menu__item[data-highlighted]` (and `Highlight` in the forced-colours block) |
+| 2 | M | `#t=` in a signed-in tab reaches the router (`popstate` fires before `hashchange`) | **Fix now:** a capture-phase `popstate` listener on `window`, registered before the router, strips `#t=`; e2e case for a signed-in tab |
+| 3 | M | Signed-out and error screens don't follow a Windows theme change | **Fix now:** "system" sets no `data-theme`; CSS media queries do it (dark-only rules moved to the media-query form) |
+| 4 | M | The page has no `Cache-Control`; after an update a cached `index.html` asks for old assets | **Fix now:** `Cache-Control: no-cache` outside `/api`, `public, max-age=31536000, immutable` on `/assets/*` (hashed names); tests |
+| 5 | L | "Try again" can't succeed after a failed ticket sign-in | **Fix now:** hide it when the attempt was a ticket |
+| 6 | L | Old hash router never disposed | **Fix now:** `router.dispose()` in cleanup |
+| 7 | L | Weak tests: ticket-order test checks its own order; app-bar contrast uses palette names; forced colours and reduced motion untested | **Fix now:** test `main.tsx`'s real order; contrast test reads the generated `--color-appbar-*` mapping; Playwright cases with `forcedColors: "active"` and `reducedMotion: "reduce"` (axe plus a visible-focus check on the menu) |
+| 8 | L | IBM Plex Mono ships Latin only | **Fix now:** add the Latin Extended subset from the pinned `@fontsource/ibm-plex-mono` |
+| 9 | L | A kept Playwright trace holds the test token and tickets, uploaded on a public repo | **Fix now:** no traces; keep screenshots and the HTML report only, and check the report holds no `Authorization` header or `#t=` |
+| 10 | L | `NaN%` at a trust-ramp target of 0; `ERROR_CODES` repeats the schema enum; `ui_dir` defaults to `UI_DIR` in tests; `useTheme` writes during render | **Fix now** (derive the codes from the generated schema; tests pass `ui_dir` explicitly; effects, applied once) |
+| 11 | L | Activity empty-state wording differs between 13 and the mockup | **Keep the mockup's text**; the lead updates 13 at integration |
+| — | — | "Am I signed in?" route | **Fix now:** new `GET /api/session/status` (204 signed in, 401 not), a normal session-protected route (no exemption, so the method-blind exemption on `/api/session` isn't widened); remove the `reset-token` workaround from `session.ts`, its tests and `e2e/support.ts`; update `tests/test_static_ui.py`. `api/session.py` may change for this route only |
+| Q | — | Designer's questions | Test server asking the real ticket route: **confirmed**. Radix Dialog: modals use native `<dialog>` with `showModal()`; decided in the M2 brief, CSP unchanged. Pane screenshots are enough; the CSP isn't weakened for a capture helper. `UI_DIR` from `paths.py` and a missing UI as an error in the installed app → **M1b brief**. Badges hidden at 0 as in the mockup. `.gitignore` lines: lead adds at integration |
+
+Fixes by the `designer` at medium, then a re-check (code and visual) by the `reviewer` at medium.
 
 ## 6. Integration notes
 _(empty)_
