@@ -19,7 +19,9 @@ from shelfsync.db.settings import DEFAULTS, get_setting
 from shelfsync.logs import configure_logging, remove_logging
 from shelfsync.paths import DataPaths, create_data_folders, empty_tmp, resolve_data_paths, write_runtime_json
 from shelfsync.platform.notify import LogNotifier, Notifier
+from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT, MAX_PORT, MIN_PORT
+from shelfsync.secure.token import load_or_create_install_token
 
 HOST = "127.0.0.1"  # never anything else (NFR-5, 06 section 2)
 
@@ -111,6 +113,7 @@ def _start(
     serve: Serve,
     retry_seconds: float,
     handler: TimedRotatingFileHandler,
+    secrets: SecretStore,
 ) -> int:
     empty_tmp(paths)
     connection = connect(paths.database)
@@ -120,6 +123,10 @@ def _start(
         handler.backupCount = int(get_setting(connection, "log_retention_days"))
     finally:
         connection.close()
+
+    # The install token is loaded (made on first run) before any port is bound: if the secret store fails, the
+    # start-up fails here and holds no port.
+    load_or_create_install_token(secrets)
 
     ports = candidate_ports(preferred)
     sock = bind_first_free(ports, retry_seconds)
@@ -134,7 +141,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(), sock)
+        serve(create_app(port, secrets), sock)
     finally:
         sock.close()
     return EXIT_OK
@@ -145,8 +152,10 @@ def run(
     notifier: Notifier,
     serve: Serve = serve_with_uvicorn,
     retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
+    secrets: SecretStore | None = None,
 ) -> int:
-    """Start ShelfSync; return the exit code. `serve` is replaceable for tests.
+    """Start ShelfSync; return the exit code. `serve` and `secrets` are replaceable for tests (`secrets` defaults to
+    Credential Manager).
 
     Logging is set up first (with the default retention, adjusted once the settings are read), so every start-up
     failure is logged. A failure is also sent to the notifier in plain words and gets its own exit code.
@@ -155,7 +164,8 @@ def run(
     try:
         create_data_folders(paths)
         handler = configure_logging(paths.logs, int(DEFAULTS["log_retention_days"]))
-        return _start(paths, notifier, serve, retry_seconds, handler)
+        store = secrets if secrets is not None else default_secret_store()
+        return _start(paths, notifier, serve, retry_seconds, handler, store)
     except MigrationError:
         _log.exception("start-up stopped: the database couldn't be migrated")
         notifier.notify(messages.START_FAILED_MIGRATION)

@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
+from shelfsync import server
 from shelfsync.paths import DATA_DIR_ENV, DataPaths
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure.redact import clear_secrets
 
 
 class OutboundNetworkBlocked(AssertionError):
@@ -53,6 +56,21 @@ def no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+@pytest.fixture(autouse=True)
+def no_real_credential_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`server.run()` without a store would use Windows Credential Manager. No test may touch it, except the ones
+    marked `windows`, which build their own throwaway `KeyringSecretStore`."""
+    monkeypatch.setattr(server, "default_secret_store", MemorySecretStore)
+
+
+@pytest.fixture(autouse=True)
+def fresh_redaction_registry() -> Iterator[None]:
+    """Registered secrets are process-wide; each test starts and ends with none."""
+    clear_secrets()
+    yield
+    clear_secrets()
 
 
 @pytest.fixture

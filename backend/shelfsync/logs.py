@@ -7,23 +7,29 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from shelfsync.clock import to_iso
+from shelfsync.secure.redact import redact as _redact
 
 LOG_FILE_NAME = "shelfsync.log"
 
 
 def redact(text: str) -> str:
-    """THE ONE PLACE the redaction plugs in (M1a.2, LOG-01).
+    """THE ONE PLACE the redaction plugs in (LOG-01): delegates to `secure.redact`.
 
-    Every record's final message, with any traceback appended, passes through here (JsonFormatter.format) before
-    it is written. A no-op for now.
+    Every record's final message, with any traceback appended, and the job_id and step fields, pass through here
+    (JsonFormatter.format) before they are written.
     """
-    return text
+    return _redact(text)
+
+
+def _redacted_field(value: object) -> str | None:
+    return None if value is None else redact(str(value))
 
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per line with exactly: time (UTC, ISO 8601, Z), level, job_id, step, message.
 
     job_id and step come from `logger.info("...", extra={"job_id": ..., "step": ...})`; missing ones are null.
+    All three text fields go through `redact`.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -33,8 +39,8 @@ class JsonFormatter(logging.Formatter):
         entry = {
             "time": to_iso(datetime.fromtimestamp(record.created, UTC)),
             "level": record.levelname,
-            "job_id": getattr(record, "job_id", None),
-            "step": getattr(record, "step", None),
+            "job_id": _redacted_field(getattr(record, "job_id", None)),
+            "step": _redacted_field(getattr(record, "step", None)),
             "message": redact(message),
         }
         return json.dumps(entry, ensure_ascii=False)
