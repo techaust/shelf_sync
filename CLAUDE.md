@@ -47,7 +47,7 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 - **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform).
 
 ## Git workflow (from M1a, when the repo exists)
-- `main` is guarded, not protected (GitHub Free has no protection on private repos; [11](docs/11-decisions.md) 2026-10-26): a tracked pre-push hook refuses pushes to `main` and force-pushes; every change goes through a PR that CI must pass, merged with a linear history.
+- `main` is protected on GitHub while the repo is public (PR required, CI must pass, linear history, no force-push; [11](docs/11-decisions.md) 2026-10-26), and a tracked pre-push hook also refuses pushes to `main` and force-pushes.
 - Work on a branch → push → PR → merge on green. **Every push and every PR merge needs the owner's yes until the owner says otherwise.**
 - Agents work in their own git worktrees and never push; the lead integrates.
 - Commit identity (repo-local): `TecHaust Technologies <admin@techaust.com>`. Conventional commits citing PRD IDs, e.g. `feat(match): edition-word penalty [MAT-05]`.
