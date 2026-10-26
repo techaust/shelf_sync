@@ -4,18 +4,14 @@ Every body passes through `redact`, which on these fixed texts changes nothing; 
 less fixed body can't skip it.
 """
 
-import json
-from typing import Literal, cast
+from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from starlette.responses import Response
 
-from shelfsync.secure.headers import apply_security_headers
-from shelfsync.secure.redact import redact
-
-ErrorCode = Literal["forbidden", "signed_out", "bad_token", "bad_ticket", "invalid_request", "internal"]
+from shelfsync.secure.headers import ErrorCode, apply_security_headers, error_response, forbidden, signed_out
 
 
 class ErrorResponse(BaseModel):
@@ -29,19 +25,6 @@ class ApiError(Exception):
         super().__init__(code)
         self.status_code = status_code
         self.code: ErrorCode = code
-
-
-def error_response(status_code: int, code: ErrorCode) -> Response:
-    body = redact(json.dumps({"error": code}, separators=(",", ":")))
-    return Response(content=body, status_code=status_code, media_type="application/json")
-
-
-def forbidden() -> Response:
-    return error_response(403, "forbidden")
-
-
-def signed_out() -> Response:
-    return error_response(401, "signed_out")
 
 
 async def _api_error(request: Request, exc: Exception) -> Response:
@@ -61,6 +44,17 @@ async def _internal_error(request: Request, exc: Exception) -> Response:
     response = error_response(500, "internal")
     apply_security_headers(response.headers, request.scope["path"])
     return response
+
+
+__all__ = [
+    "ApiError",
+    "ErrorCode",
+    "ErrorResponse",
+    "error_response",
+    "forbidden",
+    "register_error_handlers",
+    "signed_out",
+]
 
 
 def register_error_handlers(app: FastAPI) -> None:

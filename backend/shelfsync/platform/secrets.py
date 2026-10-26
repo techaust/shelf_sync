@@ -50,11 +50,15 @@ class MemorySecretStore:
 
 
 if sys.platform == "win32":
-    import keyring
     import keyring.errors
+    from keyring.backend import KeyringBackend
+    from keyring.backends.Windows import WinVaultKeyring
 
     class KeyringSecretStore:
         """Windows Credential Manager through keyring 25.7.0: one entry per secret, under one service name.
+
+        It uses its own `WinVaultKeyring()` instance, never keyring's process-wide backend, so no other backend
+        (and no keyring configuration file or environment setting) can be picked in its place.
 
         Only the entries this adapter is asked about are touched. Any keyring failure becomes a
         `SecretStoreError` that names the failure type and nothing else, so no value or backend detail can leak
@@ -63,22 +67,24 @@ if sys.platform == "win32":
 
         def __init__(self, service: str = SERVICE_NAME) -> None:
             self._service = service
+            # keyring's WinVaultKeyring class is untyped; the base class gives the three methods their types
+            self._backend: KeyringBackend = WinVaultKeyring()  # type: ignore[no-untyped-call]
 
         def get(self, name: str) -> str | None:
             try:
-                return keyring.get_password(self._service, name)  # None when there is no such entry
+                return self._backend.get_password(self._service, name)  # None when there is no such entry
             except Exception as error:
                 raise SecretStoreError(f"Credential Manager read failed ({type(error).__name__})") from None
 
         def set(self, name: str, value: str) -> None:
             try:
-                keyring.set_password(self._service, name, value)
+                self._backend.set_password(self._service, name, value)
             except Exception as error:
                 raise SecretStoreError(f"Credential Manager write failed ({type(error).__name__})") from None
 
         def delete(self, name: str) -> None:
             try:
-                keyring.delete_password(self._service, name)
+                self._backend.delete_password(self._service, name)
             except keyring.errors.PasswordDeleteError:
                 # keyring raises this when no entry was deleted. Fine if it's gone; an error if it's still there.
                 if self.get(name) is not None:

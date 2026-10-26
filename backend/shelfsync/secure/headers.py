@@ -1,4 +1,5 @@
-"""Security headers (06 section 2): one set on every response, and no CORS headers ever.
+"""Security headers (06 section 2): one set on every response, and no CORS headers ever. Also the fixed error
+responses the checks in `secure/` answer with (`api/errors.py` re-exports them, so `secure/` never imports `api/`).
 
 `SecurityHeadersMiddleware` is a pure ASGI middleware that wraps `send`, so it covers every status the app answers
 (200, 204, 401, 403, 404, 405, 422). The one answer that can bypass it is a 500 made by Starlette's outermost
@@ -6,8 +7,16 @@
 handler it registers for that case, through `apply_security_headers`.
 """
 
+import json
+from typing import Literal
+
 from starlette.datastructures import MutableHeaders
+from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from shelfsync.secure.redact import redact
+
+ErrorCode = Literal["forbidden", "signed_out", "bad_token", "bad_ticket", "invalid_request", "internal"]
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; "
@@ -20,6 +29,20 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Referrer-Policy", "no-referrer"),
     ("Cross-Origin-Resource-Policy", "same-origin"),
 )
+
+
+def error_response(status_code: int, code: ErrorCode) -> Response:
+    """A fixed JSON error body that never echoes input. It passes through `redact` like every other output."""
+    body = redact(json.dumps({"error": code}, separators=(",", ":")))
+    return Response(content=body, status_code=status_code, media_type="application/json")
+
+
+def forbidden() -> Response:
+    return error_response(403, "forbidden")
+
+
+def signed_out() -> Response:
+    return error_response(401, "signed_out")
 
 
 def is_api_path(path: str) -> bool:

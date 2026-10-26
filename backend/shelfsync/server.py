@@ -21,7 +21,7 @@ from shelfsync.paths import DataPaths, create_data_folders, empty_tmp, resolve_d
 from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT, MAX_PORT, MIN_PORT
-from shelfsync.secure.token import load_or_create_install_token
+from shelfsync.secure.token import InstallToken
 
 HOST = "127.0.0.1"  # never anything else (NFR-5, 06 section 2)
 
@@ -124,9 +124,9 @@ def _start(
     finally:
         connection.close()
 
-    # The install token is loaded (made on first run) before any port is bound: if the secret store fails, the
-    # start-up fails here and holds no port.
-    load_or_create_install_token(secrets)
+    # The install token is loaded (made on first run) before any port is bound, once, and handed to the app: if the
+    # secret store fails, the start-up fails here and holds no port.
+    install_token = InstallToken(secrets)
 
     ports = candidate_ports(preferred)
     sock = bind_first_free(ports, retry_seconds)
@@ -141,7 +141,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, secrets), sock)
+        serve(create_app(port, secrets, install_token=install_token), sock)
     finally:
         sock.close()
     return EXIT_OK

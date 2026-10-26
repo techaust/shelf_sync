@@ -7,6 +7,7 @@ registered with `redact` the moment it is loaded or reset.
 import hmac
 import secrets
 import threading
+from collections.abc import Callable
 
 from shelfsync.platform.secrets import SecretStore
 from shelfsync.secure.redact import register_secret
@@ -49,7 +50,13 @@ def verify_install_token(presented: str, expected: str) -> bool:
 
 
 class InstallToken:
-    """The running app's copy of the install token, read from the store once and replaced on reset."""
+    """The running app's copy of the install token, read from the store once and replaced on reset.
+
+    One lock covers the check of a presented token together with what follows from it (issuing a ticket), and the
+    reset together with what must follow it (ending every session). So a reset can never fall between a successful
+    check and the ticket it leads to: a token that was valid when it was checked can't get a ticket that outlives
+    the reset.
+    """
 
     def __init__(self, store: SecretStore) -> None:
         self._store = store
@@ -58,11 +65,20 @@ class InstallToken:
 
     def matches(self, presented: str) -> bool:
         with self._lock:
-            expected = self._token
-        return verify_install_token(presented, expected)
+            return verify_install_token(presented, self._token)
 
-    def reset(self) -> None:
-        """Make a new token. If the store fails the old token stays in force and the error is raised."""
-        new_token = reset_install_token(self._store)
+    def run_if_matches[T](self, presented: str, action: Callable[[], T]) -> T | None:
+        """Run `action` and return its result if `presented` is the current token, all under the lock; otherwise
+        return None."""
         with self._lock:
-            self._token = new_token
+            if not verify_install_token(presented, self._token):
+                return None
+            return action()
+
+    def reset(self, then: Callable[[], None] | None = None) -> None:
+        """Make a new token, then run `then` (ending every session), all under the lock. If the store fails the old
+        token stays in force, `then` doesn't run, and the error is raised."""
+        with self._lock:
+            self._token = reset_install_token(self._store)
+            if then is not None:
+                then()

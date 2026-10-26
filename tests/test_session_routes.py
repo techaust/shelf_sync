@@ -199,11 +199,13 @@ def test_a_replayed_ticket_is_401(harness: Harness) -> None:
 
 
 def test_an_expired_ticket_is_401_and_one_just_inside_is_fine(harness: Harness) -> None:
-    """SYS-03: 60 seconds."""
+    """SYS-03: 60 seconds. (The exact boundary, 59.999 against 60.000, is tested on the store in test_sessions.py;
+    here the clock moves by whole seconds so floating-point sums can't blur it.)"""
     late, inside = harness.ticket(), harness.ticket()
-    harness.clock.advance(59.999)
+    start = harness.clock.now
+    harness.clock.now = start + 30.0
     assert harness.client().post("/api/session", json={"ticket": inside}, headers=WRITE_HEADERS).status_code == 204
-    harness.clock.advance(0.001)
+    harness.clock.now = start + 60.0
     response = harness.client().post("/api/session", json={"ticket": late}, headers=WRITE_HEADERS)
     assert response.status_code == 401
     assert response.json() == {"error": "bad_ticket"}

@@ -51,7 +51,12 @@ def test_unknown_empty_and_huge_tickets_and_sessions_are_refused(store: SessionS
 
 
 def test_two_threads_redeeming_the_same_ticket_one_wins(store: SessionStore) -> None:
-    """SYS-03: single use holds under a race. Repeated, so a missing lock would show."""
+    """SYS-03: of two threads redeeming the same ticket at once, exactly one gets it.
+
+    This checks the contract, not the lock: under CPython's GIL `OrderedDict.pop` is atomic by itself, so this test
+    would still pass if the lock were removed. The lock is there so that the check of the time and the removal stay
+    one step on any interpreter.
+    """
     for _ in range(300):
         ticket = store.issue_ticket()
         barrier = threading.Barrier(2)

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from fastapi.routing import iter_route_contexts
+from fastapi.testclient import TestClient
 
 from shelfsync.secure.headers import is_api_path
 from shelfsync.secure.middleware import SESSION_EXEMPT_PATHS
@@ -16,6 +17,13 @@ WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"]
 @pytest.fixture
 def harness() -> Harness:
     return make_harness()
+
+
+def assert_nothing_happened(harness: Harness, client: TestClient, token_before: str) -> None:
+    """The refused request changed nothing: the session still works (a protected path is answered by the router,
+    404, not 401) and the install token is the same."""
+    assert client.get("/api/nope").status_code == 404
+    assert harness.token == token_before
 
 
 # ---- 1. Host --------------------------------------------------------------------------------------------------
@@ -106,11 +114,11 @@ FOREIGN_ORIGINS = [
 def test_a_state_changing_request_with_a_foreign_origin_is_refused(harness: Harness, method: str, origin: str) -> None:
     """SYS-03: cross-origin writes, with a valid session cookie and the CSRF header, still get 403."""
     client = harness.signed_in_client()
+    token = harness.token
     response = client.request(method, "/api/session/reset-token", headers={"Origin": origin, "X-ShelfSync": "1"})
     assert response.status_code == 403
     assert response.json() == {"error": "forbidden"}
-    # and nothing happened: still signed in, the token unchanged
-    assert client.get("/api/health").status_code == 200
+    assert_nothing_happened(harness, client, token)
 
 
 @pytest.mark.parametrize("origin", FOREIGN_ORIGINS)
@@ -149,12 +157,13 @@ def test_a_write_with_no_origin_is_refused(harness: Harness, method: str) -> Non
 def test_a_write_without_the_exact_csrf_header_is_refused(harness: Harness, value: str | None) -> None:
     """SYS-03: POST with cookie and Origin but no X-ShelfSync: 1 gets 403."""
     client = harness.signed_in_client()
+    token = harness.token
     headers = {"Origin": ORIGIN}
     if value is not None:
         headers["X-ShelfSync"] = value
     response = client.post("/api/session/reset-token", headers=headers)
     assert response.status_code == 403
-    assert client.get("/api/health").status_code == 200
+    assert_nothing_happened(harness, client, token)
 
 
 def test_two_csrf_headers_are_refused(harness: Harness) -> None:
@@ -174,23 +183,55 @@ def test_two_csrf_headers_are_refused(harness: Harness) -> None:
 # ---- 4. Session --------------------------------------------------------------------------------------------------
 
 
-def _api_routes(app: Any) -> list[tuple[str, str]]:
-    """Every (method, path) under /api. FastAPI 0.143 keeps included routers as one lazy `_IncludedRouter` object in
+# Routes outside /api that may exist, because they are served without a session (the static UI). Empty today;
+# M1a.3 adds its static mount here, on purpose, in the same change.
+ALLOWED_OUTSIDE_API: set[str] = set()
+
+# The routes that need no session: exactly these three (docs/runs/m1a.2-security.md item 11).
+EXPECTED_EXEMPT_ROUTES = {("GET", "/api/health"), ("POST", "/api/session/ticket"), ("POST", "/api/session")}
+
+
+def _route_contexts(app: Any) -> list[tuple[object, object]]:
+    """(path, methods) of every route. FastAPI 0.143 keeps included routers as one lazy `_IncludedRouter` object in
     `app.routes`, so the walk goes through `fastapi.routing.iter_route_contexts`, the function FastAPI's own
     OpenAPI builder uses, which yields every route with its full path."""
+    return [
+        (getattr(context, "path", None), getattr(context, "methods", None))
+        for context in iter_route_contexts(app.routes)
+    ]
+
+
+def _api_routes(app: Any) -> list[tuple[str, str]]:
+    """Every (method, path) under /api, a path parameter turned into a plain segment."""
     found: list[tuple[str, str]] = []
-    for context in iter_route_contexts(app.routes):
-        path = getattr(context, "path", None)
-        methods = getattr(context, "methods", None)
-        if not isinstance(path, str) or not methods or not is_api_path(path):
-            continue
-        plain = path.replace("{", "").replace("}", "")  # a path parameter becomes a plain segment
-        found.extend((method, plain) for method in sorted(methods))
+    for path, methods in _route_contexts(app):
+        if isinstance(path, str) and is_api_path(path) and isinstance(methods, set):
+            plain = path.replace("{", "").replace("}", "")
+            found.extend((method, plain) for method in sorted(methods))
     return found
 
 
+def test_every_route_is_a_known_kind_under_api_or_on_the_allowlist(harness: Harness) -> None:
+    """SYS-03: nothing slips through the route-table test unseen."""
+    seen = _route_contexts(harness.app)
+    assert seen  # the walk found routes at all
+    for path, methods in seen:
+        assert isinstance(path, str), f"a route with no path ({methods!r}) isn't understood by this test"
+        if is_api_path(path):
+            assert isinstance(methods, set) and methods, f"{path} is under /api but has no methods"
+        else:
+            assert path in ALLOWED_OUTSIDE_API, f"{path} is outside /api and not on the allowlist"
+
+
+def test_the_exempt_routes_are_exactly_the_three_documented_ones(harness: Harness) -> None:
+    """SYS-03: the routes that need no session, as (method, path) pairs, are pinned."""
+    exempt = {(method, path) for method, path in _api_routes(harness.app) if path in SESSION_EXEMPT_PATHS}
+    assert exempt == EXPECTED_EXEMPT_ROUTES
+    assert set(SESSION_EXEMPT_PATHS) == {"/api/health", "/api/session/ticket", "/api/session"}
+
+
 def test_route_table_every_api_route_outside_the_exemption_table_refuses_without_a_cookie(harness: Harness) -> None:
-    """SYS-03: walks app.routes, so a route added in a later milestone is checked without anyone remembering to."""
+    """SYS-03: walks the route table, so a route added in a later milestone is checked without anyone remembering to."""
     routes = _api_routes(harness.app)
     assert ("GET", "/api/health") in routes
     client = harness.client()
@@ -204,11 +245,6 @@ def test_route_table_every_api_route_outside_the_exemption_table_refuses_without
         assert response.json() == {"error": "signed_out"}, (method, path)
         checked += 1
     assert checked >= 1  # at least reset-token today
-
-
-def test_the_exemption_table_is_exactly_the_three_documented_paths() -> None:
-    """SYS-03: docs/runs/m1a.2-security.md item 11."""
-    assert set(SESSION_EXEMPT_PATHS) == {"/api/health", "/api/session/ticket", "/api/session"}
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])

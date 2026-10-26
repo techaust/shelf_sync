@@ -39,10 +39,12 @@ def make_session_router(sessions: SessionStore, install_token: InstallToken) -> 
         # Called by the launcher (a program, not a browser): no session, no Origin (the middleware refuses any),
         # no X-ShelfSync. The install token is accepted only here, only in this header.
         presented = _bearer_token(request)
-        if presented is None or not install_token.matches(presented):
+        # The check and the ticket happen under one lock, so a Reset access token can't fall between them.
+        ticket = None if presented is None else install_token.run_if_matches(presented, sessions.issue_ticket)
+        if ticket is None:
             raise ApiError(401, "bad_token")
         response.headers["Cache-Control"] = "no-store"
-        return TicketResponse(ticket=sessions.issue_ticket(), expires_in=int(TICKET_LIFETIME_SECONDS))
+        return TicketResponse(ticket=ticket, expires_in=int(TICKET_LIFETIME_SECONDS))
 
     @router.post(SIGN_IN_PATH, status_code=204, responses={401: {"model": ErrorResponse}})
     def sign_in(body: SignInRequest) -> Response:
@@ -57,8 +59,9 @@ def make_session_router(sessions: SessionStore, install_token: InstallToken) -> 
 
     @router.post(RESET_TOKEN_PATH, status_code=204)
     def reset_token() -> Response:
-        install_token.reset()  # if the store fails this raises, nothing changes and the app answers 500
-        sessions.end_all()
+        # New token and end of every session under one lock. If the store fails this raises, nothing changes and the
+        # app answers 500.
+        install_token.reset(then=sessions.end_all)
         response = Response(status_code=204)
         response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
         return response

@@ -20,8 +20,7 @@ import logging
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from shelfsync.api.errors import forbidden, signed_out
-from shelfsync.secure.headers import is_api_path
+from shelfsync.secure.headers import forbidden, is_api_path, signed_out
 from shelfsync.secure.sessions import SessionStore
 
 SESSION_COOKIE = "shelfsync_session"

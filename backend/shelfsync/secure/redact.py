@@ -5,6 +5,9 @@
    Credential Manager) are masked wherever they appear;
 2. patterns mask keys, tokens, signatures, auth headers and the sign-in values by their shape.
 
+Known trade-off: the key and token patterns need a character that isn't a letter or digit (or the start of the
+text) before the prefix, so `xck_...` glued to a letter is not masked. That keeps words like `block_...` intact.
+
 The mask keeps the label and then writes `[redacted]` (`ck_[redacted]`, `Bearer [redacted]`,
 `shelfsync_session=[redacted]`). Applying `redact` to its own output changes nothing. File names, ISO times, MD5
 hashes and version strings don't match any pattern, so they pass through untouched.
@@ -41,6 +44,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(rf"(shelfsync_session{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
     (re.compile(r"(#t=)[^\s&\"',;]+"), rf"\1{MASK}"),
     (re.compile(r"""(["']ticket["']\s*:\s*["'])[^"']*"""), rf"\1{MASK}"),
+    (re.compile(r"""(?<![A-Za-z0-9_])(ticket\s*=\s*["']?)[^\s&"',;]+""", re.IGNORECASE), rf"\1{MASK}"),
     # WooCommerce OAuth 1.0a parts
     (re.compile(rf"(consumer_secret{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
     (re.compile(rf"(oauth_signature{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),

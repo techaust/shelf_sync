@@ -125,3 +125,37 @@ def test_a_failed_reset_keeps_the_old_token() -> None:
     with pytest.raises(SecretStoreError):
         holder.reset()
     assert holder.matches(old)
+
+
+def test_run_if_matches_runs_the_action_only_for_the_current_token() -> None:
+    """SYS-03: the check and the action happen together."""
+    store = MemorySecretStore()
+    holder = InstallToken(store)
+    token = store.get(INSTALL_TOKEN_NAME)
+    assert token is not None
+    assert holder.run_if_matches(token, lambda: "ran") == "ran"
+    assert holder.run_if_matches("wrong", lambda: "ran") is None
+    assert holder.run_if_matches("", lambda: "ran") is None
+    assert holder.run_if_matches("é", lambda: "ran") is None
+
+
+def test_reset_runs_its_follow_up_after_the_new_token_is_in_force() -> None:
+    """SET-06: the follow-up (ending every session) sees the new token already stored."""
+    store = MemorySecretStore()
+    holder = InstallToken(store)
+    old = store.get(INSTALL_TOKEN_NAME)
+    seen: list[str | None] = []
+    holder.reset(then=lambda: seen.append(store.get(INSTALL_TOKEN_NAME)))
+    assert seen and seen[0] != old
+    assert holder.matches(seen[0] or "")
+
+
+def test_a_failed_reset_does_not_run_its_follow_up() -> None:
+    """SET-06: if the new token can't be stored, sessions are not ended."""
+    store = MemorySecretStore()
+    holder = InstallToken(store)
+    holder._store = _FailingStore()
+    ran: list[bool] = []
+    with pytest.raises(SecretStoreError):
+        holder.reset(then=lambda: ran.append(True))
+    assert ran == []

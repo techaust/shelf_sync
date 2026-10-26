@@ -21,8 +21,12 @@ def redact(text: str) -> str:
     return _redact(text)
 
 
-def _redacted_field(value: object) -> str | None:
-    return None if value is None else redact(str(value))
+def _redacted_field(value: object) -> object:
+    """Text is redacted; None, booleans and numbers pass through unchanged (they can't hold a secret). Anything
+    else is turned into text first, so it is redacted too."""
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return redact(value if isinstance(value, str) else str(value))
 
 
 class JsonFormatter(logging.Formatter):
