@@ -94,9 +94,8 @@ class Tray:
         self._poll = theme_poll_seconds
         self._ready_timeout = ready_timeout
         self._ready = threading.Event()  # set once pystray's message loop is up (its setup callback has run)
-        self._warned: set[tuple[IconState, bool]] = (
-            set()
-        )  # icons that failed to load and were reported; cleared on success
+        # Icons that failed to load and were reported; cleared on success.
+        self._warned: set[tuple[IconState, bool]] = set()
         self._icon: Any = None
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None

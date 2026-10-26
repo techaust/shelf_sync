@@ -1,4 +1,4 @@
-Status: open
+Status: open (ready for PR once Pillow is decided)
 Tier: B ([12 §2](../12-models-and-usage.md): tray, launcher, notifications); the `reviewer` also runs `security-review` because it touches `platform/` and sends the install token (09 §3)
 Usage: (filled from node tools/model-audit.mjs)
 
@@ -223,6 +223,20 @@ _(none: native tray menu)_
 | Q | — | Image check widening; `Local\` mutex; Command Prompt AUMID | **Accept** the widening (the SID is the boundary, 06 §10) and `Local\`. Optional tightening to the install folder for installed copies and ShelfSync's own AUMID → **M1b brief** |
 
 Fixes by the `builder` at medium, then a re-check by the `reviewer` at medium.
+
+**Re-check 1** _(reviewer, Opus 5.5 medium, `code-review` on `b4b203a..6af99ff`)_ **APPROVE**: every row fixed; one medium (the process could still hang if pystray's loop never came up) and five lows, all fixed in round 2.
+
+**Re-check 2** _(reviewer, Opus 5.5 medium, `code-review` on `6af99ff..dcba048`)_ **APPROVE**: one medium introduced by round 2 (`stop()` no longer waited for the loop, so a crash could leave a ghost tray icon) and seven lows, all fixed in round 3.
+
+**Round 3 check** _(lead, 2026-10-27)_: the lead read the round 3 code diff (`dcba048..16d1b19`): the join only when the loop came up and not from itself, the crash checked before Quit, `RecursionError` re-raised, the `_warned` reset. Correct; no further re-check. The lead also moved one comment ruff format had split.
+
+**Follow-ups:**
+- **M1b brief:**
+  - a lock file in the data folder for a second logon session; that copy also deletes `runtime.json`, empties `tmp\` and migrates the shared database
+  - ShelfSync's own toast AUMID
+  - optionally, accepting only images under the install folder for installed copies
+  - re-checking the socket owner after connecting
+- **09:** rerun `-m windows` on every keyring upgrade (private `_read_credential`, `_delete_password`).
 
 ## 6. Integration notes
 _(empty)_
