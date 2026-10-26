@@ -13,7 +13,7 @@
 - A **localhost-only** browser app for **one user on Windows**.
 - The owner drops vendor ZIPs (WordPress themes and plugins) into the page. ShelfSync identifies the product, scans the ZIP with Windows Defender, uploads one file to S3, and updates the download on every WooCommerce store (today GPLFamily and PluginWay).
 - **No AI is needed to run it.** A desktop icon starts it, a tray icon keeps it running, and one `Setup.exe` (NSIS) installs it.
-- Folder and private GitHub repo: **`shelf_sync`** (the repo is created at M1a, after the owner's yes). Product name: **ShelfSync**, "ShelfSync by TecHaust" ([05](05-design-system.md)).
+- Folder and GitHub repo: **`shelf_sync`** (https://github.com/techaust/shelf_sync, created 2026-10-26; public during development, [11](11-decisions.md)). Product name: **ShelfSync**, "ShelfSync by TecHaust" ([05](05-design-system.md)).
 
 ## 2. The catalog and linked twins
 A **catalog item** is one real product, for example "JupiterX – Website Builder". It holds:
@@ -146,7 +146,7 @@ Phase 3 (brand and screens, about 4 days), then M1–M7, **about 24 build days**
 | Item | Cost |
 |---|---|
 | Python, FastAPI, React, SQLite, NSIS, LocalWP, moto, Playwright, Windows Defender | $0 |
-| Private GitHub repo, Actions (2,000 min/month; Windows runners count 2×, so only release builds use them), Releases, Dependabot | $0 |
+| GitHub repo (public during development: Actions on standard runners free and unlimited, branch protection free; if made private again: 2,000 min/month, Windows runners count 2×, no branch protection), Releases, Dependabot | $0 |
 | Code-signing certificate | not used (optional; would remove the SmartScreen/Smart App Control warnings) |
 | AWS for calibration and teaching | $0 for data (inside the free 100 GB/month); **under one US cent** in request charges, possibly covered by the free tier |
 | Day-to-day S3 and WooCommerce use | same as today |
