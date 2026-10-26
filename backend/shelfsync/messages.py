@@ -28,3 +28,7 @@ START_FAILED_DATA_FOLDER = (
     "ShelfSync couldn't use its data folder, so it didn't start. "
     r"Check that %LOCALAPPDATA%\ShelfSync exists and that you can write to it."
 )
+SERVER_STOPPED = (
+    "ShelfSync stopped unexpectedly. "
+    r"The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
+)

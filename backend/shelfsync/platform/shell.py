@@ -10,6 +10,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 
 
 class Shell(Protocol):
@@ -25,8 +26,26 @@ class ShellError(Exception):
 def _check_http_loopback(url: str) -> None:
     # The only addresses ShelfSync opens are its own. Refuse anything else, so a bug can't open another site with a
     # ticket in it.
-    if not url.startswith("http://127.0.0.1:"):
-        raise ShellError("Only ShelfSync's own address can be opened")
+    # Parsed, not prefix-matched: "http://127.0.0.1:1@evil.example/" starts with the right text but its host is
+    # evil.example. Scheme http, host exactly 127.0.0.1, a whole port, no user info, and nothing else in the
+    # authority part.
+    refused = ShellError("Only ShelfSync's own address can be opened")
+    if any(character.isspace() or ord(character) < 32 for character in url):  # urlsplit would quietly strip them
+        raise refused
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise refused from None
+    if (
+        parts.scheme != "http"
+        or parts.hostname != "127.0.0.1"
+        or parts.username is not None
+        or parts.password is not None
+        or port is None
+        or parts.netloc != f"127.0.0.1:{port}"
+    ):
+        raise refused
 
 
 class WindowsShell:

@@ -89,31 +89,34 @@ def second_launch(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    with client_factory() as client:
-        running = _wait_for_first_copy(paths, client, wait_seconds, sleep, clock)
-        if running is None:
-            _log.warning("Second launch: the running copy didn't answer in %.0f seconds", wait_seconds)
-            notifier.notify(messages.LAUNCH_NO_ANSWER)
-            return EXIT_NO_ANSWER
+    with client_factory() as probe:
+        running = _wait_for_first_copy(paths, probe, wait_seconds, sleep, clock)
+    if running is None:
+        _log.warning("Second launch: the running copy didn't answer in %.0f seconds", wait_seconds)
+        notifier.notify(messages.LAUNCH_NO_ANSWER)
+        return EXIT_NO_ANSWER
 
-        verdict = owner_check(running.port, running.pid)
-        if verdict is not Verdict.TRUSTED:
-            # Why, and nothing that could be a secret: no token has been read yet.
-            _log.warning("Second launch refused: the socket owner check said %s", verdict.value)
-            notifier.notify(messages.LAUNCH_REFUSED)
-            return EXIT_REFUSED
+    verdict = owner_check(running.port, running.pid)
+    if verdict is not Verdict.TRUSTED:
+        # Why, and nothing that could be a secret: no token has been read yet.
+        _log.warning("Second launch refused: the socket owner check said %s", verdict.value)
+        notifier.notify(messages.LAUNCH_REFUSED)
+        return EXIT_REFUSED
 
-        ticket = _ask_for_ticket(client, running.port, secrets)
-        if ticket is None:
-            notifier.notify(messages.LAUNCH_NO_SIGN_IN)
-            return EXIT_NO_SIGN_IN
-        try:
-            shell.open_url(sign_in_url(running.port, ticket))
-        except (ShellError, ValueError) as error:
-            _log.warning("Second launch: the tab couldn't be opened (%s)", type(error).__name__)
-            notifier.notify(messages.LAUNCH_NO_SIGN_IN)
-            return EXIT_NO_SIGN_IN
-        return EXIT_OPENED
+    # A new client for the token: the probe's connection was opened before the owner check, so it could be talking to
+    # a different program than the one the check looked at. A fresh client opens a fresh connection.
+    with client_factory() as sender:
+        ticket = _ask_for_ticket(sender, running.port, secrets)
+    if ticket is None:
+        notifier.notify(messages.LAUNCH_NO_SIGN_IN)
+        return EXIT_NO_SIGN_IN
+    try:
+        shell.open_url(sign_in_url(running.port, ticket))
+    except (ShellError, ValueError) as error:
+        _log.warning("Second launch: the tab couldn't be opened (%s)", type(error).__name__)
+        notifier.notify(messages.LAUNCH_NO_SIGN_IN)
+        return EXIT_NO_SIGN_IN
+    return EXIT_OPENED
 
 
 def _wait_for_first_copy(

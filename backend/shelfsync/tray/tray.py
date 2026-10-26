@@ -25,6 +25,7 @@ _log = logging.getLogger("shelfsync.tray")
 
 TOOLTIP = "ShelfSync"
 THEME_POLL_SECONDS = 5.0
+READY_TIMEOUT_SECONDS = 5.0  # how long `stop()` waits for the icon's message loop to come up
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class Tray:
         icon_size: Callable[[], int] = icons.system_small_icon_size,
         icon_dir: Path | None = None,
         theme_poll_seconds: float = THEME_POLL_SECONDS,
+        ready_timeout: float = READY_TIMEOUT_SECONDS,
     ) -> None:
         self._state = state
         self._on_open = _guarded("open", on_open)
@@ -87,6 +89,9 @@ class Tray:
         self._icon_size = icon_size
         self._icon_dir = icon_dir
         self._poll = theme_poll_seconds
+        self._ready_timeout = ready_timeout
+        self._ready = threading.Event()  # set once pystray's message loop is up (its setup callback has run)
+        self._warned: set[tuple[IconState, bool]] = set()  # icon keys already reported as unloadable
         self._icon: Any = None
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None
@@ -106,10 +111,12 @@ class Tray:
                 items.append(pystray.MenuItem(entry.text, entry.action, default=entry.default, enabled=entry.enabled))
         return pystray.Menu(*items)
 
-    def _image(self) -> tuple[Any, tuple[IconState, bool]]:
-        key = (self._state.icon_state, self._light_taskbar())
+    def _key(self) -> tuple[IconState, bool]:
+        return (self._state.icon_state, self._light_taskbar())
+
+    def _image(self, key: tuple[IconState, bool]) -> Any:
         path = icons.icon_file(key[0], key[1], self._icon_dir)
-        return icons.load_icon(path, icons.nearest_size(self._icon_size())), key
+        return icons.load_icon(path, icons.nearest_size(self._icon_size()))
 
     # --- life cycle ------------------------------------------------------------------------------------------
 
@@ -117,18 +124,36 @@ class Tray:
         """Show the icon (its message loop runs in its own thread) and start watching for state and theme changes."""
         import pystray
 
-        image, self._shown = self._image()
+        self._shown = self._key()
+        image = self._image(self._shown)
         self._icon = pystray.Icon("ShelfSync", image, TOOLTIP, self._pystray_menu())
         self._state.subscribe(self.refresh)
-        self._icon.run_detached()
+        self._ready.clear()
+        self._icon.run_detached(self._setup)
         self._watcher = threading.Thread(target=self._watch_theme, name="tray-theme", daemon=True)
         self._watcher.start()
+
+    def _setup(self, icon: Any) -> None:
+        """pystray calls this on a separate thread once the message loop is up. With a setup callback, showing the
+        icon is ours to do."""
+        try:
+            icon.visible = True
+        finally:
+            self._ready.set()
 
     def stop(self) -> None:
         self._stop.set()
         icon, self._icon = self._icon, None
         if icon is not None:
-            icon.stop()
+            # `Icon.stop()` before the loop is up does nothing and would leave the loop (a non-daemon thread) running
+            # for ever, holding the process and the single-instance lock. Wait for it to come up; if it never does
+            # (pystray's thread failed, so nothing is running) stop anyway and carry on.
+            if not self._ready.wait(self._ready_timeout):
+                _log.warning("The tray icon didn't come up in %.0f seconds", self._ready_timeout)
+            try:
+                icon.stop()
+            except Exception as error:
+                _log.warning("The tray icon couldn't be stopped (%s)", type(error).__name__)
         if self._watcher is not None:
             self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
 
@@ -138,10 +163,13 @@ class Tray:
             icon = self._icon
             if icon is None:
                 return
+            key = self._key()
             try:
-                image, key = self._image()
+                image = self._image(key)
             except Exception as error:  # a missing or damaged .ico must not stop the tray
-                _log.warning("The tray icon couldn't be changed (%s)", type(error).__name__)
+                if key not in self._warned:  # once per icon, not on every poll
+                    self._warned.add(key)
+                    _log.warning("The tray icon couldn't be changed (%s)", type(error).__name__)
                 return
             if key != self._shown:
                 self._shown = key

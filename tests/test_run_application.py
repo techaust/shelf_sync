@@ -32,7 +32,13 @@ def go(
     secrets_store = store if store is not None else MemorySecretStore()
     lock = FakeInstanceLock(taken if taken is not None else set())
     code = server.run_application(
-        serve, notifier, on_second, lock=lock, secrets=secrets_store, on_settings=on_settings, retry_seconds=0.0
+        lambda paths: serve,
+        notifier,
+        on_second,
+        lock=lock,
+        secrets=secrets_store,
+        on_settings=on_settings,
+        retry_seconds=0.0,
     )
     return code, notifier, seen, secrets_store, lock
 
@@ -195,3 +201,50 @@ def test_the_developer_entry_says_so_when_already_running_and_exits_0(
         assert server.main() == server.EXIT_OK
     assert "already running" in caplog.text
     assert not data_paths.database.exists()
+
+
+def test_a_failing_default_lock_is_a_plain_exit_code_not_a_traceback(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-03 (review 4): `default_instance_lock()` is inside the start-up try."""
+
+    def refuse() -> FakeInstanceLock:
+        raise OSError("CreateMutexW failed (Windows error 87)")
+
+    monkeypatch.setattr(server, "default_instance_lock", refuse)
+    notifier = FakeNotifier()
+    code = server.run_application(lambda paths: RecordingServe(), notifier, lambda paths: 0)
+    assert code == server.EXIT_START_FAILED
+    assert notifier.messages == [messages.START_FAILED]
+
+
+def test_a_server_that_stops_by_itself_has_its_own_notice_and_exit_code(data_paths: DataPaths) -> None:
+    """SYS-02 (review 6): not "couldn't start": the server was running and stopped on its own."""
+
+    def serve(app: FastAPI, sock: socket.socket) -> None:
+        raise server.ServerStoppedError("stopped")
+
+    code, notifier, *_ = go(serve)
+    assert code == server.EXIT_SERVER_STOPPED
+    assert code not in (server.EXIT_OK, server.EXIT_START_FAILED, server.EXIT_MIGRATION_FAILED)
+    assert notifier.messages == [messages.SERVER_STOPPED]
+    assert "stopped unexpectedly" in messages.SERVER_STOPPED and "didn't start" not in messages.SERVER_STOPPED
+    assert not data_paths.runtime_json.exists()
+
+
+def test_the_data_folder_found_once_is_the_one_serve_is_built_for(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-03 (review 12): nothing resolves the data folder a second time."""
+    calls = []
+    real = server.resolve_data_paths
+    monkeypatch.setattr(server, "resolve_data_paths", lambda: calls.append(1) or real())
+    built: list[DataPaths] = []
+
+    def make_serve(paths: DataPaths) -> server.Serve:
+        built.append(paths)
+        return RecordingServe()
+
+    code = server.run_application(make_serve, FakeNotifier(), lambda p: 0, lock=FakeInstanceLock(set()))
+    assert code == server.EXIT_OK
+    assert calls == [1] and built == [data_paths]

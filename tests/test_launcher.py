@@ -1,6 +1,7 @@
 """SYS-02, SYS-03: the launcher's process model: uvicorn in a thread, the tray, Open ShelfSync, View logs, Quit, Ctrl+C.
 The tray is a fake; the server is real uvicorn on a real loopback socket."""
 
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from fastapi import FastAPI
 from shelfsync import messages, server
 from shelfsync.api.app import create_app
 from shelfsync.paths import DataPaths
+from shelfsync.platform.autostart import FakeRunKey
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.platform.shell import FakeShell, ShellError
@@ -23,6 +25,7 @@ from shelfsync.tray.launcher import TrayServe
 
 class FakeTray:
     instances: ClassVar[list["FakeTray"]] = []
+    on_stop: ClassVar[Callable[[], None] | None] = None
 
     def __init__(
         self, state: Any, on_open: Callable[[], None], on_view_logs: Callable[[], None], on_quit: Callable[[], None]
@@ -36,6 +39,8 @@ class FakeTray:
 
     def stop(self) -> None:
         self.stopped = True
+        if FakeTray.on_stop is not None:
+            FakeTray.on_stop()
 
 
 class Running:
@@ -43,6 +48,8 @@ class Running:
 
     def __init__(self, data_paths: DataPaths, open_first_tab: bool = True) -> None:
         FakeTray.instances = []
+        self.events: list[str] = []
+        FakeTray.on_stop = self._tray_stopped
         self.shell, self.notifier = FakeShell(), FakeNotifier()
         self.serve = TrayServe(data_paths, self.notifier, self.shell, make_tray=FakeTray, open_first_tab=open_first_tab)
         self.paths = data_paths
@@ -61,6 +68,13 @@ class Running:
             self.error.append(error)
         finally:
             self.sock.close()
+
+    def _tray_stopped(self) -> None:
+        """Called when the tray is told to stop: is the server still up at that moment?"""
+        try:
+            self.events.append(f"tray stopped, server answers {self.health()}")
+        except httpx.TransportError:
+            self.events.append("tray stopped, server already down")
 
     def start(self) -> "Running":
         self.thread.start()
@@ -153,8 +167,12 @@ def test_quit_stops_the_tray_then_the_server_and_returns(running: Running) -> No
     running.thread.join(timeout=20)
     assert not running.thread.is_alive()
     assert running.error == [] and running.tray.stopped
+    # The order: the tray is stopped while the server still answers; only then does the server shut down.
+    assert running.events == ["tray stopped, server answers 200"]
     with pytest.raises(httpx.TransportError):
         running.health()  # the port is closed
+    # ... and the uvicorn thread really ended (not just the call that waited for it)
+    assert [t for t in threading.enumerate() if t.name == "uvicorn"] == []
 
 
 def test_quit_waits_while_a_guard_says_an_upload_is_running(running: Running) -> None:
@@ -201,17 +219,38 @@ def test_ctrl_c_in_the_wait_loop_stops_the_tray_and_the_server_and_propagates(
 def test_a_server_that_dies_ends_the_launcher_with_an_error(
     data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SYS-02: a tray with no server is useless; the error reaches start-up (exit 3 and the standard notice)."""
+    """SYS-02: a tray with no server is useless; a server that was up and then dies reaches start-up as
+    `ServerStoppedError` (its own notice and exit code, not "couldn't start")."""
 
     def broken_serve(self: Any, sockets: Any = None) -> None:
-        raise RuntimeError("uvicorn crashed")
+        self.started = True  # it came up ...
+        time.sleep(0.3)
+        raise RuntimeError("uvicorn crashed")  # ... and then died
 
     monkeypatch.setattr(launcher.uvicorn.Server, "serve", broken_serve)
     running = Running(data_paths)
     running.thread.start()
     running.thread.join(timeout=20)
     assert not running.thread.is_alive()
-    assert len(running.error) == 1 and isinstance(running.error[0], RuntimeError)
+    assert len(running.error) == 1 and isinstance(running.error[0], server.ServerStoppedError)
+    assert running.tray.stopped  # the tray went away with it
+
+
+def test_a_server_that_never_starts_is_still_a_start_failure(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-02: the other path stays "couldn't start", not "stopped unexpectedly"."""
+    monkeypatch.setattr(launcher, "SERVER_START_SECONDS", 0.2)
+
+    def never_starts(self: Any, sockets: Any = None) -> None:
+        time.sleep(1.0)
+
+    monkeypatch.setattr(launcher.uvicorn.Server, "serve", never_starts)
+    running = Running(data_paths)
+    running.thread.start()
+    running.thread.join(timeout=20)
+    assert len(running.error) == 1
+    assert isinstance(running.error[0], RuntimeError) and not isinstance(running.error[0], server.ServerStoppedError)
 
 
 def test_a_tab_that_cant_be_opened_is_a_notice_and_not_a_crash(data_paths: DataPaths) -> None:
@@ -251,10 +290,21 @@ def test_the_settings_hook_applies_start_with_windows_and_skips_in_development(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """SYS-04: from `start_with_windows` (default true). This is a development run, so nothing is written."""
-    apply = launcher.make_on_settings()
+    key = FakeRunKey()
+    apply = launcher.make_on_settings(key, installed=False)
     with caplog.at_level("INFO", logger="shelfsync.autostart"):
         apply({"start_with_windows": True})
     assert "skipped" in caplog.text
+    assert key.values == {}
+
+
+def test_the_settings_hook_sets_and_removes_the_run_value_of_an_installed_copy() -> None:
+    """SYS-04: on a fake key, with `installed` forced, so the owner's real Run key is never involved."""
+    key = FakeRunKey()
+    launcher.make_on_settings(key, installed=True)({"start_with_windows": True})
+    assert list(key.values) == ["ShelfSync"] and key.values["ShelfSync"].endswith("-m shelfsync.launcher")
+    launcher.make_on_settings(key, installed=True)({"start_with_windows": False})
+    assert key.values == {}
 
 
 def test_a_run_key_error_is_logged_and_start_up_continues(
@@ -263,7 +313,7 @@ def test_a_run_key_error_is_logged_and_start_up_continues(
     """SYS-04."""
     from shelfsync.platform.autostart import AutostartError
 
-    def refuse(enabled: bool) -> str:
+    def refuse(enabled: bool, run_key: object = None, installed: object = None) -> str:
         raise AutostartError("Writing the Run key failed (PermissionError)")
 
     monkeypatch.setattr(launcher, "apply_start_with_windows", refuse)
@@ -309,9 +359,14 @@ def test_main_second_launch_goes_to_second_launch_and_not_to_the_server(
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     asked: list[DataPaths] = []
 
+    kinds: list[str] = []
+
     def fake_second(paths: DataPaths, notifier: Any, shell: Any, store: Any) -> int:
         asked.append(paths)
+        kinds.extend(type(h).__name__ for h in logging.getLogger().handlers if "Redacting" in type(h).__name__)
         return 0
+
+    data_paths.logs.mkdir(parents=True)  # the running copy has made it
 
     monkeypatch.setattr(launcher, "second_launch", fake_second)
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: pytest.fail("a second server"))
@@ -320,6 +375,7 @@ def test_main_second_launch_goes_to_second_launch_and_not_to_the_server(
     finally:
         logs.set_write_failure_notice(None)
     assert asked == [data_paths]
+    assert kinds == ["RedactingAppendHandler"]  # logs to the shared file without ever rotating it
     assert not data_paths.database.exists() and not data_paths.tmp.exists()
 
 

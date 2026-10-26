@@ -2,6 +2,7 @@
 Windows check runs the real icon."""
 
 import sys
+import threading
 import time
 import types
 from collections.abc import Callable
@@ -147,12 +148,16 @@ def test_the_real_taskbar_theme_and_icon_size_can_be_read() -> None:
 
 class FakeIcon:
     instances: ClassVar[list["FakeIcon"]] = []
+    auto_ready: ClassVar[bool] = True
 
     def __init__(self, name: str, icon: Any, title: str, menu: Any) -> None:
         self.name, self._icon, self.title, self._menu = name, icon, title, menu
         self.icon_sets: list[Any] = [icon]
         self.menus: list[Any] = [menu]
         self.detached = self.stopped = False
+        self.setup: Callable[[Any], None] | None = None
+        self.visible = False
+        self.stopped_before_ready = False
         FakeIcon.instances.append(self)
 
     @property
@@ -173,11 +178,16 @@ class FakeIcon:
         self._menu = value
         self.menus.append(value)
 
-    def run_detached(self) -> None:
+    def run_detached(self, setup: Callable[[Any], None] | None = None) -> None:
         self.detached = True
+        self.setup = setup
+        if FakeIcon.auto_ready and setup is not None:
+            threading.Thread(target=setup, args=(self,)).start()  # pystray runs setup on its own thread
 
     def stop(self) -> None:
         self.stopped = True
+        if self.setup is not None and not self.visible:
+            self.stopped_before_ready = True
 
 
 class FakeMenu:
@@ -197,6 +207,7 @@ class FakeMenuItem:
 @pytest.fixture
 def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
     FakeIcon.instances = []
+    FakeIcon.auto_ready = True
     module = types.SimpleNamespace(Icon=FakeIcon, Menu=FakeMenu, MenuItem=FakeMenuItem)
     monkeypatch.setitem(sys.modules, "pystray", module)
     return module
@@ -336,6 +347,88 @@ def test_a_missing_icon_file_is_logged_and_the_tray_stays_up(
         tray.stop()
 
 
+def test_stop_before_pystray_is_ready_waits_for_it_then_stops(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY (review 1): `Icon.stop()` before the loop is up does nothing and would leave the process running with
+    the single-instance lock held. `stop()` waits for the setup callback, then stops."""
+    FakeIcon.auto_ready = False
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    (icon,) = FakeIcon.instances
+    assert icon.setup is not None and not icon.visible
+    threading.Timer(0.2, lambda: icon.setup(icon)).start()  # the loop comes up a moment later
+    tray.stop()
+    assert icon.stopped and icon.visible
+    assert not icon.stopped_before_ready
+
+
+def test_the_setup_callback_shows_the_icon(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY: with a setup callback pystray no longer sets `visible` itself."""
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    try:
+        (icon,) = FakeIcon.instances
+        assert wait_for(lambda: icon.visible)
+    finally:
+        tray.stop()
+
+
+def test_stop_when_pystray_never_gets_ready_still_returns_and_stops(
+    fake_pystray: types.SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """UI-TRAY (review 1): pystray's thread failed before the loop came up, so nothing is running; `stop()` gives up
+    waiting after the timeout, still asks the icon to stop, and the process can exit."""
+    FakeIcon.auto_ready = False
+    tray = Tray(
+        TrayState(), nothing, nothing, nothing, light_taskbar=lambda: True, icon_size=lambda: 16, ready_timeout=0.1
+    )
+    tray.start()
+    (icon,) = FakeIcon.instances
+    started = time.monotonic()
+    with caplog.at_level("WARNING", logger="shelfsync.tray"):
+        tray.stop()
+    assert time.monotonic() - started < 3
+    assert icon.stopped
+    assert "didn't come up" in caplog.text
+
+
+def test_an_icon_that_cant_be_stopped_is_logged_not_raised(
+    fake_pystray: types.SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """UI-TRAY."""
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    (icon,) = FakeIcon.instances
+    wait_for(lambda: icon.visible)
+
+    def broken() -> None:
+        raise RuntimeError("window gone")
+
+    icon.stop = broken  # type: ignore[method-assign]
+    with caplog.at_level("WARNING", logger="shelfsync.tray"):
+        tray.stop()
+    assert "couldn't be stopped (RuntimeError)" in caplog.text
+
+
+def test_a_missing_icon_file_is_warned_once_per_icon_not_every_poll(
+    fake_pystray: types.SimpleNamespace, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """UI-TRAY (review 9): the poll retries every few seconds; the warning is once per state-and-theme icon."""
+    state = TrayState()
+    tray = make_tray(state, [True], [], poll=0.01)
+    tray.start()
+    try:
+        tray._icon_dir = tmp_path
+        with caplog.at_level("WARNING", logger="shelfsync.tray"):
+            state.set_paused(True)  # the first failure
+            time.sleep(0.2)  # many polls
+            assert caplog.text.count("couldn't be changed") == 1
+            state.set_attention(True)  # a different icon: its own warning
+            time.sleep(0.1)
+            assert caplog.text.count("couldn't be changed") == 2
+    finally:
+        tray.stop()
+
+
 def test_stop_without_start_does_nothing() -> None:
     """UI-TRAY."""
     make_tray(TrayState(), [True], []).stop()
@@ -384,3 +477,16 @@ def test_the_real_icon_starts_changes_state_and_stops() -> None:
     finally:
         tray.stop()
     assert tray._icon is None
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_the_real_icon_stopped_straight_after_start_really_stops() -> None:
+    """UI-TRAY (review 1, 11): no wait for the icon to appear; `stop()` must still end pystray's message loop, or the
+    process would stay up holding the single-instance lock."""
+    tray = Tray(TrayState(), nothing, nothing, nothing)
+    tray.start()
+    icon = tray._icon
+    assert icon is not None
+    tray.stop()
+    assert wait_for(lambda: not icon._running)  # type: ignore[attr-defined]

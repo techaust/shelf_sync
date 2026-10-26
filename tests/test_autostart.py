@@ -146,8 +146,10 @@ def test_the_real_run_key_removing_a_missing_value_is_quiet() -> None:
 
 @pytest.mark.windows
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-def test_the_real_run_key_is_not_written_by_a_development_apply() -> None:
-    """SYS-04: the owner's real `ShelfSync` value is read, never written: the same before and after."""
+def test_the_real_run_key_is_not_written_by_a_development_apply(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-04: with this a development run (forced, so an installed ShelfSync on this PC can't change the answer)
+    the owner's real `ShelfSync` value is read, never written: the same before and after."""
+    monkeypatch.setattr(autostart, "is_installed_copy", lambda executable=None: False)
     key = WindowsRunKey()
     before = key.get("ShelfSync")
     assert apply_start_with_windows(True, key) == "skipped"

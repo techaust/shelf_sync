@@ -18,8 +18,8 @@ import uvicorn
 from fastapi import FastAPI
 
 from shelfsync import logs, messages, server
-from shelfsync.paths import DataPaths, resolve_data_paths
-from shelfsync.platform.autostart import AutostartError, apply_start_with_windows
+from shelfsync.paths import DataPaths
+from shelfsync.platform.autostart import AutostartError, RunKey, apply_start_with_windows
 from shelfsync.platform.notify import Notifier, default_notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.platform.shell import Shell, ShellError, WindowsShell
@@ -124,15 +124,15 @@ class TrayServe:
             uv.should_exit = True
             thread.join(timeout=SERVER_STOP_SECONDS)
         if crashed:
-            raise RuntimeError("The server stopped unexpectedly")
+            raise server.ServerStoppedError("The server stopped unexpectedly")
 
 
-def make_on_settings() -> server.OnSettings:
+def make_on_settings(run_key: RunKey | None = None, installed: bool | None = None) -> server.OnSettings:
     """Applies what the settings decide at start-up: Start with Windows (SYS-04)."""
 
     def apply(settings: dict[str, Any]) -> None:
         try:
-            outcome = apply_start_with_windows(bool(settings["start_with_windows"]))
+            outcome = apply_start_with_windows(bool(settings["start_with_windows"]), run_key, installed=installed)
             _log.info("Start with Windows: %s", outcome)
         except AutostartError as error:
             _log.warning("Start with Windows couldn't be applied (%s)", error)
@@ -152,18 +152,18 @@ def main(
     opener = shell if shell is not None else WindowsShell()
     logs.set_write_failure_notice(lambda: toasts.notify(messages.LOG_WRITE_FAILED))
 
-    def serve(app: FastAPI, sock: Any) -> None:
-        paths = resolve_data_paths()
-        TrayServe(paths, toasts, opener)(app, sock)
+    def make_serve(paths: DataPaths) -> server.Serve:
+        return TrayServe(paths, toasts, opener)
 
     def second(paths: DataPaths) -> int:
         store = secrets if secrets is not None else default_secret_store()
-        logs_ready = paths.logs.is_dir()
-        handler = logs.configure_logging(paths.logs, 30) if logs_ready else None
+        # A handler that never rotates or prunes: this short-lived process must not rename the running copy's log
+        # file or delete its older files (it doesn't know the retention setting either).
+        handler = logs.configure_append_logging(paths.logs) if paths.logs.is_dir() else None
         try:
             return second_launch(paths, toasts, opener, store)
         finally:
             if handler is not None:
                 logs.remove_logging(handler)
 
-    return server.run_application(serve, toasts, second, secrets=secrets, on_settings=make_on_settings())
+    return server.run_application(make_serve, toasts, second, secrets=secrets, on_settings=make_on_settings())

@@ -88,6 +88,14 @@ def _report_write_failure() -> None:
             return
 
 
+class RedactingAppendHandler(logging.FileHandler):
+    """Appends to the log file and never rotates or prunes it, with the same redaction and the same fixed report of a
+    failed write. For a short-lived second process that shares the running copy's file."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        _report_write_failure()
+
+
 class RedactingFileHandler(TimedRotatingFileHandler):
     """The log file handler. A failed write (bad arguments) is reported as one fixed line instead of the stdlib's
     dump of the message and arguments. A rollover that Windows refuses (the old file is open in another program)
@@ -116,6 +124,16 @@ def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileH
     handler = RedactingFileHandler(
         logs_dir / LOG_FILE_NAME, when="midnight", utc=True, backupCount=retention_days, encoding="utf-8"
     )
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    return handler
+
+
+def configure_append_logging(logs_dir: Path) -> logging.Handler:
+    """Like `configure_logging`, but the handler only appends (see `RedactingAppendHandler`)."""
+    handler = RedactingAppendHandler(logs_dir / LOG_FILE_NAME, encoding="utf-8")
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.addHandler(handler)

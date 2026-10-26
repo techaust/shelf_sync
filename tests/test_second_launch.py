@@ -45,9 +45,12 @@ class Harness:
         self.owner_checks: list[tuple[int, int]] = []
         self.now = 0.0
         self.sleeps: list[float] = []
+        self.clients_made = 0
+        self.client_of: dict[int, int] = {}  # request -> the number of the client that sent it
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        self.client_of[id(request)] = self.clients_made
         if request.url.path == "/api/health":
             return httpx.Response(200, json=self.health)
         if request.url.path == "/api/session/ticket":
@@ -55,7 +58,17 @@ class Harness:
         return httpx.Response(404)
 
     def client(self) -> httpx.Client:
-        return sl.make_client(transport=httpx.MockTransport(self.handler))
+        self.clients_made += 1
+        number = self.clients_made
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.clients_made, previous = number, self.clients_made
+            try:
+                return self.handler(request)
+            finally:
+                self.clients_made = previous
+
+        return sl.make_client(transport=httpx.MockTransport(handler))
 
     def owner_check(self, port: int, pid: int) -> Verdict:
         self.owner_checks.append((port, pid))
@@ -116,6 +129,18 @@ def test_the_install_token_goes_only_in_one_authorization_header_with_no_origin(
         assert TOKEN.encode() not in request.content
         assert "cookie" not in request.headers
     assert TOKEN not in harness.shell.urls[0]
+
+
+def test_the_token_goes_over_a_fresh_connection_not_the_one_probed_before_the_owner_check(harness: Harness) -> None:
+    """SYS-03 (review 7): the probe's connection could be to another program than the one the owner check looked at;
+    the token is sent by a new client."""
+    harness.write_runtime()
+    harness.launch()
+    probe_numbers = {harness.client_of[id(r)] for r in harness.requests if r.url.path == "/api/health"}
+    ticket_numbers = {harness.client_of[id(r)] for r in harness.authorized_requests}
+    assert len(probe_numbers) == 1 and len(ticket_numbers) == 1
+    assert probe_numbers.isdisjoint(ticket_numbers)
+    assert harness.clients_made >= 2
 
 
 def test_the_token_is_never_logged(harness: Harness, caplog: pytest.LogCaptureFixture) -> None:

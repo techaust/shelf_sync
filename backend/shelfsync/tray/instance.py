@@ -6,7 +6,8 @@ server. The mutex disappears with the process, so a crash leaves nothing stale b
 
 `Local\\` is the per-logon-session namespace: another Windows user is in another session, so cannot see, block or
 imitate the name; and the user's SID in the name keeps it per user. (A second logon session of the same user would
-not see this one; the port check still stops a second server from taking the same port.)
+not see this one, so it could start a second server on the next free port. A lock file in the data folder that
+covers every session is planned for M1b.)
 """
 
 import sys

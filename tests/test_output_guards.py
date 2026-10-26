@@ -7,6 +7,7 @@ them in `finally`, never through a fixture (pytest installs its own thread hook 
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -494,3 +495,70 @@ def test_removing_the_guards_restores_the_earlier_warnings_capture(before: bool)
     finally:
         logs.remove_output_guards()
         logging.captureWarnings(False)
+
+
+def _age(path: Path, days: int) -> None:
+    old = time.time() - days * 86400
+    os.utime(path, (old, old))
+
+
+def test_the_second_launchs_handler_never_rotates_or_prunes_the_running_copys_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01 (review 2): a short-lived second process shares the file. A rotating handler built on an old file would
+    rename it under the running copy (a refusal by Windows would toast a false "can't write its log"), and would prune
+    with retention 30. The append handler only adds lines."""
+    log_file = tmp_path / logs.LOG_FILE_NAME
+    log_file.write_text('{"message": "from the running copy"}\n', encoding="utf-8")
+    _age(log_file, 3)
+    told: list[int] = []
+    logs.set_write_failure_notice(lambda: told.append(1))
+
+    def refused(self: object, source: str, dest: str) -> None:
+        raise PermissionError("the running copy has it open")
+
+    monkeypatch.setattr(logs.RedactingFileHandler, "rotate", refused)
+    secret = key(50)
+    handler = logs.configure_append_logging(tmp_path)
+    try:
+        logging.getLogger("shelfsync.launcher").warning("second launch %s", secret)
+        handler.flush()
+    finally:
+        logs.remove_logging(handler)
+        logs.set_write_failure_notice(None)
+    assert [p.name for p in tmp_path.iterdir()] == [logs.LOG_FILE_NAME]  # nothing rotated, nothing pruned
+    text = log_file.read_text(encoding="utf-8")
+    assert "from the running copy" in text and "second launch" in text
+    assert secret not in text  # still redacted
+    assert told == []
+    assert "couldn't be written" not in capfd.readouterr().err
+
+
+def test_the_rotating_handler_on_the_same_old_file_would_have_rotated_it(tmp_path: Path) -> None:
+    """LOG-01 (review 2): the control for the test above, so it can't pass for the wrong reason."""
+    log_file = tmp_path / logs.LOG_FILE_NAME
+    log_file.write_text('{"message": "from the running copy"}\n', encoding="utf-8")
+    _age(log_file, 3)
+    with file_log(tmp_path):
+        logging.getLogger("shelfsync.launcher").warning("second launch")
+    assert len(list(tmp_path.iterdir())) == 2  # the old file was renamed away
+
+
+def test_the_append_handler_reports_a_failed_write_like_the_other_one(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01: a bad-arguments record gives the fixed line, nothing from the record."""
+    secret = key(51)
+    handler = logs.configure_append_logging(tmp_path)
+    logger = logging.getLogger("shelfsync.badappend")
+    logger.handlers[:] = [handler]
+    logger.propagate = False
+    try:
+        logger.error("%s and %s", secret)
+    finally:
+        logger.handlers.clear()
+        logger.propagate = True
+        logs.remove_logging(handler)
+    captured = capfd.readouterr()
+    assert "A log line couldn't be written (TypeError)" in captured.err
+    assert secret not in captured.out + captured.err

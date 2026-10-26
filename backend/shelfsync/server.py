@@ -36,10 +36,17 @@ EXIT_OK = 0
 EXIT_PORTS_IN_USE = 1
 EXIT_MIGRATION_FAILED = 2
 EXIT_START_FAILED = 3  # any other failure before the server was running
+EXIT_SERVER_STOPPED = 7  # the server was running and then stopped on its own
 
 _log = logging.getLogger("shelfsync.server")
 
+
+class ServerStoppedError(Exception):
+    """The server was running and stopped without being asked to (not a failure to start)."""
+
+
 Serve = Callable[[FastAPI, socket.socket], None]
+MakeServe = Callable[[DataPaths], Serve]
 OnSettings = Callable[[dict[str, Any]], None]
 SecondLaunch = Callable[[DataPaths], int]
 
@@ -185,6 +192,10 @@ def run(
             return EXIT_START_FAILED
         store = secrets if secrets is not None else default_secret_store()
         return _start(paths, notifier, serve, retry_seconds, handler, store, on_settings)
+    except ServerStoppedError:
+        _log.exception("the server stopped unexpectedly")
+        notifier.notify(messages.SERVER_STOPPED)
+        return EXIT_SERVER_STOPPED
     except MigrationError:
         _log.exception("start-up stopped: the database couldn't be migrated")
         notifier.notify(messages.START_FAILED_MIGRATION)
@@ -199,7 +210,7 @@ def run(
 
 
 def run_application(
-    serve: Serve,
+    make_serve: MakeServe,
     notifier: Notifier,
     on_second_launch: SecondLaunch,
     *,
@@ -208,8 +219,9 @@ def run_application(
     on_settings: OnSettings | None = None,
     retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
 ) -> int:
-    """The whole start: find the data folder, take the single-instance lock (before anything touches the tmp folder, the
-    database or the install token), then `run`. If another copy holds the lock this is a second launch:
+    """The whole start: find the data folder, take the single-instance lock (before anything touches the tmp folder,
+    the database or the install token), then `run` with the `serve` that `make_serve(paths)` builds for the data
+    folder found here (so nothing resolves it a second time). If another copy holds the lock this is a second launch:
     `on_second_launch(paths)` decides what that does and its code is returned. Ctrl+C is a normal stop (exit 0).
     """
     try:
@@ -218,12 +230,12 @@ def run_application(
         _log.exception("start-up failed: the data folder is unknown")
         notifier.notify(messages.START_FAILED_DATA_FOLDER)
         return EXIT_START_FAILED
-    instance = lock if lock is not None else default_instance_lock()
     try:
+        instance = lock if lock is not None else default_instance_lock()
         if not instance.acquire():
             return on_second_launch(paths)
         try:
-            return run(paths, notifier, serve, retry_seconds, secrets, on_settings)
+            return run(paths, notifier, make_serve(paths), retry_seconds, secrets, on_settings)
         finally:
             instance.release()
     except KeyboardInterrupt:
@@ -244,4 +256,4 @@ def _already_running(paths: DataPaths) -> int:
 def main() -> int:
     """`python -m shelfsync`: the developer entry (no tray; the installed entry is `python -m shelfsync.launcher`)."""
     install_output_guards()  # first: from here nothing leaves the process unredacted, even before logging is set up
-    return run_application(serve_with_uvicorn, LogNotifier(), _already_running)
+    return run_application(lambda paths: serve_with_uvicorn, LogNotifier(), _already_running)
