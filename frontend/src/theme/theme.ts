@@ -1,8 +1,9 @@
 // Theme (UI-SHELL): follows Windows (prefers-color-scheme) by default, with a manual override: system, light, dark.
 // Until M1b's Settings API exists the override is kept in localStorage, as a convenience only: every access is
 // wrapped, and the page works the same without storage (it then follows Windows). M1b moves it to the `theme`
-// setting. The stylesheet does the work: tokens.css switches on :root[data-theme] (and on the media query when
-// data-theme isn't set), so this module only decides the attribute.
+// setting. The stylesheet does the work: tokens.css (and every dark rule in app.css) follows the media query while
+// <html> has no data-theme, and a set data-theme overrides it. So "system" sets no attribute at all: every screen,
+// the signed-out one included, follows a Windows switch live, with no script listening for it.
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
@@ -47,7 +48,7 @@ export function resolveTheme(preference: ThemePreference, prefersDark: boolean):
   return preference;
 }
 
-/** Sets data-theme on <html> and returns what it set. */
+/** Sets data-theme on <html> for an override, removes it for "system", and returns the theme that results. */
 export function applyTheme(host: ThemeHost, preference: ThemePreference): ResolvedTheme {
   let dark = false;
   try {
@@ -55,10 +56,12 @@ export function applyTheme(host: ThemeHost, preference: ThemePreference): Resolv
   } catch {
     dark = false;
   }
-  const resolved = resolveTheme(preference, dark);
   const root = host.root();
-  if (root) root.dataset.theme = resolved;
-  return resolved;
+  if (root) {
+    if (preference === "system") delete root.dataset.theme;
+    else root.dataset.theme = preference;
+  }
+  return resolveTheme(preference, dark);
 }
 
 /** The real browser, each piece guarded so a missing API never stops the page. */

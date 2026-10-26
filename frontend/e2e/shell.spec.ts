@@ -1,13 +1,24 @@
 // UI-SHELL, SYS-03, NFR-1 and 05 section 7 / 07 section 4, against the real backend serving the built UI.
 // Every test also fails on any console error or CSP violation (support.ts).
-import { axe, expect, newTicket, ROUTES, signIn, test } from "./support";
+import {
+  addressHolds,
+  axe,
+  expect,
+  newTicket,
+  openSignInAddress,
+  ROUTES,
+  setTicketHash,
+  signIn,
+  test,
+} from "./support";
 
 test.describe("sign-in (SYS-03)", () => {
   test("a ticket signs the tab in and leaves the address bar", async ({ page, request }) => {
     const ticket = await signIn(page, request);
-    expect(page.url()).not.toContain(ticket);
+    expect(addressHolds(page, ticket), "the ticket is still in the address").toBe(false);
     expect(page.url()).toMatch(/\/#\/$/);
-    expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(ticket);
+    const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+    expect(stored.includes(ticket), "the ticket is in storage").toBe(false);
     const cookies = await page.context().cookies();
     expect(cookies.find((cookie) => cookie.name === "shelfsync_session")?.httpOnly).toBe(true);
     expect(await page.evaluate(() => document.cookie)).not.toContain("shelfsync_session");
@@ -36,9 +47,9 @@ test.describe("sign-in (SYS-03)", () => {
   test("a used ticket can't sign a second tab in", async ({ page, request, browser }) => {
     const ticket = await signIn(page, request);
     const other = await browser.newPage();
-    await other.goto(`/#t=${ticket}`);
+    await openSignInAddress(other, ticket);
     await expect(other.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
-    expect(other.url()).not.toContain(ticket);
+    expect(addressHolds(other, ticket), "the ticket is still in the address").toBe(false);
     await other.close();
   });
 
@@ -49,17 +60,56 @@ test.describe("sign-in (SYS-03)", () => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
     const ticket = await newTicket(request);
-    await page.evaluate((value) => {
-      window.location.hash = `t=${value}`;
-    }, ticket);
+    await setTicketHash(page, ticket);
     await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
-    expect(page.url()).not.toContain(ticket);
+    expect(addressHolds(page, ticket), "the ticket is still in the address").toBe(false);
+  });
+
+  test("a sign-in address opened in a signed-in tab never reaches the router", async ({ page, request }) => {
+    await signIn(page, request, "#/review");
+    await expect(page.getByRole("heading", { level: 1, name: "Review" })).toBeVisible();
+    // Record every screen title shown from here on: had the router read the sign-in fragment it would show "Not found".
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { __headings: string[] }).__headings = seen;
+      new MutationObserver(() => {
+        const h1 = document.querySelector("h1")?.textContent?.trim();
+        if (h1 && seen.at(-1) !== h1) seen.push(h1);
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    const ticket = await newTicket(request);
+    await setTicketHash(page, ticket);
+    await expect(page).toHaveURL(/\/#\/$/);
+    await expect(page.getByRole("heading", { level: 1, name: ROUTES[0].title })).toBeVisible();
+    const headings = await page.evaluate(() => (window as unknown as { __headings: string[] }).__headings);
+    expect(headings).not.toContain("Not found");
+    expect(addressHolds(page, ticket), "the ticket is still in the address").toBe(false);
+    // The new session works: a refresh stays signed in.
+    await page.reload();
+    await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
+  });
+
+  test("no answer to a ticket sign-in offers no Try again (the ticket is used up)", async ({ page, request }) => {
+    await page.route("**/api/session", (route) => route.abort("connectionrefused"));
+    await openSignInAddress(page, await newTicket(request));
+    await expect(page.getByRole("heading", { level: 1, name: /didn't answer/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+
+  test("no answer to the session check offers Try again, which checks once more", async ({ page, request }) => {
+    await signIn(page, request);
+    await page.route("**/api/session/status", (route) => route.abort("connectionrefused"));
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1, name: /didn't answer/ })).toBeVisible();
+    await page.unroute("**/api/session/status");
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
   });
 
   test("an unknown ticket shows the signed-out state", async ({ page }) => {
-    await page.goto("/#t=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    await openSignInAddress(page, "A".repeat(43));
     await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
-    expect(page.url()).not.toContain("AAAAAAAA");
+    expect(addressHolds(page, "A".repeat(43)), "the made-up ticket is still in the address").toBe(false);
   });
 
   test("the signed-out state has no accessibility violations, in light and dark", async ({ page }) => {
@@ -69,6 +119,24 @@ test.describe("sign-in (SYS-03)", () => {
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       expect((await axe(page).analyze()).violations).toEqual([]);
     }
+  });
+
+  test("the signed-out state follows a Windows light/dark switch live, with no reload", async ({ page }) => {
+    const look = () =>
+      page.evaluate(() => ({
+        bg: getComputedStyle(document.documentElement).backgroundColor,
+        theme: document.documentElement.dataset.theme ?? null,
+      }));
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
+    const light = await look();
+    expect(light.theme).toBeNull(); // "Same as Windows" sets no attribute: the stylesheet follows the media query
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect.poll(async () => (await look()).bg).not.toBe(light.bg);
+    expect((await axe(page).analyze()).violations).toEqual([]);
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect.poll(async () => (await look()).bg).toBe(light.bg);
   });
 });
 
@@ -80,7 +148,12 @@ test.describe("the shell (UI-SHELL)", () => {
     }) => {
       await page.emulateMedia({ colorScheme });
       await signIn(page, request);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme);
+      await expect(page.locator("html")).not.toHaveAttribute("data-theme"); // follows Windows through CSS
+      const bar = await page.evaluate(() => {
+        const css = getComputedStyle(document.documentElement);
+        return [css.getPropertyValue("--color-appbar-bg"), css.getPropertyValue("--color-ink-750")];
+      });
+      expect(bar[0] === bar[1], "the app bar is ink-750 in dark only").toBe(colorScheme === "dark");
       for (const route of ROUTES) {
         await page.goto(`/${route.hash}`);
         await expect(page.getByRole("heading", { level: 1, name: route.title })).toBeVisible();
@@ -147,7 +220,7 @@ test.describe("the shell (UI-SHELL)", () => {
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menuitemradio", { name: "Same as Windows" })).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(page.locator("html")).not.toHaveAttribute("data-theme");
     await expect(page.getByRole("button", { name: "Theme: Same as Windows" })).toBeFocused();
   });
 
@@ -192,5 +265,66 @@ test.describe("served files (NFR-1, the CSP)", () => {
       headers: { Authorization: `Bearer ${token}`, Origin: `http://127.0.0.1:${process.env.SHELFSYNC_E2E_PORT}` },
     });
     expect(refused.status()).toBe(403);
+  });
+});
+
+// 05 section 7, 07 section 4: Windows high contrast (forced colours) and reduced motion, emulated.
+async function highlightedItemOutline(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const item = document.querySelector<HTMLElement>(".menu__item[data-highlighted]");
+    if (!item) return null;
+    const css = getComputedStyle(item);
+    return { style: css.outlineStyle, width: Number.parseFloat(css.outlineWidth) };
+  });
+}
+
+test.describe("forced colours (Windows high contrast)", () => {
+  test.use({ forcedColors: "active" });
+
+  test("the shell and the signed-out state have no axe violations", async ({ page, request }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
+    expect((await axe(page).analyze()).violations).toEqual([]);
+    await signIn(page, request, "#/review");
+    expect((await axe(page).analyze()).violations).toEqual([]);
+  });
+
+  test("the theme menu's highlighted item keeps a visible outline", async ({ page, request }) => {
+    await signIn(page, request);
+    await page.getByRole("button", { name: /^Theme: / }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menuitemradio", { name: "Same as Windows" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("menuitemradio", { name: "Light" })).toBeFocused();
+    const outline = await highlightedItemOutline(page);
+    expect(outline?.style).toBe("solid");
+    expect(outline?.width ?? 0).toBeGreaterThanOrEqual(2);
+    await page.keyboard.press("Escape");
+  });
+});
+
+test.describe("reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  test("nothing animates, focus stays visible, and there are no axe violations", async ({ page, request }) => {
+    await signIn(page, request);
+    const moving = await page.evaluate(
+      () =>
+        [...document.querySelectorAll<HTMLElement>("body *")]
+          .map((element) => getComputedStyle(element))
+          .filter(
+            (css) =>
+              css.transitionProperty !== "none" &&
+              css.transitionDuration.split(",").some((d) => Number.parseFloat(d) > 0),
+          ).length,
+    );
+    expect(moving).toBe(0);
+    await page.getByRole("button", { name: /^Theme: / }).focus();
+    await page.keyboard.press("Enter");
+    const outline = await highlightedItemOutline(page);
+    expect(outline?.style).toBe("solid");
+    expect(outline?.width ?? 0).toBeGreaterThanOrEqual(2);
+    await page.keyboard.press("Escape");
+    expect((await axe(page).analyze()).violations).toEqual([]);
   });
 });

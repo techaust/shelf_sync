@@ -189,7 +189,7 @@ def test_port_can_be_rebound_after_a_connection_closed_by_the_server() -> None:
 
 
 def test_uvicorn_config_has_no_access_log_and_no_own_logging(data_paths: DataPaths) -> None:
-    config = server.make_uvicorn_config(create_app(47615, InstallToken(MemorySecretStore())), 47615)
+    config = server.make_uvicorn_config(create_app(47615, InstallToken(MemorySecretStore()), ui_dir=None), 47615)
     assert config.access_log is False
     assert config.log_config is None
     assert config.host == "127.0.0.1"
@@ -200,7 +200,9 @@ def test_real_uvicorn_serves_health_on_the_handed_over_socket() -> None:
     sock = server.bind_first_free([0])  # port 0: the OS picks a free one
     assert sock is not None
     port = sock.getsockname()[1]
-    uv = uvicorn.Server(server.make_uvicorn_config(create_app(port, InstallToken(MemorySecretStore())), port))
+    uv = uvicorn.Server(
+        server.make_uvicorn_config(create_app(port, InstallToken(MemorySecretStore()), ui_dir=None), port)
+    )
     thread = threading.Thread(target=lambda: asyncio.run(uv.serve(sockets=[sock])), daemon=True)
     thread.start()
     try:

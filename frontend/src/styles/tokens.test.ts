@@ -20,6 +20,10 @@ const html = import.meta.glob("../../index.html", { query: "?raw", import: "defa
 
 describe("tokens", () => {
   it("src/styles/generated/tokens.css is brand/generated/tokens.css, unchanged", () => {
+    // Not empty: Vitest empties CSS imports unless vitest.config.ts lets "?raw" ones through, which would make
+    // this comparison (and the colour checks below) pass on nothing.
+    expect(uiTokens.length).toBeGreaterThan(1000);
+    expect(uiTokens).toContain("--color-bg:");
     expect(uiTokens).toBe(brandTokens);
   });
 

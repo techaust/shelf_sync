@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from starlette.responses import Response
 from starlette.routing import Match, Mount
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -36,6 +37,25 @@ class HealthResponse(BaseModel):
     version: str
 
 
+# Caching of the UI's files. Vite names every file under assets/ by its content hash, so one name always holds the
+# same bytes and the browser may keep it for a year without asking. Everything else (index.html, the favicons) is
+# revalidated on every load, so after an update the page never asks for assets an old index.html named.
+UI_ASSETS_PREFIX = "assets/"
+CACHE_HASHED = "public, max-age=31536000, immutable"
+CACHE_REVALIDATE = "no-cache"
+
+
+class _UiFiles(StaticFiles):
+    """StaticFiles with the cache rule above on every file it answers with (200 or 304). A 404 is raised as an
+    exception and answered by the app's error handler, with no Cache-Control."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        hashed = path.replace("\\", "/").startswith(UI_ASSETS_PREFIX) and response.status_code in (200, 304)
+        response.headers["Cache-Control"] = CACHE_HASHED if hashed else CACHE_REVALIDATE
+        return response
+
+
 class _UiMount(Mount):
     """A mount at "/" that never matches a path under /api.
 
@@ -58,7 +78,7 @@ def _mount_ui(app: FastAPI, ui_dir: Path) -> None:
     if not (ui_dir / "index.html").is_file():
         _log.info("UI files not found, so only the API is served (looked in %s)", ui_dir)
         return
-    app.router.routes.append(_UiMount(UI_MOUNT_PATH, app=StaticFiles(directory=ui_dir, html=True), name=UI_MOUNT_NAME))
+    app.router.routes.append(_UiMount(UI_MOUNT_PATH, app=_UiFiles(directory=ui_dir, html=True), name=UI_MOUNT_NAME))
 
 
 def create_app(

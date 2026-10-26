@@ -3,6 +3,7 @@
 // surface they can sit on (05 section 2.3). Values come straight from brand/tokens.json, the source of truth.
 import { describe, expect, it } from "vitest";
 import tokens from "../../../brand/tokens.json";
+import shelfsyncTokens from "./generated/shelfsync-tokens.css?raw";
 
 type Theme = "light" | "dark";
 type Semantic = keyof typeof tokens.semantic;
@@ -35,9 +36,36 @@ function contrast(a: string, b: string): number {
 const TEXT = 4.5; // WCAG 1.4.3, normal text (the shell's text is 12-16 px)
 const NON_TEXT = 3; // WCAG 1.4.11, focus rings, control borders, icons that carry meaning, store dots
 
-// The app bar is ink in both themes (05 section 2.2): ink-900 under the light theme, ink-750 under the dark one.
-// Its contents use the dark semantic values (.tone-dark).
-const APP_BAR = { light: color("ink-900"), dark: color("ink-750") };
+// The app bar is ink in both themes (05 section 2.2). Its colours are read from the generated ShelfSync token layer
+// the page actually uses (--color-appbar-* in generated/shelfsync-tokens.css: the :root block for light, the
+// [data-theme="dark"] block for dark), not restated here, so a change to that mapping is checked too. Its
+// contents use the dark semantic values (.tone-dark).
+function block(selector: string): string {
+  const start = shelfsyncTokens.indexOf(`${selector} {`);
+  if (start < 0) throw new Error(`no ${selector} block in shelfsync-tokens.css`);
+  return shelfsyncTokens.slice(start, shelfsyncTokens.indexOf("}", start));
+}
+function appBarToken(name: "bg" | "fg" | "muted", theme: Theme): string {
+  const pattern = new RegExp(`--color-appbar-${name}:\\s*var\\(--color-([a-z0-9-]+)\\)`);
+  const found = pattern.exec(theme === "dark" ? block(':root[data-theme="dark"]') : "") ?? pattern.exec(block(":root"));
+  if (!found?.[1]) throw new Error(`--color-appbar-${name} isn't a palette token`);
+  return color(found[1]);
+}
+const APP_BAR = {
+  light: { bg: appBarToken("bg", "light"), fg: appBarToken("fg", "light"), muted: appBarToken("muted", "light") },
+  dark: { bg: appBarToken("bg", "dark"), fg: appBarToken("fg", "dark"), muted: appBarToken("muted", "dark") },
+};
+
+describe("the app-bar mapping read from the generated tokens", () => {
+  it("is ink-900 / ink-750 with mist and ink-300 text (05 section 2.2), and the media-query block agrees", () => {
+    expect(APP_BAR.light.bg).toBe(color("ink-900"));
+    expect(APP_BAR.dark.bg).toBe(color("ink-750"));
+    expect(APP_BAR.light.fg).toBe(color("mist"));
+    expect(APP_BAR.light.muted).toBe(color("ink-300"));
+    const media = shelfsyncTokens.slice(shelfsyncTokens.indexOf("@media (prefers-color-scheme: dark)"));
+    expect(media.slice(0, media.indexOf("}"))).toContain("--color-appbar-bg: var(--color-ink-750)");
+  });
+});
 
 describe.each<Theme>(["light", "dark"])("%s theme", (theme) => {
   const s = (name: Semantic) => semantic(name, theme);
@@ -86,11 +114,11 @@ describe.each<Theme>(["light", "dark"])("%s theme", (theme) => {
   });
 
   describe("the app bar (ink in both themes, .tone-dark contents)", () => {
-    const bar = APP_BAR[theme];
+    const { bg: bar, fg, muted } = APP_BAR[theme];
     const d = (name: Semantic) => semantic(name, "dark");
     it.each<[string, string, string, number]>([
-      ["app-bar text", color("mist"), bar, TEXT],
-      ["app-bar muted text", color("ink-300"), bar, TEXT],
+      ["app-bar text", fg, bar, TEXT],
+      ["app-bar muted text", muted, bar, TEXT],
       ["chip text (.tone-dark text)", d("text"), bar, TEXT],
       ["button text on its hover fill", d("text"), d("surface-raised"), TEXT],
       ["focus ring", d("focus"), bar, NON_TEXT],

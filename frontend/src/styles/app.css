@@ -124,8 +124,15 @@
     box-shadow: var(--shadow-1);
     min-width: 0;
   }
-  [data-theme="dark"] .card {
+  /* Dark rules, in the same two forms as tokens.css: the media query while no override is set (data-theme absent,
+     "Same as Windows"), and the Dark override. So a Windows switch restyles every screen live, signed out too. */
+  :root[data-theme="dark"] .card {
     border-color: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .card {
+      border-color: transparent;
+    }
   }
 
   /* tooltips (Radix): drawn on the page's own surfaces, outside the app bar's dark tone */
@@ -303,9 +310,14 @@
   .store-dot.is-diamond {
     clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
   }
-  [data-theme="dark"] .store-dot,
+  :root[data-theme="dark"] .store-dot,
   .tone-dark .store-dot {
     background: var(--dot-dark);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .store-dot {
+      background: var(--dot-dark);
+    }
   }
 
   /* theme menu (Radix DropdownMenu, non-modal) */
@@ -343,9 +355,11 @@
   .menu__item .icon {
     color: var(--color-text-muted);
   }
+  /* An outline, not a box-shadow: forced colours drop shadows and backgrounds, but keep (and recolour) outlines */
   .menu__item[data-highlighted] {
     background: var(--color-surface-alt);
-    box-shadow: inset 0 0 0 2px var(--color-focus);
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
   }
   .menu__item[data-state="checked"] {
     font-weight: 600;
@@ -702,6 +716,17 @@
 @media (forced-colors: active) {
   .nav-item[aria-current="page"] {
     outline: 2px solid CanvasText;
+  }
+  /* the theme menu's highlighted item: the system highlight colours, so it reads like any Windows menu */
+  .menu__item[data-highlighted] {
+    outline: 2px solid Highlight;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .menu__item[data-highlighted] .icon,
+  .menu__item[data-highlighted] .menu__check {
+    color: HighlightText;
   }
   .store-dot {
     forced-color-adjust: none;

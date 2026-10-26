@@ -31,7 +31,7 @@ def main() -> int:
         return 2
     store = MemorySecretStore()
     store.set(INSTALL_TOKEN_NAME, token)
-    app = create_app(port, InstallToken(store))
+    app = create_app(port, InstallToken(store), ui_dir=UI_DIR)
     uvicorn.Server(make_uvicorn_config(app, port)).run()
     return 0
 

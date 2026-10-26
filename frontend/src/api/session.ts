@@ -5,7 +5,7 @@
 //      never leaves the browser in a request line or a Referer header);
 //   2. POSTs it once to /api/session as {"ticket": …} (the client adds X-ShelfSync: 1; the browser adds Origin);
 //   3. on 204 the session cookie is set (HttpOnly; the page never sees it). On 401 it shows the signed-out state.
-// Without a ticket (a refresh, a second tab) it asks a protected path whether the cookie is still good.
+// Without a ticket (a refresh, a second tab) it asks GET /api/session/status whether the cookie is still good.
 // The ticket is held in one local variable for one request: never logged, stored, put in state or in error text.
 
 import { type ApiClient, ApiError, ApiUnreachableError } from "./client";
@@ -16,11 +16,9 @@ type SignInRequest = components["schemas"]["SignInRequest"];
 
 export const SIGN_IN_PATH = "/api/session";
 
-// There is no "am I signed in?" route yet (open question for the lead, docs/runs/m1a.3-app-shell.md section 4).
-// Until there is one, the page asks a session-protected path with GET: the guard answers 401 "signed_out" without
-// a valid cookie, and with one the request reaches the router, which answers 405 (the route takes POST only).
-// GET never changes anything there. Replace with the real route when the builder adds it.
-export const SESSION_PROBE_PATH = "/api/session/reset-token";
+/** "Is this tab signed in?": 204 with a valid session cookie, 401 "signed_out" without one (a normal,
+ *  session-protected route; the guard answers before it runs). */
+export const SESSION_STATUS_PATH = "/api/session/status";
 
 /** What `secrets.token_urlsafe(32)` makes (43 characters), with room to spare; anything else isn't a ticket. */
 const TICKET_SHAPE = /^[A-Za-z0-9_-]{16,256}$/;
@@ -57,7 +55,8 @@ export type SessionState =
   | { kind: "checking" }
   | { kind: "signed_in" }
   | { kind: "signed_out" }
-  | { kind: "unreachable" }
+  /** `canRetry`: false after a ticket sign-in (the ticket is used up, so asking again can't sign the tab in). */
+  | { kind: "unreachable"; canRetry: boolean }
   | { kind: "refused"; status: number };
 
 /** Exchanges the ticket for the session cookie. One attempt; no retry loop. */
@@ -67,31 +66,30 @@ export async function signIn(api: ApiClient, ticket: string): Promise<SessionSta
     await api.send("POST", SIGN_IN_PATH, body);
     return { kind: "signed_in" };
   } catch (error) {
-    return fromError(error);
+    return fromError(error, false);
   }
 }
 
-/** Is the session cookie (if any) still accepted? */
-export async function probeSession(api: ApiClient): Promise<SessionState> {
+/** Is the session cookie (if any) still accepted? One GET; 204 is signed in, 401 signed out. */
+export async function checkSession(api: ApiClient): Promise<SessionState> {
   let response: Response;
   try {
-    response = await api.request("GET", SESSION_PROBE_PATH);
+    response = await api.request("GET", SESSION_STATUS_PATH);
   } catch (error) {
-    return fromError(error);
+    return fromError(error, true);
   }
+  if (response.status === 204) return { kind: "signed_in" };
   if (response.status === 401) return { kind: "signed_out" };
-  // 405: the cookie was accepted and the GET reached the route (see SESSION_PROBE_PATH).
-  if (response.status === 405) return { kind: "signed_in" };
   return { kind: "refused", status: response.status };
 }
 
 /** Sign in with the ticket if there is one, otherwise check the existing session. */
 export function startSession(api: ApiClient, ticket: string | null): Promise<SessionState> {
-  return ticket === null ? probeSession(api) : signIn(api, ticket);
+  return ticket === null ? checkSession(api) : signIn(api, ticket);
 }
 
-function fromError(error: unknown): SessionState {
-  if (error instanceof ApiUnreachableError) return { kind: "unreachable" };
+function fromError(error: unknown, canRetry: boolean): SessionState {
+  if (error instanceof ApiUnreachableError) return { kind: "unreachable", canRetry };
   if (error instanceof ApiError)
     return error.status === 401 ? { kind: "signed_out" } : { kind: "refused", status: error.status };
   return { kind: "refused", status: 0 };

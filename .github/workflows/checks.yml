@@ -143,11 +143,24 @@ jobs:
       - name: Install the Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Playwright + axe against the backend serving the build (WCAG 2.2 A and AA, light and dark, CSP, keyboard)
+      # A throwaway install token for this run only, masked in the log; the check below looks for it in the output.
+      - name: Make a throwaway test token
+        run: |
+          token="$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')"
+          echo "::add-mask::${token}"
+          echo "SHELFSYNC_E2E_TOKEN=${token}" >> "$GITHUB_ENV"
+
+      - name: Playwright + axe against the backend serving the build (WCAG 2.2 A and AA, light and dark, forced colours, reduced motion, CSP, keyboard)
         run: npx playwright test
 
-      - name: Keep the Playwright report when it fails
+      # The repository is public: the output is uploaded only when it holds no ticket, token or Authorization value.
+      - name: Check the Playwright output holds no sign-in material
+        id: clean-output
         if: failure()
+        run: node e2e/check-output.mjs
+
+      - name: Keep the Playwright report when it fails
+        if: failure() && steps.clean-output.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report

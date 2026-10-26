@@ -1,6 +1,7 @@
 import { Bot, Clock, Globe, Pause, RefreshCw } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { ShellStatus } from "../api/placeholder";
+import { rampPercent } from "../lib/ramp";
 import { formatTime, timeZoneName } from "../lib/time";
 import { Tip } from "./Tip";
 
@@ -11,7 +12,7 @@ import { Tip } from "./Tip";
 export function StatusStrip({ status }: { status: ShellStatus }) {
   const { autoApply, trustRamp, lastSyncAt, nextSnapshot } = status;
   const zone = timeZoneName();
-  const ramp = Math.min(100, Math.round((trustRamp.count / trustRamp.target) * 100));
+  const ramp = rampPercent(trustRamp.count, trustRamp.target);
   const rampStyle = { "--ramp": `${ramp}%` } as CSSProperties;
 
   return (

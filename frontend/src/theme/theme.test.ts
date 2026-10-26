@@ -84,20 +84,27 @@ describe("the stored preference", () => {
 });
 
 describe("applyTheme", () => {
-  it("sets data-theme on the root to the resolved theme", () => {
+  it("an override sets data-theme on the root", () => {
     const { theHost, root } = host({ dark: true });
-    expect(applyTheme(theHost, "system")).toBe("dark");
-    expect(root.dataset.theme).toBe("dark");
     expect(applyTheme(theHost, "light")).toBe("light");
     expect(root.dataset.theme).toBe("light");
+    expect(applyTheme(theHost, "dark")).toBe("dark");
+    expect(root.dataset.theme).toBe("dark");
   });
 
-  it("falls back to light when the media query can't be read", () => {
+  it('"system" removes data-theme, so the stylesheet follows Windows live (every screen, signed out too)', () => {
+    const { theHost, root } = host({ dark: true });
+    applyTheme(theHost, "dark");
+    expect(applyTheme(theHost, "system")).toBe("dark");
+    expect("theme" in root.dataset).toBe(false);
+  });
+
+  it("reports light when the media query can't be read, and still sets no attribute", () => {
     const { theHost, root } = host({});
     theHost.prefersDark = () => {
       throw new Error("no matchMedia");
     };
     expect(applyTheme(theHost, "system")).toBe("light");
-    expect(root.dataset.theme).toBe("light");
+    expect("theme" in root.dataset).toBe(false);
   });
 });

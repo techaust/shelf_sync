@@ -6,6 +6,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    // Vitest turns every CSS import into an empty module unless it matches here, and that included "?raw" imports:
+    // the token and font tests read CSS as text, so raw CSS imports must keep their content.
+    css: { include: [/[.]css[?]raw$/] },
     include: ["src/**/*.test.ts"],
     restoreMocks: true,
     unstubGlobals: true,

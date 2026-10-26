@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { RouterProvider } from "react-router";
 import type { ApiClient } from "../api/client";
-import { probeSession, type SessionState, type SessionStore } from "../api/session";
+import { checkSession, type SessionState, type SessionStore } from "../api/session";
 import { TipProvider } from "../components/Tip";
 import { SessionGate } from "../screens/SessionGate";
 import { createAppRouter } from "./router";
@@ -34,18 +34,32 @@ export function App({
     };
   }, [started, session]);
 
-  // "Try again" (only after no answer at all): checks the session once more. The ticket isn't reused.
+  // "Try again" (only after a session check got no answer; never after a ticket, which is used up): checks the
+  // session once more.
   const retry = useCallback(() => {
     session.set({ kind: "checking" });
-    probeSession(api).then(session.set);
+    checkSession(api).then(session.set);
   }, [api, session]);
 
-  const router = useMemo(() => (state.kind === "signed_in" ? createAppRouter() : null), [state.kind]);
+  // One hash router per signed-in spell. Made in an effect, not during render, so it can be disposed (its popstate
+  // listener removed) when the tab signs out or signs in again; StrictMode's extra mount and cleanup in development
+  // makes a second router and disposes the first, which is correct too.
+  const [router, setRouter] = useState<ReturnType<typeof createAppRouter> | null>(null);
+  const signedIn = state.kind === "signed_in";
+  useEffect(() => {
+    if (!signedIn) return;
+    const next = createAppRouter();
+    setRouter(next);
+    return () => {
+      setRouter(null);
+      next.dispose();
+    };
+  }, [signedIn]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <TipProvider delayDuration={300}>
-        {router ? <RouterProvider router={router} /> : <SessionGate state={state} onRetry={retry} />}
+        {signedIn && router ? <RouterProvider router={router} /> : <SessionGate state={state} onRetry={retry} />}
       </TipProvider>
     </QueryClientProvider>
   );

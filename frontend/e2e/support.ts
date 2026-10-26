@@ -14,6 +14,10 @@ export const ROUTES = [
 
 export const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"];
 
+// The sign-in fragment's key. The full fragment is never written out in this folder: the HTML report shows source
+// lines around a failure, and the report must hold nothing that looks like a sign-in address (e2e/check-output.mjs).
+const TICKET_KEY = "t";
+
 /** A single-use ticket, asked for the way the launcher does: the install token, and no Origin header. */
 export async function newTicket(request: APIRequestContext): Promise<string> {
   const token = process.env.SHELFSYNC_E2E_TOKEN;
@@ -24,10 +28,44 @@ export async function newTicket(request: APIRequestContext): Promise<string> {
   return body.ticket;
 }
 
+/**
+ * Opens a sign-in address (the "t" fragment holding a ticket) as a fresh page load, the way the launcher does. The address is set from
+ * inside the page (from about:blank, so it is a full load), never through page.goto: Playwright puts goto's URL
+ * in its step titles, and the HTML report must hold no ticket (it is uploaded from a public repository).
+ */
+export async function openSignInAddress(page: Page, ticket: string): Promise<void> {
+  const target = `http://127.0.0.1:${process.env.SHELFSYNC_E2E_PORT ?? "47699"}/`;
+  await page.goto("about:blank");
+  await Promise.all([
+    page.waitForURL((url) => url.href.startsWith(target)),
+    page.evaluate(([base, value, key]) => window.location.assign(`${base}#${key}=${value}`), [
+      target,
+      ticket,
+      TICKET_KEY,
+    ] as const),
+  ]);
+}
+
+/** Sets the sign-in fragment in an already-open tab (no page load), without the ticket in any step title. */
+export async function setTicketHash(page: Page, ticket: string): Promise<void> {
+  await page.evaluate(
+    ([value, key]) => {
+      window.location.hash = `${key}=${value}`;
+    },
+    [ticket, TICKET_KEY] as const,
+  );
+}
+
+/** True when the page's address still holds the ticket. Asserted as a boolean, so a failure message never
+ *  repeats the ticket. */
+export function addressHolds(page: Page, ticket: string): boolean {
+  return page.url().includes(ticket);
+}
+
 /** Opens the sign-in address and waits for the shell. */
 export async function signIn(page: Page, request: APIRequestContext, hash = ""): Promise<string> {
   const ticket = await newTicket(request);
-  await page.goto(`/#t=${ticket}`);
+  await openSignInAddress(page, ticket);
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
   if (hash) await page.goto(`/${hash}`);
   return ticket;
@@ -43,14 +81,14 @@ declare global {
   }
 }
 
-// Chrome logs every non-2xx fetch as a console error. The sign-in exchange answers 401 when the tab can't sign in,
-// and the session check answers 401 (signed out) or 405 (signed in; see SESSION_PROBE_PATH in src/api/session.ts,
-// an open question for the lead). Those expected answers, on those two paths only, are not counted as problems.
-const EXPECTED_STATUS_PATHS = new Set(["/api/session", "/api/session/reset-token"]);
+// Chrome logs every non-2xx fetch as a console error. A tab that can't sign in gets 401 from the sign-in exchange
+// (POST /api/session) or from the session check (GET /api/session/status): that is the signed-out state working.
+// Those 401s, on those two paths only, are not counted as problems; every other status and path still is.
+const EXPECTED_401_PATHS = new Set(["/api/session", "/api/session/status"]);
 function isExpectedSessionAnswer(text: string, url: string): boolean {
-  if (!/^Failed to load resource: the server responded with a status of (401|405)\b/.test(text)) return false;
+  if (!/^Failed to load resource: the server responded with a status of 401\b/.test(text)) return false;
   try {
-    return EXPECTED_STATUS_PATHS.has(new URL(url).pathname);
+    return EXPECTED_401_PATHS.has(new URL(url).pathname);
   } catch {
     return false;
   }

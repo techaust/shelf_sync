@@ -1,7 +1,8 @@
 // SYS-03: the API client sends X-ShelfSync: 1 on every write, stays same-origin, never handles the cookie, and
 // turns a 401 "signed_out" into the signed-out state. fetch is mocked; no request leaves the test.
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, ApiUnreachableError, CSRF_HEADER, createApiClient, type HttpMethod } from "./client";
+import { ApiError, ApiUnreachableError, CSRF_HEADER, createApiClient, ERROR_CODES, type HttpMethod } from "./client";
+import schemaSource from "./schema.d.ts?raw";
 
 function respond(status: number, body?: unknown): Response {
   if (status === 204) return new Response(null, { status });
@@ -146,5 +147,22 @@ describe("errors", () => {
     );
     expect(error).toBeInstanceOf(ApiUnreachableError);
     expect(error.message).toBe("GET /api/health got no answer");
+  });
+});
+
+describe("error codes", () => {
+  it("are exactly the ErrorResponse enum in the generated schema", () => {
+    const block = /ErrorResponse: \{[\s\S]*?error: ([^;]+);/.exec(schemaSource)?.[1] ?? "";
+    const fromSchema = [...block.matchAll(/"([a-z_]+)"/g)].map((match) => match[1]);
+    expect(fromSchema.length).toBeGreaterThan(0);
+    expect([...ERROR_CODES].sort()).toEqual([...fromSchema].sort());
+  });
+
+  it("a code the schema doesn't name is dropped, never echoed", async () => {
+    const api = createApiClient({ fetch: vi.fn<typeof fetch>(async () => respond(400, { error: "<b>made up</b>" })) });
+    const error = await api.get("/api/health").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBeNull();
+    expect((error as ApiError).message).toBe("GET /api/health answered HTTP 400");
   });
 });

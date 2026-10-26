@@ -66,10 +66,12 @@ export function SessionGate({ state, onRetry }: { state: SessionState; onRetry: 
             title={UNREACHABLE_TITLE}
             text={OPEN_FROM_TRAY}
             action={
-              <button type="button" className="btn" onClick={onRetry}>
-                <RefreshCw className="icon" />
-                Try again
-              </button>
+              state.canRetry ? (
+                <button type="button" className="btn" onClick={onRetry}>
+                  <RefreshCw className="icon" />
+                  Try again
+                </button>
+              ) : undefined
             }
           />
         </Bare>
@@ -81,6 +83,6 @@ export function SessionGate({ state, onRetry }: { state: SessionState; onRetry: 
         </Bare>
       );
     case "signed_in":
-      return null;
+      return <Bare busy />; // the router is being made (one render)
   }
 }

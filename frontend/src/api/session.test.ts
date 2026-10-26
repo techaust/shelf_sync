@@ -4,12 +4,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApiClient } from "./client";
 import {
+  checkSession,
   createSessionStore,
   type HistoryLike,
   hasTicketFragment,
   type LocationLike,
-  probeSession,
-  SESSION_PROBE_PATH,
+  SESSION_STATUS_PATH,
   SIGN_IN_PATH,
   signIn,
   startSession,
@@ -91,13 +91,7 @@ describe("takeTicket", () => {
     expect(hasTicketFragment(fakeAddress("").location)).toBe(false);
   });
 
-  it("removes the ticket before the page makes any request", async () => {
-    const log: string[] = [];
-    const { location, history } = fakeAddress(`#t=${TICKET}`, log);
-    const api = createApiClient({ fetch: fetchAnswering(204, undefined, log) });
-    await startSession(api, takeTicket(location, history));
-    expect(log).toEqual(["replaceState", "fetch"]);
-  });
+  // The real start-up order (main.tsx's boot()) is tested in src/app/boot.test.ts.
 });
 
 describe("signIn", () => {
@@ -120,11 +114,14 @@ describe("signIn", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("no answer gives the unreachable state", async () => {
+  it("no answer gives the unreachable state, with no Try again (the ticket is used up)", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => {
       throw new TypeError("Failed to fetch");
     });
-    expect(await signIn(createApiClient({ fetch: fetchMock }), TICKET)).toEqual({ kind: "unreachable" });
+    expect(await signIn(createApiClient({ fetch: fetchMock }), TICKET)).toEqual({
+      kind: "unreachable",
+      canRetry: false,
+    });
   });
 
   it.each([403, 422, 500])("HTTP %i is a refusal with its status", async (status) => {
@@ -142,36 +139,42 @@ describe("signIn", () => {
   });
 });
 
-describe("probeSession (no ticket: a refresh or a second tab)", () => {
-  it("a GET to the protected probe path: 405 means the cookie was accepted", async () => {
-    const fetchMock = fetchAnswering(405, { detail: "Method Not Allowed" });
-    expect(await probeSession(createApiClient({ fetch: fetchMock }))).toEqual({ kind: "signed_in" });
+describe("checkSession (no ticket: a refresh or a second tab)", () => {
+  it("one GET to /api/session/status: 204 means signed in", async () => {
+    const fetchMock = fetchAnswering(204);
+    expect(await checkSession(createApiClient({ fetch: fetchMock }))).toEqual({ kind: "signed_in" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [path, init] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe(SESSION_PROBE_PATH);
-    expect(init?.method).toBe("GET"); // never the POST that would reset the token
+    expect(path).toBe(SESSION_STATUS_PATH);
+    expect(SESSION_STATUS_PATH).toBe("/api/session/status");
+    expect(init?.method).toBe("GET");
+    expect(init?.body).toBeUndefined();
   });
 
   it("401 means signed out", async () => {
-    expect(await probeSession(createApiClient({ fetch: fetchAnswering(401, { error: "signed_out" }) }))).toEqual({
+    expect(await checkSession(createApiClient({ fetch: fetchAnswering(401, { error: "signed_out" }) }))).toEqual({
       kind: "signed_out",
     });
   });
 
-  it("anything else is a refusal, and no answer is unreachable", async () => {
-    expect(await probeSession(createApiClient({ fetch: fetchAnswering(403, { error: "forbidden" }) }))).toEqual({
+  it.each([200, 403, 404, 405, 500])("HTTP %i is a refusal (only 204 is signed in)", async (status) => {
+    expect(await checkSession(createApiClient({ fetch: fetchAnswering(status, { error: "forbidden" }) }))).toEqual({
       kind: "refused",
-      status: 403,
+      status,
     });
+  });
+
+  it("no answer is unreachable, and may be tried again", async () => {
     const down = vi.fn<typeof fetch>(async () => {
       throw new TypeError("Failed to fetch");
     });
-    expect(await probeSession(createApiClient({ fetch: down }))).toEqual({ kind: "unreachable" });
+    expect(await checkSession(createApiClient({ fetch: down }))).toEqual({ kind: "unreachable", canRetry: true });
   });
 
-  it("startSession probes when there is no ticket, and signs in when there is one", async () => {
-    const probe = fetchAnswering(405);
-    await startSession(createApiClient({ fetch: probe }), null);
-    expect(probe.mock.calls[0]?.[0]).toBe(SESSION_PROBE_PATH);
+  it("startSession checks the session when there is no ticket, and signs in when there is one", async () => {
+    const check = fetchAnswering(204);
+    await startSession(createApiClient({ fetch: check }), null);
+    expect(check.mock.calls[0]?.[0]).toBe(SESSION_STATUS_PATH);
     const sign = fetchAnswering(204);
     await startSession(createApiClient({ fetch: sign }), TICKET);
     expect(sign.mock.calls[0]?.[0]).toBe(SIGN_IN_PATH);

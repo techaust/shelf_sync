@@ -8,7 +8,7 @@ import pytest
 
 from shelfsync.api import app as app_module
 from shelfsync.secure.headers import CONTENT_SECURITY_POLICY
-from tests.support import ORIGIN, PORT, Harness, make_harness
+from tests.support import ORIGIN, PORT, WRITE_HEADERS, Harness, make_harness
 
 INDEX = "<!doctype html><html><head><title>ShelfSync</title></head><body><div id=root></div></body></html>"
 SCRIPT = "export const shelf = 1;\n"
@@ -21,6 +21,7 @@ def ui_dir(tmp_path: Path) -> Path:
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_bytes(INDEX.encode())
     (dist / "assets" / "index-abc123.js").write_bytes(SCRIPT.encode())
+    (dist / "favicon.svg").write_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'/>")
     (tmp_path / "secret.txt").write_bytes(b"outside the UI folder")
     return dist
 
@@ -57,6 +58,53 @@ def test_ui_files_carry_every_security_header(harness: Harness, path: str) -> No
     assert not any(name.lower().startswith("access-control-") for name in headers)
 
 
+@pytest.mark.parametrize("path", ["/", "/index.html", "/favicon.svg"])
+def test_the_page_and_unhashed_files_are_revalidated_on_every_load(harness: Harness, path: str) -> None:
+    """UI-SHELL: after an update, a cached index.html would ask for assets that no longer exist, so the browser
+    must check it each time (no-cache allows a 304, never a stale copy)."""
+    response = harness.client().get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+
+
+def test_hashed_assets_are_cached_for_a_year(harness: Harness) -> None:
+    """UI-SHELL: Vite names every file under assets/ by its content hash, so a name never changes its bytes."""
+    response = harness.client().get("/assets/index-abc123.js")
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_a_revalidated_asset_keeps_its_cache_rule(harness: Harness) -> None:
+    """UI-SHELL: a 304 carries the same rule as the 200 it confirms."""
+    client = harness.client()
+    first = client.get("/")
+    again = client.get("/", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    assert again.headers["cache-control"] == "no-cache"
+    asset = client.get("/assets/index-abc123.js")
+    again = client.get("/assets/index-abc123.js", headers={"If-None-Match": asset.headers["etag"]})
+    assert again.status_code == 304
+    assert again.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_api_answers_keep_no_store(harness: Harness) -> None:
+    """SYS-03: the UI's cache rule never reaches /api (the headers middleware sets no-store there)."""
+    assert harness.client().get("/api/health").headers["cache-control"] == "no-store"
+    assert harness.client().get("/api/session/status").headers["cache-control"] == "no-store"
+
+
+def test_every_test_names_its_ui_folder() -> None:
+    """UI-SHELL: create_app defaults to the real frontend/dist, so a test that forgot ui_dir would depend on whether
+    the UI was built on this PC. Every call in tests/ passes it."""
+    tests = Path(__file__).resolve().parent
+    calls = 0
+    for source in tests.glob("*.py"):
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if "create_app(" in line and "import" not in line and "def " not in line:
+                calls += 1
+                assert "ui_dir=" in line, f"{source.name}: {line.strip()}"
+    assert calls >= 4
+
+
 @pytest.mark.parametrize("path", ["/", "/assets/index-abc123.js"])
 def test_ui_files_still_need_the_right_host(harness: Harness, path: str) -> None:
     """SYS-03: DNS rebinding can't read the page either."""
@@ -88,11 +136,15 @@ def test_unknown_api_paths_never_get_the_page_signed_in_or_not(harness: Harness)
         assert INDEX not in response.text, path
 
 
-@pytest.mark.parametrize("path", ["/api/session/ticket", "/api/session", "/api/session/reset-token"])
+@pytest.mark.parametrize(
+    "path", ["/api/session/ticket", "/api/session", "/api/session/reset-token", "/api/session/status"]
+)
 def test_a_wrong_method_on_an_api_route_is_still_the_routes_405(harness: Harness, path: str) -> None:
     """SYS-03: the mount at "/" declines /api paths, so the router's 405 isn't turned into the files' 404 (a plain
     mount at "/" would take any /api request whose route exists with another method)."""
-    response = harness.signed_in_client().get(path)
+    method = "POST" if path == "/api/session/status" else "GET"  # the status route is the one GET route here
+    headers = WRITE_HEADERS if method == "POST" else {}
+    response = harness.signed_in_client().request(method, path, headers=headers)
     assert response.status_code == 405
     assert INDEX not in response.text
 

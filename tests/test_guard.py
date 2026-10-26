@@ -262,7 +262,7 @@ def test_route_table_every_api_route_outside_the_exemption_table_refuses_without
         assert response.status_code == 401, (method, path)
         assert response.json() == {"error": "signed_out"}, (method, path)
         checked += 1
-    assert checked >= 1  # at least reset-token today
+    assert checked >= 2  # at least reset-token and session status today
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])

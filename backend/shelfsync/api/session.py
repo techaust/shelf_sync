@@ -1,5 +1,6 @@
-"""Sign-in routes (SYS-03, SET-06 logic): ticket, session, reset token. The checks that come before these routes
-(Host, Origin, X-ShelfSync, session) are in `secure/middleware.py`; the table is docs/runs/m1a.2-security.md item 11.
+"""Sign-in routes (SYS-03, SET-06 logic): ticket, session, session status, reset token. The checks that come before
+these routes (Host, Origin, X-ShelfSync, session) are in `secure/middleware.py`; the table is
+docs/runs/m1a.2-security.md item 11.
 """
 
 from fastapi import APIRouter, Request, Response
@@ -9,6 +10,10 @@ from shelfsync.api.errors import ApiError, ErrorResponse
 from shelfsync.secure.middleware import RESET_TOKEN_PATH, SESSION_COOKIE, SIGN_IN_PATH, TICKET_PATH
 from shelfsync.secure.sessions import TICKET_LIFETIME_SECONDS, SessionStore
 from shelfsync.secure.token import InstallToken
+
+# "Is this tab signed in?" for the page (a refresh, a second tab). A normal route: it is not in
+# SESSION_EXEMPT_PATHS, so the guard answers 401 "signed_out" before it runs when the cookie is missing or stale.
+SESSION_STATUS_PATH = "/api/session/status"
 
 
 class TicketResponse(BaseModel):
@@ -56,6 +61,11 @@ def make_session_router(sessions: SessionStore, install_token: InstallToken) -> 
         # would stop it being sent over http://127.0.0.1 in some browsers; the address is never https.)
         response.set_cookie(SESSION_COOKIE, session_id, httponly=True, samesite="strict", path="/")
         return response
+
+    @router.get(SESSION_STATUS_PATH, status_code=204, responses={401: {"model": ErrorResponse}})
+    def session_status() -> Response:
+        # Reached only with a valid session (the guard refuses everything else), so reaching it is the answer.
+        return Response(status_code=204)
 
     @router.post(RESET_TOKEN_PATH, status_code=204)
     def reset_token() -> Response:

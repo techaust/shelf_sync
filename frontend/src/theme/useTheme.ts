@@ -1,36 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  applyTheme,
-  browserThemeHost,
-  DARK_QUERY,
-  type ResolvedTheme,
-  readPreference,
-  savePreference,
-  type ThemePreference,
-} from "./theme";
+import { useCallback, useState } from "react";
+import { applyTheme, browserThemeHost, readPreference, savePreference, type ThemePreference } from "./theme";
 
-/** The theme preference and the theme it resolves to; re-applies when Windows switches while on "system". */
-export function useTheme(): {
-  preference: ThemePreference;
-  resolved: ResolvedTheme;
-  setPreference: (next: ThemePreference) => void;
-} {
+/**
+ * The theme preference for the theme menu. Nothing is written while React renders: early.ts applied the stored
+ * preference before the first render, and a new choice is applied once, in the event that makes it. A Windows switch
+ * while on "system" needs no listener here: "system" leaves <html> without data-theme, so the stylesheet's media
+ * query follows Windows by itself.
+ */
+export function useTheme(): { preference: ThemePreference; setPreference: (next: ThemePreference) => void } {
   const [preference, setPreferenceState] = useState<ThemePreference>(() => readPreference(browserThemeHost));
-  const [resolved, setResolved] = useState<ResolvedTheme>(() => applyTheme(browserThemeHost, preference));
-
-  useEffect(() => {
-    setResolved(applyTheme(browserThemeHost, preference));
-    if (preference !== "system" || typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia(DARK_QUERY);
-    const onChange = () => setResolved(applyTheme(browserThemeHost, "system"));
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, [preference]);
 
   const setPreference = useCallback((next: ThemePreference) => {
     savePreference(browserThemeHost, next);
+    applyTheme(browserThemeHost, next);
     setPreferenceState(next);
   }, []);
 
-  return { preference, resolved, setPreference };
+  return { preference, setPreference };
 }

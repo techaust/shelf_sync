@@ -20,7 +20,12 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${PORT}`,
     // Never bypassCSP: a CSP violation must show up as one.
     bypassCSP: false,
-    trace: "retain-on-failure",
+    // No traces: a trace records request headers and URLs, so it would hold the install token (the ticket route's
+    // Authorization header) and the tickets, and the report is uploaded from a public repository. Screenshots and
+    // the HTML report only; e2e/check-output.mjs checks them for sign-in material before any upload (CI).
+    trace: "off",
+    video: "off",
+    screenshot: "only-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
   webServer: {
