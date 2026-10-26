@@ -156,9 +156,9 @@ def run(
         create_data_folders(paths)
         handler = configure_logging(paths.logs, int(DEFAULTS["log_retention_days"]))
         return _start(paths, notifier, serve, retry_seconds, handler)
-    except MigrationError as error:
+    except MigrationError:
         _log.exception("start-up stopped: the database couldn't be migrated")
-        notifier.notify(messages.START_FAILED_MIGRATION.format(detail=error))
+        notifier.notify(messages.START_FAILED_MIGRATION)
         return EXIT_MIGRATION_FAILED
     except Exception:
         _log.exception("start-up failed")
