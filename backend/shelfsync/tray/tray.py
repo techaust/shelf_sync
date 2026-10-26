@@ -94,7 +94,9 @@ class Tray:
         self._poll = theme_poll_seconds
         self._ready_timeout = ready_timeout
         self._ready = threading.Event()  # set once pystray's message loop is up (its setup callback has run)
-        self._warned: set[tuple[IconState, bool]] = set()  # icon keys already reported as unloadable
+        self._warned: set[tuple[IconState, bool]] = (
+            set()
+        )  # icons that failed to load and were reported; cleared on success
         self._icon: Any = None
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None
@@ -160,6 +162,12 @@ class Tray:
                 icon.stop()
             except Exception as error:
                 _log.warning("The tray icon couldn't be stopped (%s)", type(error).__name__)
+            # Wait for the loop to end, so the icon is removed from the tray before the process exits (a crash path
+            # would otherwise leave a ghost icon). Only if the loop came up (otherwise nothing will end it) and we
+            # aren't running on it.
+            loop = self._loop
+            if self._ready.is_set() and loop is not None and loop is not threading.current_thread():
+                loop.join(timeout=2)
         if self._watcher is not None:
             self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
 
@@ -170,9 +178,8 @@ class Tray:
             if icon is None:
                 return
             key = self._key()
-            icon.menu = (
-                self._pystray_menu()
-            )  # first: the menu text (Resume) must follow the state even if the image fails
+            # The menu first: its text (Resume) must follow the state even if the image fails.
+            icon.menu = self._pystray_menu()
             try:
                 image = self._image(key)
             except Exception as error:  # a missing or damaged .ico must not stop the tray
@@ -180,6 +187,7 @@ class Tray:
                     self._warned.add(key)
                     _log.warning("The tray icon couldn't be changed (%s)", type(error).__name__)
                 return
+            self._warned.discard(key)  # it loads now, so a later failure of this icon is reported again
             if key != self._shown:
                 self._shown = key
                 icon.icon = image

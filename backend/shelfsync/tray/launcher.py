@@ -112,7 +112,7 @@ class TrayServe:
         if not uv.started:
             uv.should_exit = True
             thread.join(timeout=SERVER_STOP_SECONDS)
-            raise RuntimeError("The server didn't start")
+            raise RuntimeError("The server didn't start") from (crashed[0] if crashed else None)
 
         tray = self._make_tray(self.state, self.open_tab, self.view_logs, self.request_quit)
         try:
@@ -125,10 +125,11 @@ class TrayServe:
             tray.stop()
             uv.should_exit = True
             thread.join(timeout=SERVER_STOP_SECONDS)
+        # A crash is reported first, even if Quit was asked for meanwhile: it is the more useful fact.
+        if crashed:
+            raise server.ServerStoppedError("The server stopped unexpectedly") from crashed[0]
         if not self._quit_requested.is_set():
-            # The wait loop ended without a Quit, so the server ended on its own: by a crash, or by returning.
-            if crashed:
-                raise server.ServerStoppedError("The server stopped unexpectedly") from crashed[0]
+            # The wait loop ended without a Quit and without a crash: the server returned on its own.
             raise server.ServerStoppedError("The server stopped without being asked to")
 
 
@@ -136,6 +137,7 @@ def _append_logging(paths: DataPaths) -> logging.Handler | None:
     """The second launch's log handler, or None. A log it can't open must not stop it from opening the tab."""
     if not paths.logs.is_dir():
         return None
+    # Defensive: with delay=True the handler's constructor doesn't touch the disk, so this is not expected to fail.
     try:
         return logs.configure_append_logging(paths.logs)
     except OSError:

@@ -481,3 +481,61 @@ def test_the_append_handler_makes_no_file_until_the_first_line(tmp_path: Path) -
         assert list(tmp_path.iterdir()) == []
     finally:
         logs.remove_logging(handler)
+
+
+def test_a_crash_is_reported_even_if_quit_was_asked_for_meanwhile(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-02 (re-check round 2, low 5): the crash is the more useful fact, so it wins over the Quit flag."""
+
+    def broken(self: Any, sockets: Any = None) -> None:
+        self.started = True
+        time.sleep(0.3)
+        raise RuntimeError("uvicorn crashed")
+
+    monkeypatch.setattr(launcher.uvicorn.Server, "serve", broken)
+    running = Running(data_paths)
+    running.thread.start()
+    assert wait_for(lambda: bool(FakeTray.instances) and FakeTray.instances[0].started)
+    running.serve.request_quit()  # Quit is asked for while the server is dying
+    running.thread.join(timeout=20)
+    (error,) = running.error
+    assert isinstance(error, server.ServerStoppedError)
+    assert isinstance(error.__cause__, RuntimeError) and str(error.__cause__) == "uvicorn crashed"
+
+
+def test_a_server_that_crashes_before_it_starts_keeps_the_crash_as_the_cause(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-02 (re-check round 2, low 4): "couldn't start" names what went wrong."""
+
+    def broken(self: Any, sockets: Any = None) -> None:
+        raise OSError("socket gone")
+
+    monkeypatch.setattr(launcher.uvicorn.Server, "serve", broken)
+    running = Running(data_paths)
+    running.thread.start()
+    running.thread.join(timeout=20)
+    (error,) = running.error
+    assert type(error) is RuntimeError and "didn't start" in str(error)
+    assert isinstance(error.__cause__, OSError)
+
+
+def test_a_recursion_error_is_not_swallowed_as_a_failed_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """LOG-01 (re-check round 2, low 6): like the stdlib, the append handler lets a RecursionError through."""
+    from shelfsync import logs
+
+    def recursing(self: Any, record: Any) -> None:
+        raise RecursionError
+
+    monkeypatch.setattr(logging.FileHandler, "emit", recursing)
+    reported: list[int] = []
+    monkeypatch.setattr(logs, "_report_write_failure", lambda: reported.append(1))
+    handler = logs.configure_append_logging(tmp_path)
+    try:
+        record = logging.LogRecord("x", logging.WARNING, __file__, 0, "m", None, None)
+        with pytest.raises(RecursionError):
+            handler.emit(record)
+    finally:
+        logs.remove_logging(handler)
+    assert reported == []

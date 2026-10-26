@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -149,6 +149,7 @@ def test_the_real_taskbar_theme_and_icon_size_can_be_read() -> None:
 class FakeIcon:
     instances: ClassVar[list["FakeIcon"]] = []
     auto_ready: ClassVar[bool] = True
+    stop_delay: ClassVar[float] = 0.0
 
     def __init__(self, name: str, icon: Any, title: str, menu: Any) -> None:
         self.name, self._icon, self.title, self._menu = name, icon, title, menu
@@ -201,9 +202,14 @@ class FakeIcon:
 
     def stop(self) -> None:
         self.stopped = True
-        self.stop_event.set()
         if self.setup is not None and not self.visible:
             self.stopped_before_ready = True
+        # Like pystray: stopping a loop that isn't up does nothing. One that is up ends after a teardown delay.
+        if self.visible:
+            if FakeIcon.stop_delay:
+                threading.Timer(FakeIcon.stop_delay, self.stop_event.set).start()
+            else:
+                self.stop_event.set()
 
 
 class FakeMenu:
@@ -221,12 +227,15 @@ class FakeMenuItem:
 
 
 @pytest.fixture
-def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
+def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.SimpleNamespace]:
     FakeIcon.instances = []
     FakeIcon.auto_ready = True
+    FakeIcon.stop_delay = 0.0
     module = types.SimpleNamespace(Icon=FakeIcon, Menu=FakeMenu, MenuItem=FakeMenuItem)
     monkeypatch.setitem(sys.modules, "pystray", module)
-    return module
+    yield module
+    for icon in FakeIcon.instances:  # let any loop that never came up end, so no thread outlives its test
+        icon.stop_event.set()
 
 
 def make_tray(state: TrayState, light: list[bool], calls: list[str], poll: float = 0.02) -> Tray:
@@ -535,9 +544,9 @@ def test_a_loop_that_comes_up_after_stop_gave_up_does_not_keep_the_process_alive
     )
     tray.start()
     (icon,) = FakeIcon.instances
-    icon.stop_event.clear()
     tray.stop()
     alive = [t for t in threading.enumerate() if t.name == "tray-loop" and t.is_alive()]
+    assert alive, "the loop should still be blocked: it never came up, and stopping it did nothing"
     assert all(t.daemon for t in alive)
     icon.stop_event.set()
 
@@ -604,3 +613,71 @@ def test_the_real_icons_loop_and_setup_threads_are_daemon() -> None:
     finally:
         tray.stop()
     assert wait_for(lambda: not tray._loop.is_alive() if tray._loop else True)
+
+
+def test_stop_returns_only_after_the_loop_has_ended(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY (re-check round 2): `Icon.stop()` only posts a message; the loop removes the icon when it ends. `stop()`
+    waits for that, so no ghost icon is left behind when the process exits right after."""
+    FakeIcon.stop_delay = 0.3
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    (icon,) = FakeIcon.instances
+    assert wait_for(lambda: icon.visible)
+    loop = tray._loop
+    assert loop is not None and loop.is_alive()
+    started = time.monotonic()
+    tray.stop()
+    assert not loop.is_alive()  # without the join it would still be alive here
+    assert time.monotonic() - started >= 0.25
+
+
+def test_stop_still_returns_when_the_loop_never_came_up(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY: no join on a loop that nothing will end."""
+    FakeIcon.auto_ready = False
+    tray = Tray(
+        TrayState(), nothing, nothing, nothing, light_taskbar=lambda: True, icon_size=lambda: 16, ready_timeout=0.05
+    )
+    tray.start()
+    started = time.monotonic()
+    tray.stop()
+    assert time.monotonic() - started < 1.5  # not the join's 2 s
+    assert tray._loop is not None and tray._loop.is_alive()
+
+
+def test_stop_from_the_loop_thread_itself_does_not_join_itself(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY: Quit's action runs on pystray's thread; `stop()` there must not wait for its own thread."""
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    (icon,) = FakeIcon.instances
+    assert wait_for(lambda: icon.visible)
+    done = threading.Event()
+
+    def from_the_loop() -> None:
+        tray._loop = threading.current_thread()  # as if this were the loop thread
+        tray.stop()
+        done.set()
+
+    thread = threading.Thread(target=from_the_loop, daemon=True)
+    thread.start()
+    assert done.wait(3)
+
+
+def test_an_icon_that_loads_again_is_reported_again_if_it_fails_later(
+    fake_pystray: types.SimpleNamespace, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """UI-TRAY (re-check round 2, low 3): a successful load clears the "already reported" mark."""
+    state = TrayState()
+    tray = make_tray(state, [True], [], poll=60)
+    tray.start()
+    try:
+        good = tray._icon_dir
+        with caplog.at_level("WARNING", logger="shelfsync.tray"):
+            tray._icon_dir = tmp_path
+            state.set_paused(True)  # fails, reported
+            tray._icon_dir = good
+            tray.refresh()  # loads
+            tray._icon_dir = tmp_path
+            tray.refresh()  # fails again: reported again
+        assert caplog.text.count("couldn't be changed") == 2
+    finally:
+        tray.stop()

@@ -97,6 +97,8 @@ class RedactingAppendHandler(logging.FileHandler):
         # opened would raise out of the logging call. Report it like any other failed write instead.
         try:
             super().emit(record)
+        except RecursionError:
+            raise  # like the stdlib: logging that logs itself for ever is not a write failure to report
         except Exception:
             self.handleError(record)
 
