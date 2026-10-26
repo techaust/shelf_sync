@@ -49,6 +49,50 @@ One Python process holds the web server, the job worker and the tray. No separat
 | CI | **GitHub Actions**: lint and tests on Linux runners; the Windows installer build only on release tags (Windows minutes count 2×, V23) | Stays inside the free 2,000 minutes |
 | Windows-only parts | Credential Manager (keyring), toasts (windows-toasts), the tray's win32 backend, the `current` junction, the HKCU Run value and the Defender scan each sit behind a **small interface** with a real Windows adapter and a fake. Windows-only packages carry `sys_platform == "win32"` markers in the uv lock (V29) | Linux CI tests the logic against the fakes; the real adapters are proven by the **Windows checks** on this PC ([07 §1](07-testing.md)) |
 
+### 2.1 Pins (M1a)
+Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is the newest release on or before **2026-10-12** (at least 14 days old), from PyPI, npm and GitHub. The same cutoff applies to everything these pull in: uv's `exclude-newer` and npm's `before` are set to it, and both lock files hold a hash for every package. Later milestones add their packages here with the owner's yes.
+
+| Group | Package | Version | Released | Licence |
+|---|---|---|---|---|
+| Python, run time | fastapi | 0.143.0 | 2026-10-08 | MIT |
+| | uvicorn | 0.54.0 | 2026-09-25 | BSD-3-Clause |
+| | pystray | 0.19.5 | 2023-09-17 | LGPL-3.0 (own use; kept as a separate, replaceable package) |
+| | Pillow | 12.3.0 | 2026-07-01 | MIT-CMU |
+| | windows-toasts | 1.3.1 | 2025-05-06 | Apache-2.0; `sys_platform == "win32"` marker in ShelfSync's own list, since its metadata has none (V29) |
+| Python, dev | httpx | 0.28.1 | 2024-12-06 | BSD-3-Clause (FastAPI's test client; run time from M2) |
+| | pytest | 9.1.1 | 2026-06-19 | MIT |
+| | pytest-cov | 7.1.0 | 2026-03-21 | MIT |
+| | hypothesis | 6.169.0 | 2026-10-11 | MPL-2.0 |
+| | ruff | 0.17.0 | 2026-10-09 | MIT |
+| | mypy | 2.4.0 | 2026-10-01 | MIT |
+| | bandit | 1.9.4 | 2026-02-25 | Apache-2.0 |
+| | pip-audit | 2.10.1 | 2026-06-10 | Apache-2.0 |
+| UI, run time | react, react-dom | 19.3.0 | 2026-09-09 | MIT |
+| | react-router | 8.4.0 | 2026-09-15 | MIT |
+| | @tanstack/react-query | 5.104.2 | 2026-10-11 | MIT |
+| | @radix-ui/react-tooltip | 1.4.1 | 2026-10-12 | MIT |
+| | @radix-ui/react-dropdown-menu | 2.2.1 | 2026-10-12 | MIT |
+| | @radix-ui/react-dialog | 1.3.1 | 2026-10-12 | MIT |
+| | lucide-react | 1.55.0 | 2026-10-10 | ISC |
+| | @fontsource-variable/archivo | 5.3.0 | 2026-07-19 | OFL-1.1 |
+| | @fontsource/ibm-plex-mono | 5.3.0 | 2026-07-19 | OFL-1.1 |
+| UI, dev | vite | 8.3.4 | 2026-10-08 | MIT |
+| | @vitejs/plugin-react | 6.1.2 | 2026-10-05 | MIT |
+| | typescript | 5.9.3 | 2025-09-30 | Apache-2.0 (not 7.x: openapi-typescript needs `^5`) |
+| | tailwindcss, @tailwindcss/vite | 4.3.3 | 2026-07-16 | MIT |
+| | @biomejs/biome | 2.5.15 | 2026-09-30 | MIT or Apache-2.0 |
+| | vitest | 5.0.4 | 2026-10-12 | MIT |
+| | @playwright/test | 1.64.0 | 2026-10-07 | Apache-2.0 (browser installed in CI only) |
+| | @axe-core/playwright | 4.13.0 | 2026-08-11 | MPL-2.0 |
+| | @types/react, @types/react-dom | 19.3.0 | 2026-09-09 | MIT |
+| | openapi-typescript | 7.13.0 | 2026-02-11 | MIT |
+| CI actions (by commit SHA) | actions/checkout | v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1` | 2026-07-20 | MIT |
+| | actions/setup-node | v7.1.0 `949feb2413d6458794dcd2491c4babbbce0c15c1` | 2026-10-08 | MIT |
+| | astral-sh/setup-uv | v10.3.0 `1c37ad07a6a961277cf70c0d37d6f313000f5884` | 2026-10-09 | MIT |
+| | actions/upload-artifact | v7.0.2 `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 | MIT |
+
+Local tools already on this PC (not shipped): Python 3.12.10, uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
+
 ## 3. Folder structure
 ```text
 shelf_sync/
