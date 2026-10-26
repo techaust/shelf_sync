@@ -6,6 +6,7 @@ import { createApiClient } from "./client";
 import {
   createSessionStore,
   type HistoryLike,
+  hasTicketFragment,
   type LocationLike,
   probeSession,
   SESSION_PROBE_PATH,
@@ -82,6 +83,13 @@ describe("takeTicket", () => {
       expect(history.urls).toEqual(["/#/"]);
     },
   );
+
+  it("hasTicketFragment tells a sign-in address (#t=) from a screen address (#/…)", () => {
+    expect(hasTicketFragment(fakeAddress(`#t=${TICKET}`).location)).toBe(true);
+    expect(hasTicketFragment(fakeAddress("#t=").location)).toBe(true);
+    expect(hasTicketFragment(fakeAddress("#/review").location)).toBe(false);
+    expect(hasTicketFragment(fakeAddress("").location)).toBe(false);
+  });
 
   it("removes the ticket before the page makes any request", async () => {
     const log: string[] = [];

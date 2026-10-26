@@ -42,8 +42,12 @@ export interface HistoryLike {
  * in the address bar, the history entry or a bookmark. A hash that starts with #t= is always removed, even when
  * what follows isn't ticket-shaped.
  */
+export function hasTicketFragment(location: LocationLike): boolean {
+  return location.hash.startsWith(TICKET_PREFIX);
+}
+
 export function takeTicket(location: LocationLike, history: HistoryLike): string | null {
-  if (!location.hash.startsWith(TICKET_PREFIX)) return null;
+  if (!hasTicketFragment(location)) return null;
   const candidate = location.hash.slice(TICKET_PREFIX.length);
   history.replaceState(history.state, "", `${location.pathname}${location.search}#/`);
   return TICKET_SHAPE.test(candidate) ? candidate : null;

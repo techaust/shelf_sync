@@ -42,6 +42,20 @@ test.describe("sign-in (SYS-03)", () => {
     await other.close();
   });
 
+  test("a sign-in address opened in an already-open tab signs it in, without a page load", async ({
+    page,
+    request,
+  }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
+    const ticket = await newTicket(request);
+    await page.evaluate((value) => {
+      window.location.hash = `t=${value}`;
+    }, ticket);
+    await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
+    expect(page.url()).not.toContain(ticket);
+  });
+
   test("an unknown ticket shows the signed-out state", async ({ page }) => {
     await page.goto("/#t=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     await expect(page.getByRole("heading", { level: 1, name: "This tab isn't signed in." })).toBeVisible();
@@ -128,9 +142,10 @@ test.describe("the shell (UI-SHELL)", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await page.getByRole("button", { name: "Theme: Dark" }).click();
-    await page.keyboard.press("ArrowUp");
-    await page.keyboard.press("ArrowUp");
+    // By keyboard: Enter on the button opens the menu on its first item, "Same as Windows"; Enter picks it.
+    await page.getByRole("button", { name: "Theme: Dark" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menuitemradio", { name: "Same as Windows" })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await expect(page.getByRole("button", { name: "Theme: Same as Windows" })).toBeFocused();

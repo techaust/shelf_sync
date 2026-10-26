@@ -5,7 +5,7 @@ import "./styles/app.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createApiClient } from "./api/client";
-import { createSessionStore, startSession, takeTicket } from "./api/session";
+import { createSessionStore, hasTicketFragment, startSession, takeTicket } from "./api/session";
 import { App, makeQueryClient } from "./app/App";
 
 // 2. The sign-in ticket leaves the address bar before the page makes any request (SYS-03).
@@ -18,6 +18,15 @@ const api = createApiClient({ onSignedOut: () => session.set({ kind: "signed_out
 // 4. Sign in with the ticket (one POST), or check the existing session. Started here, once, so the ticket never
 //    reaches React's props or state.
 const started = startSession(api, ticket);
+
+// 5. A sign-in address opened in this same tab (#t= arrives without a page load): the same steps again. Added
+//    before the router exists, so it runs before the router reads the hash.
+window.addEventListener("hashchange", () => {
+  if (!hasTicketFragment(window.location)) return;
+  const next = takeTicket(window.location, window.history);
+  session.set({ kind: "checking" });
+  startSession(api, next).then(session.set);
+});
 
 const root = document.getElementById("root");
 if (root) {
