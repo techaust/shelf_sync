@@ -7,12 +7,14 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from starlette.routing import Match, Mount
 from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from shelfsync import __version__
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.session import make_session_router
-from shelfsync.secure.headers import SecurityHeadersMiddleware
+from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
 from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
 from shelfsync.secure.token import InstallToken
@@ -34,15 +36,29 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class _UiMount(Mount):
+    """A mount at "/" that never matches a path under /api.
+
+    A plain mount at "/" matches every path, so Starlette's router would hand it any /api request whose route
+    exists with another method (it only remembers that partial match and keeps looking): GET on a POST-only route
+    would get the static files' 404 instead of the route's 405, and an unknown /api path would reach the files.
+    Declining /api here keeps every /api answer the API's own."""
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope["type"] == "http" and is_api_path(scope.get("path", "")):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
 def _mount_ui(app: FastAPI, ui_dir: Path) -> None:
     """Serve the built UI at "/" (html mode: "/" gives index.html). Files only: there is no catch-all fallback, so
-    a path that isn't a file is a 404 and nothing under /api is ever answered with the page. The UI routes with
-    the URL hash (#/review), so a refresh always asks for "/". Without the build (backend-only CI, tests) the app
-    starts without it and says so in one log line."""
+    a path that isn't a file is a 404, and nothing under /api ever reaches the files (`_UiMount`). The UI routes
+    with the URL hash (#/review), so a refresh always asks for "/". Without the build (backend-only CI, tests) the
+    app starts without it and says so in one log line."""
     if not (ui_dir / "index.html").is_file():
         _log.info("UI files not found, so only the API is served (looked in %s)", ui_dir)
         return
-    app.mount(UI_MOUNT_PATH, StaticFiles(directory=ui_dir, html=True), name=UI_MOUNT_NAME)
+    app.router.routes.append(_UiMount(UI_MOUNT_PATH, app=StaticFiles(directory=ui_dir, html=True), name=UI_MOUNT_NAME))
 
 
 def create_app(

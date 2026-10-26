@@ -88,6 +88,15 @@ def test_unknown_api_paths_never_get_the_page_signed_in_or_not(harness: Harness)
         assert INDEX not in response.text, path
 
 
+@pytest.mark.parametrize("path", ["/api/session/ticket", "/api/session", "/api/session/reset-token"])
+def test_a_wrong_method_on_an_api_route_is_still_the_routes_405(harness: Harness, path: str) -> None:
+    """SYS-03: the mount at "/" declines /api paths, so the router's 405 isn't turned into the files' 404 (a plain
+    mount at "/" would take any /api request whose route exists with another method)."""
+    response = harness.signed_in_client().get(path)
+    assert response.status_code == 405
+    assert INDEX not in response.text
+
+
 def test_writes_to_ui_paths_are_refused_without_the_csrf_checks(harness: Harness) -> None:
     """SYS-03: the CSRF rule is by method, so a POST to "/" from another page is 403 before the mount."""
     assert harness.client().post("/").status_code == 403
