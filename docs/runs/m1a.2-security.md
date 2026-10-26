@@ -366,7 +366,26 @@ _(Final, builder Sonnet 5.5 high. The first part below was written at the early-
 _(none: no screens)_
 
 ## 5. Review
-_(empty)_
+**Review** _(reviewer, Opus 5.5 high, `code-review` + `security-review` run by hand on the worktree diff `0720646..0b6dfb6`, 2026-10-27)_ **APPROVE**. Nothing critical or high; the `security-review` method found nothing at confidence 8 or above (no way around the token, ticket or session checks, no DNS-rebinding, CSRF or browser-secret hole). Ran: `pytest -m "not windows"` 411 passed, 2 skipped; `secure/` coverage 100 %; ruff, ruff format, mypy (Windows and `--platform linux`) clean. Read only: the keyring and win32ctypes source, the stdlib `handleError`, the Windows tests, Linux CI.
+
+**Triage** _(lead, Opus 5.5 high, 2026-10-27)_. M2 was confirmed by the lead in keyring 25.7.0's `Windows.py` (`set_password` re-saves the existing value under `<user>@<service>` before writing the new one).
+
+| # | Sev | Finding | Decision |
+|---|---|---|---|
+| 1 | M | A failed log write (bad args, lone surrogate, rollover `PermissionError`) makes the stdlib `handleError` print the raw message and args to stderr | **Fix now:** every handler ShelfSync installs (the file handler included) gets a `handleError` that writes one fixed line through the redacting stderr handler: "A log line couldn't be written (<exception type>)", nothing from the record. Not `logging.raiseExceptions = False`: that hides the failure completely. Test: guards + file handler, a mismatched-args call holding a key, `capfd` shows the fixed line and no key |
+| 2 | M | Reset access token leaves the old token in Credential Manager under `install-token@ShelfSync` (keyring's re-save) | **Fix now:** `KeyringSecretStore.set` deletes the existing entry first (ignoring `PasswordDeleteError`), then writes. Crash between the two → the next start makes a new token, tabs sign in again: acceptable. Windows test: after two sets, no `<name>@ShelfSync-test-…` entry exists (read with `_read_credential`) and the value is the second one |
+| 3 | L | keyring's default persistence is `CRED_PERSIST_ENTERPRISE` (roams with a roaming profile) | **Fix now:** `backend.persist = "local machine"` set after construction (after `set_properties_from_env`), so no `KEYRING_PROPERTY_*` variable changes it; fix the docstring. Windows test: `Persist == 2` read back |
+| 4 | L | Ctrl+C during start-up logged as a CRITICAL crash | **Fix now:** `KeyboardInterrupt` goes to the original hook |
+| 5 | L | `remove_output_guards` always turns warnings capture off | **Fix now:** restore the earlier state |
+| 6 | L | First-run read-then-write race between two processes | **Follow-up, M1a.4 brief** (single instance) |
+| 7 | L | Only `aws_secret_access_key` is caught by shape; `SecretAccessKey`, `aws_session_token`, `SessionToken` aren't | **Fix now:** add the three labels (cheap, same pattern family, one hypothesis case each). Registering every secret by value stays the M2 rule (R5) |
+| 8a | L | Hand-set `Cache-Control` in `api/session.py` is redundant | **Fix now:** remove |
+| 8b | L | `create_app` takes `secrets` and `install_token`: two token sources | **Fix now:** `create_app(port, install_token, clock=time.monotonic)`; the app gets only the `InstallToken`; tests build `InstallToken(MemorySecretStore())` |
+| 8c | L | `InstallToken.matches` is a check-then-act path used only by tests | **Fix now:** remove it; tests use `run_if_matches` |
+| 8d | L | The 500 half of `test_the_422_and_500_bodies` would pass with Starlette's default body | **Keep:** the exact body is pinned by `test_500_body_is_fixed_and_holds_no_traceback_or_message` (lead read it) |
+| 9 | L | Every plain `uv run pytest` on this PC writes throwaway Credential Manager entries (reviewer note) | **Fix now:** `addopts` deselects `windows` by default; the Windows checks run only through `-m windows` (confirm the command-line `-m` overrides the `addopts` one, and update the `-m windows` run line in §3) |
+
+Fixes by the `builder` at medium (no critical finding), then a re-check of the fix diff by the `reviewer` at medium.
 
 ## 6. Integration notes
 _(empty)_
