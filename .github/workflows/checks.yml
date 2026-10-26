@@ -1,0 +1,91 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the older run of the same pull request.
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  python:
+    name: Python checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+
+      - name: Install the locked packages
+        run: uv sync --locked
+
+      - name: Lint (ruff check)
+        run: uv run ruff check
+
+      - name: Check formatting (ruff format)
+        run: uv run ruff format --check
+
+      - name: Check types (mypy)
+        run: uv run mypy
+
+      - name: Run the tests with coverage (pytest)
+        run: uv run pytest
+
+      # Coverage of at least 90 % on secure/, inspect/, match/ and apply/ (07 section 1). It starts counting once a
+      # folder has code besides __init__.py; until then there is nothing to measure.
+      - name: Check coverage of secure, inspect, match and apply
+        run: |
+          include=""
+          for folder in secure inspect match apply; do
+            if find "backend/shelfsync/$folder" -name '*.py' ! -name '__init__.py' 2>/dev/null | grep -q .; then
+              include="$include,backend/shelfsync/$folder/*"
+            fi
+          done
+          if [ -n "$include" ]; then
+            uv run coverage report --include="${include#,}" --fail-under=90
+          else
+            echo "No code in secure, inspect, match or apply yet: nothing to check."
+          fi
+
+      - name: Scan the code for security problems (bandit)
+        run: uv run bandit -r backend
+
+      - name: Check the locked packages for known vulnerabilities (pip-audit)
+        run: |
+          uv export --locked --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/locked.txt"
+          uv run pip-audit --require-hashes --disable-pip -r "$RUNNER_TEMP/locked.txt"
+
+  brand:
+    name: Brand checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Install the locked brand packages
+        run: npm ci
+        working-directory: brand
+
+      - name: Run the brand tests
+        run: npm test
+        working-directory: brand
