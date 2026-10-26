@@ -182,6 +182,22 @@ _(builder, Sonnet 5.5 medium; the re-check's M1 and L1, L2, L3, L5, L6; L4 is th
 
 **Commands** (logs `.logs/m1a.4-fix2-*.log`): ruff check and format check clean (74 files); `mypy` and `mypy --platform linux` no issues; `pytest` **618 passed, 7 skipped, 28 deselected**; `pytest -m windows --no-cov` **27 passed, 1 skipped** (V31; no `-m defender`); `bandit -r backend` clean. Afterwards `reg query ...\Run` filtered for ShelfSync: no line; `cmdkey /list:ShelfSync-test-*`, `/list:*@ShelfSync-test-*`, `/list:ShelfSync`: `* NONE *`. Not run: pip-audit (Pillow, the owner's), brand tests, Linux, GitHub.
 
+### Fix round 3
+_(builder, Sonnet 5.5 medium; the re-check of round 2)_
+
+| Item | What changed | Test that proves it |
+|---|---|---|
+| Medium | `Tray.stop()` joins the loop thread (2 s) after `icon.stop()`, only if the loop came up and we aren't on it | `test_tray.py::test_stop_returns_only_after_the_loop_has_ended` (fake with a 0.3 s teardown; fails without the join), `test_stop_still_returns_when_the_loop_never_came_up`, `test_stop_from_the_loop_thread_itself_does_not_join_itself` |
+| Low 2 | `FakeIcon.stop()` now does nothing on a loop that isn't up (like pystray); the test asserts the blocked daemon loop thread exists; the fixture releases leftovers | `test_a_loop_that_comes_up_after_stop_gave_up_does_not_keep_the_process_alive` |
+| Low 3 | `refresh()` discards the key from `_warned` after a successful load; comment fixed | `test_an_icon_that_loads_again_is_reported_again_if_it_fails_later` |
+| Low 4 | `raise RuntimeError("The server didn't start") from (crashed[0] if crashed else None)` | `test_launcher.py::test_a_server_that_crashes_before_it_starts_keeps_the_crash_as_the_cause` |
+| Low 5 | `crashed` is checked first, before the Quit flag | `test_a_crash_is_reported_even_if_quit_was_asked_for_meanwhile` |
+| Low 6 | `RedactingAppendHandler.emit` re-raises `RecursionError` before the broad catch (like the stdlib) | `test_a_recursion_error_is_not_swallowed_as_a_failed_write` |
+| Low 7 | `_append_logging` guard kept, comment says it is defensive | comment only |
+| Low 8 | Trailing comment in `tray.py` moved onto its own line | comment only |
+
+**Commands** (logs `.logs/m1a.4-fix3-*.log`): ruff check and format check clean (74 files); `mypy` and `mypy --platform linux` no issues; `pytest` **625 passed, 7 skipped, 28 deselected**; `pytest -m windows --no-cov` **27 passed, 1 skipped** (V31; no `-m defender`); `bandit -r backend` clean. Afterwards `reg query ...\Run` filtered for ShelfSync: no line; `cmdkey /list:ShelfSync-test-*`, `/list:*@ShelfSync-test-*`, `/list:ShelfSync`: `* NONE *`. Not run: pip-audit (Pillow, the owner's), brand tests, Linux, GitHub.
+
 ## 4. Designer report
 _(none: native tray menu)_
 
