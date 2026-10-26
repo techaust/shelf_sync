@@ -168,6 +168,20 @@ _(builder, Sonnet 5.5 medium; the "Fix now" rows of the §5 triage; rows 3 and 1
 
 **Commands** (logs `.logs/m1a.4-fix-*.log`): `ruff check` and `ruff format --check` clean (74 files); `mypy` and `mypy --platform linux`: no issues; `pytest`: **608 passed, 7 skipped, 27 deselected**; `pytest -m windows --no-cov`: **26 passed, 1 skipped** (V31, not run; `-m defender` not used); `secure/` coverage 100 %, exit 0; `bandit -r backend`: clean. After the Windows run: `reg query ...\Run` filtered for ShelfSync shows no line; `cmdkey /list:ShelfSync-test-*`, `/list:*@ShelfSync-test-*` and `/list:ShelfSync` all `* NONE *`. Not run: pip-audit (Pillow, the owner's), brand tests, Linux, GitHub.
 
+### Fix round 2
+_(builder, Sonnet 5.5 medium; the re-check's M1 and L1, L2, L3, L5, L6; L4 is the M1b brief's)_
+
+| Item | What changed | Test that proves it |
+|---|---|---|
+| M1 | The icon runs on our own daemon thread `tray-loop` calling `Icon.run(setup)`; pystray starts its setup thread from that thread, so it is daemon too (read in `pystray/_base.py` `_start_setup`; its win32 `_run` is what `run_detached` already runs on a worker thread, and Context7 says Windows-only targets may call `run()` off the main thread). Comment rewritten | `test_tray.py::test_the_loop_thread_and_pystrays_setup_thread_are_daemon`, `test_a_loop_that_comes_up_after_stop_gave_up_does_not_keep_the_process_alive`; Windows: `test_the_real_icons_loop_and_setup_threads_are_daemon` (real loop and real `_setup_thread` daemon, loop ends after stop) |
+| L1 | `raise ServerStoppedError(...) from crashed[0]` | `test_launcher.py::test_the_stopped_error_keeps_the_crash_as_its_cause` |
+| L2 | A separate `_quit_requested` flag (set only by `request_quit`); the wait loop ending without it is "stopped unexpectedly", crash or plain return | `test_a_server_that_returns_by_itself_without_a_quit_is_reported_as_stopped`, `test_a_quit_that_ends_the_server_is_not_reported_as_stopped` |
+| L3 | `RedactingAppendHandler` opens lazily (`delay=True`) and its `emit` catches the open error (the stdlib raises it out of the logging call when delayed: found by the test) and reports it like a failed write; `_append_logging` returns None if the handler can't even be built, so the second launch carries on | `test_a_log_file_that_cant_be_opened_doesnt_stop_the_second_launch` (a folder where the log file should be), `test_a_handler_that_cant_even_be_built_means_no_file_log_not_a_failed_start`, `test_the_append_handler_makes_no_file_until_the_first_line` |
+| L5 | Comment in `second_launch.py` says the fresh client narrows the gap, doesn't close it | comment only |
+| L6 | `refresh()` rebuilds the menu before trying the image; `_watch_theme` uses `self._key()` and skips a key that already failed (retried on a state or theme change or an explicit `refresh()`) | `test_the_menu_follows_the_state_even_when_the_icon_file_is_missing`, `test_an_icon_that_failed_to_load_is_not_read_again_every_poll` |
+
+**Commands** (logs `.logs/m1a.4-fix2-*.log`): ruff check and format check clean (74 files); `mypy` and `mypy --platform linux` no issues; `pytest` **618 passed, 7 skipped, 28 deselected**; `pytest -m windows --no-cov` **27 passed, 1 skipped** (V31; no `-m defender`); `bandit -r backend` clean. Afterwards `reg query ...\Run` filtered for ShelfSync: no line; `cmdkey /list:ShelfSync-test-*`, `/list:*@ShelfSync-test-*`, `/list:ShelfSync`: `* NONE *`. Not run: pip-audit (Pillow, the owner's), brand tests, Linux, GitHub.
+
 ## 4. Designer report
 _(none: native tray menu)_
 
