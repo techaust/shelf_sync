@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LOOPBACK = "127.0.0.1"
-_ANY = "0.0.0.0"  # a listener on every address also receives connections to 127.0.0.1
+# bandit B104 is about binding; this is the address to recognise in the table of listeners, nothing is bound to it
+_ANY = "0.0.0.0"  # nosec B104  # a listener on every address also receives connections to 127.0.0.1
 
 
 class OwnerLookupError(Exception):

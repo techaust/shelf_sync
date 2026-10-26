@@ -37,7 +37,8 @@ class WindowsShell:
         if sys.platform != "win32":
             raise ShellError("Opening an address needs Windows")
         try:
-            os.startfile(url)
+            # nosec B606: the address was checked above to be ShelfSync's own http://127.0.0.1; no shell, no command line
+            os.startfile(url)  # nosec B606
         except OSError as error:
             raise ShellError(f"Windows couldn't open the address ({type(error).__name__})") from None
 
@@ -45,7 +46,8 @@ class WindowsShell:
         if sys.platform != "win32":
             raise ShellError("Opening a folder needs Windows")
         try:
-            os.startfile(folder)
+            # nosec B606: the folder is ShelfSync's own logs folder, passed as one argument to the shell's "open"
+            os.startfile(folder)  # nosec B606
         except OSError as error:
             raise ShellError(f"Windows couldn't open the folder ({type(error).__name__})") from None
 
