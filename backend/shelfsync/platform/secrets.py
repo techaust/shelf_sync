@@ -4,10 +4,12 @@
 outside the `windows` marker, and the Linux CI, uses. Neither ever puts a secret into an error message.
 """
 
-import contextlib
+import logging
 import sys
 import threading
 from typing import Protocol
+
+_log = logging.getLogger("shelfsync.secrets")
 
 SERVICE_NAME = "ShelfSync"  # the Credential Manager service name; each secret is one entry under it
 
@@ -62,9 +64,8 @@ if sys.platform == "win32":
         (and no keyring configuration file or environment setting) can be picked in its place.
 
         Entries are kept "local machine" (they never roam with a roaming profile); `persist` is set after the backend
-        is built, so no `KEYRING_PROPERTY_*` environment variable can change it. `set` removes the old entry first:
-        keyring's own `set_password` would otherwise re-save the old value under `<name>@<service>`, leaving a
-        replaced install token behind in Credential Manager.
+        is built, so no `KEYRING_PROPERTY_*` environment variable can change it. `set` writes the new value, then
+        removes the `<name>@<service>` copy of the old one that keyring's `set_password` leaves behind.
 
         Only the entries this adapter is asked about are touched. Any keyring failure becomes a
         `SecretStoreError` that names the failure type and nothing else, so no value or backend detail can leak
@@ -86,12 +87,24 @@ if sys.platform == "win32":
 
         def set(self, name: str, value: str) -> None:
             try:
-                # no leftover copy of the old value; PasswordDeleteError just means there was no earlier entry
-                with contextlib.suppress(keyring.errors.PasswordDeleteError):
-                    self._backend.delete_password(self._service, name)
-                self._backend.set_password(self._service, name, value)
+                self._backend.set_password(self._service, name, value)  # writes first: a failure keeps the old value
             except Exception as error:
                 raise SecretStoreError(f"Credential Manager write failed ({type(error).__name__})") from None
+            self._remove_leftover_copy(name)
+
+        def _remove_leftover_copy(self, name: str) -> None:
+            """keyring's `set_password` first re-saves the entry it replaces as `<name>@<service>`; remove that copy
+            of the old value, and only that one (R1: delete after the write, so a failed write never leaves no
+            token). A failure here is logged, never raised: the new value is already stored."""
+            target = f"{name}@{self._service}"
+            try:
+                leftover = self._backend._read_credential(target)  # type: ignore[attr-defined]
+                if leftover is not None and leftover["UserName"] == name:
+                    self._backend._delete_password(target)  # type: ignore[attr-defined]
+            except Exception as error:
+                _log.warning(
+                    "Credential Manager: couldn't remove the old copy of a replaced entry (%s)", type(error).__name__
+                )
 
         def delete(self, name: str) -> None:
             try:

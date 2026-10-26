@@ -79,12 +79,6 @@ def empty_tmp(paths: DataPaths) -> None:
             _log.warning("Couldn't remove %s from tmp: %s", entry.name, error)
 
 
-def prepare_data_folder(paths: DataPaths) -> None:
-    """Create the folders and empty tmp\\."""
-    create_data_folders(paths)
-    empty_tmp(paths)
-
-
 def write_runtime_json(paths: DataPaths, port: int, pid: int) -> None:
     """Write the port in use and the PID, and nothing else (04 section 8), in one atomic replace."""
     temporary = paths.runtime_json.with_name("runtime.json.tmp")

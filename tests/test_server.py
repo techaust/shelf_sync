@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -45,10 +46,15 @@ class RecordingServe:
     def __init__(self) -> None:
         self.sockname: tuple[str, int] | None = None
         self.app: FastAPI | None = None
+        self.runtime_json: str | None = None  # what runtime.json held while "serving" (it is removed on exit)
 
     def __call__(self, app: FastAPI, sock: socket.socket) -> None:
         self.app = app
         self.sockname = sock.getsockname()
+        root = os.environ.get("SHELFSYNC_DATA_DIR")
+        runtime = DataPaths(Path(root)).runtime_json if root else None
+        if runtime is not None and runtime.exists():
+            self.runtime_json = runtime.read_text(encoding="utf-8")
 
 
 def start(paths: DataPaths, retry_seconds: float = 0.0) -> tuple[int, FakeNotifier, RecordingServe]:
@@ -74,7 +80,8 @@ def test_fallback_port_when_47615_is_held(data_paths: DataPaths) -> None:
         "Port 47615 is in use, so ShelfSync started on 47616.\n"
         "Open ShelfSync from the tray icon. The old address now reaches the other program."
     ]
-    assert json.loads(data_paths.runtime_json.read_text()) == {
+    assert serve.runtime_json is not None
+    assert json.loads(serve.runtime_json) == {
         "port": 47616,
         "pid": os.getpid(),
     }
@@ -101,8 +108,9 @@ def test_socket_is_bound_to_loopback_never_all_interfaces(data_paths: DataPaths)
 
 
 def test_runtime_json_holds_only_port_and_pid(data_paths: DataPaths) -> None:
-    start(data_paths)
-    content = json.loads(data_paths.runtime_json.read_text())
+    _, _, serve = start(data_paths)
+    assert serve.runtime_json is not None
+    content = json.loads(serve.runtime_json)
     assert set(content) == {"port", "pid"}
     assert content["port"] == 47615
 
@@ -110,7 +118,6 @@ def test_runtime_json_holds_only_port_and_pid(data_paths: DataPaths) -> None:
 def test_candidate_ports() -> None:
     assert server.candidate_ports(47615) == DEFAULT_RANGE
     assert server.candidate_ports(47620) == [47620, 47621, 47622, 47623, 47624]
-    assert server.candidate_ports(5000) == [5000]  # outside the range: no fallback
 
 
 def test_startup_empties_tmp(data_paths: DataPaths) -> None:
@@ -166,8 +173,9 @@ def test_preferred_port_is_retried_before_falling_back(data_paths: DataPaths) ->
     assert notifier.messages == []
 
 
-def test_port_setting_outside_1024_65535_is_an_error() -> None:
-    for bad in (0, 80, 1023, 65536):
+def test_port_setting_outside_47615_47624_is_an_error() -> None:
+    """SET-06: a stored port outside the range ends in a start-up error (exit 3), not a try of that port."""
+    for bad in (0, 80, 1024, 5000, 47614, 47625, 65536):
         with pytest.raises(ValueError):
             server.candidate_ports(bad)
 

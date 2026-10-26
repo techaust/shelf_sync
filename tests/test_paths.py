@@ -11,7 +11,6 @@ from shelfsync.paths import (
     DataPaths,
     create_data_folders,
     empty_tmp,
-    prepare_data_folder,
     resolve_data_paths,
 )
 
@@ -73,7 +72,7 @@ def test_no_location_is_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_layout(tmp_path: Path) -> None:
     paths = DataPaths(tmp_path / "ShelfSync")
-    prepare_data_folder(paths)
+    create_data_folders(paths)
     assert paths.logs == paths.root / "logs"
     assert paths.tmp.is_dir() and paths.backups.is_dir() and paths.logs.is_dir()
     assert paths.runtime_json == paths.root / "runtime.json"

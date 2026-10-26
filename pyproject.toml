@@ -6,13 +6,19 @@ requires-python = "==3.12.*"
 dependencies = [
     "fastapi==0.143.0",
     "uvicorn==0.54.0",
+    # The second launch asks the running copy for a sign-in ticket (M1a.4). Moved here from the dev group, same pin.
+    "httpx==0.28.1",
     # Credential Manager adapter (M1a.2). Windows only: Linux CI uses the in-memory fake and installs none of it.
     "keyring==25.7.0; sys_platform == 'win32'",
+    # Tray and notifications (M1a.4). pystray and Pillow are in the list on every platform (pystray's win32 backend
+    # is chosen when it is imported, and the tray code imports it lazily); windows-toasts is Windows only (V29).
+    "pystray==0.19.5",
+    "Pillow==12.3.0",
+    "windows-toasts==1.3.1; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx==0.28.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "hypothesis==6.169.0",
@@ -52,6 +58,11 @@ python_version = "3.12"
 strict = true
 mypy_path = "backend"
 packages = ["shelfsync"]
+
+# pystray ships no type hints; windows-toasts is Windows only (not installed on Linux CI), so its imports are not found there.
+[[tool.mypy.overrides]]
+module = ["pystray", "windows_toasts", "windows_toasts.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["backend"]

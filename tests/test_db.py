@@ -174,16 +174,54 @@ def test_connect_closes_the_connection_when_a_pragma_fails(tmp_path: Path, monke
     assert closed == [True]
 
 
-@pytest.mark.parametrize("bad", [0, 80, 1023, 65536])
-def test_port_setting_outside_1024_65535_is_refused(connection: sqlite3.Connection, bad: int) -> None:
+@pytest.mark.parametrize("bad", [0, 80, 1024, 47614, 47625, 65535, 65536])
+def test_port_setting_outside_47615_47624_is_refused(connection: sqlite3.Connection, bad: int) -> None:
+    """SET-06: the setting stays inside the range the "all in use" notice names."""
     migrate(connection)
     with pytest.raises(ValueError):
         set_setting(connection, "port", bad)
-    set_setting(connection, "port", 1024)
-    set_setting(connection, "port", 65535)
+    set_setting(connection, "port", 47615)
+    set_setting(connection, "port", 47624)
 
 
 def test_default_port_comes_from_one_place() -> None:
     from shelfsync.ports import DEFAULT_PORT
 
     assert DEFAULTS["port"] == DEFAULT_PORT == 47615
+
+
+_BASE = "CREATE TABLE schema_migration (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);\n"
+
+
+@pytest.mark.parametrize("tail", ["/* a closing note */", "/* two\nlines */\n-- and one more\n", "-- only this\n"])
+def test_a_migration_may_end_in_comments_after_its_last_semicolon(
+    connection: sqlite3.Connection, tmp_path: Path, tail: str
+) -> None:
+    """SYS-07: trailing comments, of either kind, are not half a statement."""
+    folder = tmp_path / "migrations"
+    folder.mkdir()
+    (folder / "0001_base.sql").write_text(_BASE + tail)
+    assert migrate(connection, folder) == [1]
+
+
+def test_text_after_the_last_semicolon_that_is_not_a_comment_is_still_an_error(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """SYS-07."""
+    folder = tmp_path / "migrations"
+    folder.mkdir()
+    (folder / "0001_base.sql").write_text(_BASE + "/* note */ SELECT 1 /* x */")
+    with pytest.raises(MigrationError):
+        migrate(connection, folder)
+    assert tables(connection) == set()
+
+
+def test_a_migration_that_is_not_valid_utf8_is_a_migration_error(
+    connection: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """SYS-07: a UnicodeDecodeError ends in the migration exit code, not the generic one."""
+    folder = tmp_path / "migrations"
+    folder.mkdir()
+    (folder / "0001_base.sql").write_bytes(b"-- \xff\xfe not utf-8\n" + _BASE.encode())
+    with pytest.raises(MigrationError, match=r"0001_base.sql"):
+        migrate(connection, folder)

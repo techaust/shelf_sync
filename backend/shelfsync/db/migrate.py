@@ -9,6 +9,7 @@ from shelfsync.clock import to_iso, utc_now
 
 DEFAULT_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
+_COMMENTS = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)  # block comments and line comments
 
 
 class MigrationError(Exception):
@@ -58,7 +59,7 @@ def _statements(sql: str) -> list[str]:
         if character == ";" and sqlite3.complete_statement(current):
             statements.append(current)
             current = ""
-    if current.strip() and not all(part.strip().startswith("--") or not part.strip() for part in current.splitlines()):
+    if _COMMENTS.sub("", current).strip():  # anything after the last `;` other than comments is half a statement
         raise MigrationError("The migration ends in the middle of a statement.")
     return statements
 
@@ -98,7 +99,7 @@ def migrate(connection: sqlite3.Connection, migrations_dir: Path = DEFAULT_MIGRA
                 if connection.in_transaction:  # not after a failed BEGIN, which would hide the real cause
                     connection.execute("ROLLBACK")
                 raise
-        except (sqlite3.Error, MigrationError, OSError) as error:
+        except (sqlite3.Error, MigrationError, OSError, UnicodeDecodeError) as error:
             raise MigrationError(f"Migration {migration.path.name} failed, nothing of it was kept: {error}") from error
         applied_now.append(migration.version)
     return applied_now

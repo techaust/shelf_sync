@@ -100,6 +100,9 @@ def create_app(
     # unhandled error never shows a traceback.
     app = FastAPI(title="ShelfSync", version=__version__, debug=False, docs_url=None, redoc_url=None, openapi_url=None)
     sessions = SessionStore(clock)
+    # The launcher and the tray (M1a.4) issue sign-in tickets in-process through this, so no token travels over HTTP
+    # in the first copy. Nothing in a request handler reads it from here.
+    app.state.sessions = sessions
     register_error_handlers(app)
 
     @app.get(HEALTH_PATH, response_model=HealthResponse)

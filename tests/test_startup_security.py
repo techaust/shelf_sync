@@ -36,10 +36,11 @@ def test_start_up_creates_the_install_token_once(data_paths: DataPaths) -> None:
 def test_runtime_json_and_the_log_never_hold_the_token(data_paths: DataPaths) -> None:
     """SYS-03, LOG-01: runtime.json has the port and PID only; the log doesn't have the token either."""
     store = MemorySecretStore()
-    run_with(data_paths, store)
+    _, _, serve = run_with(data_paths, store)
     token = store.get(INSTALL_TOKEN_NAME)
     assert token
-    assert token not in data_paths.runtime_json.read_text(encoding="utf-8")
+    assert serve.runtime_json is not None
+    assert token not in serve.runtime_json
     assert token not in (data_paths.logs / "shelfsync.log").read_text(encoding="utf-8")
 
 
