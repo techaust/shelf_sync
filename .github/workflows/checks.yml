@@ -127,6 +127,9 @@ jobs:
       - name: Lint and format (Biome)
         run: npx biome ci .
 
+      - name: Self-check of the Playwright output scanner
+        run: node e2e/check-output.mjs --self-check
+
       - name: Check types (tsc)
         run: npx tsc --noEmit -p tsconfig.json
 
