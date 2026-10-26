@@ -143,7 +143,10 @@ One row per decision. A decided question is never asked again; to change one, ad
 | 2026-10-26 | Private repo `techaust/shelf_sync` created and the first commit (`59ae0f5`) pushed straight to `main` as the one bootstrap exception | Owner | GitHub |
 | 2026-10-26 | **M1a package list approved** (13 Python, 22 UI, 4 CI actions; each the newest release on or before 2026-10-12) | Owner | [04 §2.1](04-architecture.md) |
 | 2026-10-26 | TypeScript **5.9.3**, not 7.x: openapi-typescript 7.13.0 needs `typescript ^5` | Lead (proposed) | [04 §2.1](04-architecture.md) |
-| 2026-10-26 | The 14-day cutoff also covers transitive packages: uv `exclude-newer` and npm `before` set to 2026-10-12 | Lead (proposed) | [04 §2.1](04-architecture.md) |
+| 2026-10-26 | The 14-day cutoff also covers transitive packages: uv `exclude-newer` and npm `before` set to 2026-10-13T00:00:00Z (releases on or before 2026-10-12) | Lead (proposed) | [04 §2.1](04-architecture.md) |
 | 2026-10-26 | windows-toasts gets a `sys_platform == "win32"` marker in ShelfSync's own dependency list, because its metadata has none (V29, confirmed when the lock is built) | Lead (proposed) | [04 §2.1](04-architecture.md) |
 | 2026-10-26 | pystray's LGPL-3.0 is acceptable: own use, and it stays a separate, replaceable package in `site-packages` | Lead (proposed) | [04 §2.1](04-architecture.md) |
 | 2026-10-26 | Text files are stored with LF (`.gitattributes`), so agent worktrees and CI match byte for byte; images and fonts are binary | Lead (proposed) | `.gitattributes` |
+| 2026-10-26 | The first migration creates only `schema_migration` and `setting`; every other table arrives with its milestone as a new numbered migration | Lead (proposed) | [runs/m1a.1-backbone.md](runs/m1a.1-backbone.md) |
+| 2026-10-26 | The server binds its own socket on `127.0.0.1` and hands it to uvicorn, so the port can't be taken between the check and the start; the API docs routes are off | Lead (proposed) | [runs/m1a.1-backbone.md](runs/m1a.1-backbone.md) |
+| 2026-10-26 | CI also runs the brand pipeline's tests, so the brand files are guarded on every PR | Lead (proposed) | [runs/m1a.1-backbone.md](runs/m1a.1-backbone.md) |
