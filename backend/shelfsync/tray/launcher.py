@@ -54,7 +54,8 @@ class TrayServe:
         self.state = state or TrayState()
         self._make_tray = make_tray
         self._open_first_tab = open_first_tab
-        self._quit = threading.Event()
+        self._quit = threading.Event()  # the wait loop ends: Quit, or the server ended on its own
+        self._quit_requested = threading.Event()  # Quit (and nothing else) was asked for
         self._port = 0
         self._sessions: SessionStore | None = None
         self._before_quit: list[Callable[[], bool]] = []
@@ -82,6 +83,7 @@ class TrayServe:
     def request_quit(self) -> None:
         # M5: wait here for a running upload (see add_quit_guard). Nothing runs yet, so Quit is immediate.
         if all(guard() for guard in self._before_quit):
+            self._quit_requested.set()
             self._quit.set()
 
     # --- serve ---------------------------------------------------------------------------------------------------
@@ -123,8 +125,21 @@ class TrayServe:
             tray.stop()
             uv.should_exit = True
             thread.join(timeout=SERVER_STOP_SECONDS)
-        if crashed:
-            raise server.ServerStoppedError("The server stopped unexpectedly")
+        if not self._quit_requested.is_set():
+            # The wait loop ended without a Quit, so the server ended on its own: by a crash, or by returning.
+            if crashed:
+                raise server.ServerStoppedError("The server stopped unexpectedly") from crashed[0]
+            raise server.ServerStoppedError("The server stopped without being asked to")
+
+
+def _append_logging(paths: DataPaths) -> logging.Handler | None:
+    """The second launch's log handler, or None. A log it can't open must not stop it from opening the tab."""
+    if not paths.logs.is_dir():
+        return None
+    try:
+        return logs.configure_append_logging(paths.logs)
+    except OSError:
+        return None
 
 
 def make_on_settings(run_key: RunKey | None = None, installed: bool | None = None) -> server.OnSettings:
@@ -159,7 +174,7 @@ def main(
         store = secrets if secrets is not None else default_secret_store()
         # A handler that never rotates or prunes: this short-lived process must not rename the running copy's log
         # file or delete its older files (it doesn't know the retention setting either).
-        handler = logs.configure_append_logging(paths.logs) if paths.logs.is_dir() else None
+        handler = _append_logging(paths)
         try:
             return second_launch(paths, toasts, opener, store)
         finally:

@@ -1,10 +1,12 @@
 """SYS-02, SYS-03: the launcher's process model: uvicorn in a thread, the tray, Open ShelfSync, View logs, Quit, Ctrl+C.
 The tray is a fake; the server is real uvicorn on a real loopback socket."""
 
+import asyncio
 import logging
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, ClassVar
 
 import httpx
@@ -384,3 +386,98 @@ def test_the_launcher_module_is_the_installed_entry_point() -> None:
     import shelfsync.launcher as entry
 
     assert entry.main is launcher.main
+
+
+def test_a_server_that_returns_by_itself_without_a_quit_is_reported_as_stopped(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-02 (re-check L2): no exception, no Quit: the server just ended. That is "stopped unexpectedly", not a quiet
+    exit 0, and the tray goes away with it."""
+
+    async def returns(self: Any, sockets: Any = None) -> None:
+        self.started = True
+        await asyncio.sleep(0.3)
+
+    monkeypatch.setattr(launcher.uvicorn.Server, "serve", returns)
+    running = Running(data_paths)
+    running.thread.start()
+    running.thread.join(timeout=20)
+    assert not running.thread.is_alive()
+    assert len(running.error) == 1 and isinstance(running.error[0], server.ServerStoppedError)
+    assert running.error[0].__cause__ is None
+    assert running.tray.stopped
+
+
+def test_a_quit_that_ends_the_server_is_not_reported_as_stopped(running: Running) -> None:
+    """SYS-02 (re-check L2): the flag distinguishes a Quit from the server ending on its own."""
+    running.start()
+    running.finish()
+    assert running.error == []
+
+
+def test_the_stopped_error_keeps_the_crash_as_its_cause(data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-02 (re-check L1): the log shows why the server died."""
+
+    def broken(self: Any, sockets: Any = None) -> None:
+        self.started = True
+        time.sleep(0.2)
+        raise RuntimeError("uvicorn crashed")
+
+    monkeypatch.setattr(launcher.uvicorn.Server, "serve", broken)
+    running = Running(data_paths)
+    running.thread.start()
+    running.thread.join(timeout=20)
+    (error,) = running.error
+    assert isinstance(error, server.ServerStoppedError)
+    assert isinstance(error.__cause__, RuntimeError) and str(error.__cause__) == "uvicorn crashed"
+
+
+def test_a_log_file_that_cant_be_opened_doesnt_stop_the_second_launch(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-03 (re-check L3): the handler opens its file at the first line (`delay=True`). One that still can't be
+    opened is a reported write failure, and the second launch carries on to open the tab."""
+    from shelfsync import logs
+    from shelfsync.tray.instance import FakeInstanceLock
+
+    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock({"ShelfSync"}))
+    monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
+    (data_paths.logs / logs.LOG_FILE_NAME).mkdir(parents=True)  # a folder where the log file should be
+    ran: list[int] = []
+
+    def fake_second(paths: DataPaths, notifier: Any, shell: Any, store: Any) -> int:
+        logging.getLogger("shelfsync.launcher").warning("second launch")  # tries the file: can't
+        ran.append(1)
+        return 0
+
+    monkeypatch.setattr(launcher, "second_launch", fake_second)
+    try:
+        code = launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore())
+    finally:
+        logs.set_write_failure_notice(None)
+    assert code == 0 and ran == [1]
+    assert "A log line couldn't be written" in capfd.readouterr().err
+
+
+def test_a_handler_that_cant_even_be_built_means_no_file_log_not_a_failed_start(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-03 (re-check L3)."""
+    data_paths.logs.mkdir(parents=True)
+
+    def refuse(logs_dir: Any) -> Any:
+        raise PermissionError("no")
+
+    monkeypatch.setattr(launcher.logs, "configure_append_logging", refuse)
+    assert launcher._append_logging(data_paths) is None
+
+
+def test_the_append_handler_makes_no_file_until_the_first_line(tmp_path: Path) -> None:
+    """SYS-03 (re-check L3): `delay=True`."""
+    from shelfsync import logs
+
+    handler = logs.configure_append_logging(tmp_path)
+    try:
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        logs.remove_logging(handler)

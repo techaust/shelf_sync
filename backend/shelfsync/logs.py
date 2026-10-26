@@ -92,6 +92,14 @@ class RedactingAppendHandler(logging.FileHandler):
     """Appends to the log file and never rotates or prunes it, with the same redaction and the same fixed report of a
     failed write. For a short-lived second process that shares the running copy's file."""
 
+    def emit(self, record: logging.LogRecord) -> None:
+        # With delay=True the stdlib opens the file inside emit(), outside its own error handling: a file that can't be
+        # opened would raise out of the logging call. Report it like any other failed write instead.
+        try:
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+
     def handleError(self, record: logging.LogRecord) -> None:
         _report_write_failure()
 
@@ -133,7 +141,9 @@ def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileH
 
 def configure_append_logging(logs_dir: Path) -> logging.Handler:
     """Like `configure_logging`, but the handler only appends (see `RedactingAppendHandler`)."""
-    handler = RedactingAppendHandler(logs_dir / LOG_FILE_NAME, encoding="utf-8")
+    # delay=True: the file is opened at the first line, so building the handler can't fail and a file that can't be
+    # opened is one reported write failure, not a failed start.
+    handler = RedactingAppendHandler(logs_dir / LOG_FILE_NAME, encoding="utf-8", delay=True)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.addHandler(handler)

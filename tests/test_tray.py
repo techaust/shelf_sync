@@ -158,6 +158,10 @@ class FakeIcon:
         self.setup: Callable[[Any], None] | None = None
         self.visible = False
         self.stopped_before_ready = False
+        self.stop_event = threading.Event()
+        self.loop_daemon: bool | None = None
+        self.setup_thread_daemon: bool | None = None
+        self.setup_thread: threading.Thread | None = None
         FakeIcon.instances.append(self)
 
     @property
@@ -178,14 +182,26 @@ class FakeIcon:
         self._menu = value
         self.menus.append(value)
 
-    def run_detached(self, setup: Callable[[Any], None] | None = None) -> None:
+    def run(self, setup: Callable[[Any], None] | None = None) -> None:
+        """Like pystray: starts the setup in a thread made by the calling thread (so it inherits `daemon`), then blocks
+        until `stop()`."""
         self.detached = True
         self.setup = setup
-        if FakeIcon.auto_ready and setup is not None:
-            threading.Thread(target=setup, args=(self,)).start()  # pystray runs setup on its own thread
+        self.loop_daemon = threading.current_thread().daemon
+        if setup is not None:
+
+            def run_setup() -> None:
+                self.setup_thread_daemon = threading.current_thread().daemon
+                if FakeIcon.auto_ready:
+                    setup(self)
+
+            self.setup_thread = threading.Thread(target=run_setup)
+            self.setup_thread.start()
+        self.stop_event.wait()
 
     def stop(self) -> None:
         self.stopped = True
+        self.stop_event.set()
         if self.setup is not None and not self.visible:
             self.stopped_before_ready = True
 
@@ -490,3 +506,101 @@ def test_the_real_icon_stopped_straight_after_start_really_stops() -> None:
     assert icon is not None
     tray.stop()
     assert wait_for(lambda: not icon._running)  # type: ignore[attr-defined]
+
+
+def test_the_loop_thread_and_pystrays_setup_thread_are_daemon(fake_pystray: types.SimpleNamespace) -> None:
+    """UI-TRAY (re-check M1): a loop that never comes up, or comes up after `stop()` gave up waiting, must not keep
+    the process (and the single-instance lock) alive. pystray starts its setup thread from the thread that calls
+    `run()`, so it is daemon because ours is."""
+    tray = make_tray(TrayState(), [True], [], poll=60)
+    tray.start()
+    try:
+        (icon,) = FakeIcon.instances
+        assert wait_for(lambda: icon.setup_thread_daemon is not None)
+        assert icon.loop_daemon is True
+        assert icon.setup_thread_daemon is True
+        assert tray._loop is not None and tray._loop.daemon and tray._loop.name == "tray-loop"
+    finally:
+        tray.stop()
+
+
+def test_a_loop_that_comes_up_after_stop_gave_up_does_not_keep_the_process_alive(
+    fake_pystray: types.SimpleNamespace,
+) -> None:
+    """UI-TRAY (re-check M1): the loop thread is still blocked after `stop()` returned (it never came up), and being
+    daemon is the only thing that lets the process exit."""
+    FakeIcon.auto_ready = False
+    tray = Tray(
+        TrayState(), nothing, nothing, nothing, light_taskbar=lambda: True, icon_size=lambda: 16, ready_timeout=0.05
+    )
+    tray.start()
+    (icon,) = FakeIcon.instances
+    icon.stop_event.clear()
+    tray.stop()
+    alive = [t for t in threading.enumerate() if t.name == "tray-loop" and t.is_alive()]
+    assert all(t.daemon for t in alive)
+    icon.stop_event.set()
+
+
+def test_the_menu_follows_the_state_even_when_the_icon_file_is_missing(
+    fake_pystray: types.SimpleNamespace, tmp_path: Path
+) -> None:
+    """UI-TRAY (re-check L6): the menu is rebuilt before the image is tried."""
+    state = TrayState()
+    tray = make_tray(state, [True], [], poll=60)
+    tray.start()
+    try:
+        (icon,) = FakeIcon.instances
+        tray._icon_dir = tmp_path  # no .ico files
+        state.set_paused(True)
+        assert icon.menu.items[1].text == "Resume"
+    finally:
+        tray.stop()
+
+
+def test_an_icon_that_failed_to_load_is_not_read_again_every_poll(
+    fake_pystray: types.SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UI-TRAY (re-check L6): the watcher compares the same key as `refresh()` and leaves a failed one alone until
+    the state or theme changes."""
+    attempts: list[Path] = []
+    real = icons.load_icon
+
+    def counting(path: Path, size: int) -> Any:
+        attempts.append(path)
+        return real(path, size)
+
+    monkeypatch.setattr(icons, "load_icon", counting)
+    state, light = TrayState(), [True]
+    tray = make_tray(state, light, [], poll=0.01)
+    tray.start()
+    try:
+        tray._icon_dir = tmp_path
+        state.set_paused(True)  # the explicit refresh fails once
+        after_failure = len(attempts)
+        time.sleep(0.25)  # about twenty polls
+        assert len(attempts) == after_failure  # none of them tried again
+        light[0] = False  # a new key: tried again, once
+        assert wait_for(lambda: len(attempts) == after_failure + 1)
+        time.sleep(0.1)
+        assert len(attempts) == after_failure + 1
+    finally:
+        tray.stop()
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_the_real_icons_loop_and_setup_threads_are_daemon() -> None:
+    """UI-TRAY (re-check M1): with the real pystray, on this PC."""
+    tray = Tray(TrayState(), nothing, nothing, nothing)
+    tray.start()
+    try:
+        icon = tray._icon
+        assert icon is not None and tray._loop is not None
+        assert tray._loop.daemon and tray._loop.name == "tray-loop"
+        assert wait_for(lambda: getattr(icon, "_setup_thread", None) is not None)
+        assert icon._setup_thread.daemon  # type: ignore[attr-defined]
+        assert wait_for(lambda: icon.visible)
+    finally:
+        tray.stop()
+    assert wait_for(lambda: not tray._loop.is_alive() if tray._loop else True)

@@ -3,9 +3,12 @@
 Menu: Open ShelfSync (the default item, bold; a click on the icon runs it too), Pause everything / Resume (shown,
 greyed out until M5), View logs, a separator, Quit. Tooltip "ShelfSync".
 
-Threads: on Windows `Icon.run_detached()` runs the icon's message loop in its own thread, so the main thread stays
-free for the launcher's wait loop (which Ctrl+C can interrupt). pystray's docs say `run()` should be called from the
-main thread "for platform independence"; the win32 backend creates its window and loop in whichever thread runs it.
+Threads: the icon's message loop runs in a daemon thread of ours (`tray-loop`) that calls `Icon.run(setup)`, so the
+main thread stays free for the launcher's wait loop (which Ctrl+C can interrupt). pystray's docs say `run()` should be
+called from the main thread "for platform independence"; the win32 backend creates its window and loop in whichever
+thread runs it (its own `run_detached` does exactly this, in a non-daemon thread). Daemon matters: pystray starts its
+setup thread from the thread that calls `run()`, so that one is daemon too, and if the loop never comes up (or comes
+up after `stop()` gave up waiting) neither thread can keep the process, and the single-instance lock, alive.
 
 Theme: pystray has no callback for a taskbar theme change, so a small thread re-reads the setting every few seconds
 and swaps the icon.
@@ -95,6 +98,7 @@ class Tray:
         self._icon: Any = None
         self._stop = threading.Event()
         self._watcher: threading.Thread | None = None
+        self._loop: threading.Thread | None = None
         self._shown: tuple[IconState, bool] | None = None
         self._lock = threading.Lock()
 
@@ -129,7 +133,9 @@ class Tray:
         self._icon = pystray.Icon("ShelfSync", image, TOOLTIP, self._pystray_menu())
         self._state.subscribe(self.refresh)
         self._ready.clear()
-        self._icon.run_detached(self._setup)
+        icon = self._icon
+        self._loop = threading.Thread(target=lambda: icon.run(self._setup), name="tray-loop", daemon=True)
+        self._loop.start()
         self._watcher = threading.Thread(target=self._watch_theme, name="tray-theme", daemon=True)
         self._watcher.start()
 
@@ -145,9 +151,9 @@ class Tray:
         self._stop.set()
         icon, self._icon = self._icon, None
         if icon is not None:
-            # `Icon.stop()` before the loop is up does nothing and would leave the loop (a non-daemon thread) running
-            # for ever, holding the process and the single-instance lock. Wait for it to come up; if it never does
-            # (pystray's thread failed, so nothing is running) stop anyway and carry on.
+            # `Icon.stop()` before the loop is up does nothing, so wait for it to come up first. If it never does
+            # (pystray's thread failed) stop anyway and carry on: the loop and setup threads are daemon, so they
+            # can't hold the process even if the loop comes up later.
             if not self._ready.wait(self._ready_timeout):
                 _log.warning("The tray icon didn't come up in %.0f seconds", self._ready_timeout)
             try:
@@ -164,6 +170,9 @@ class Tray:
             if icon is None:
                 return
             key = self._key()
+            icon.menu = (
+                self._pystray_menu()
+            )  # first: the menu text (Resume) must follow the state even if the image fails
             try:
                 image = self._image(key)
             except Exception as error:  # a missing or damaged .ico must not stop the tray
@@ -174,12 +183,14 @@ class Tray:
             if key != self._shown:
                 self._shown = key
                 icon.icon = image
-            icon.menu = self._pystray_menu()
 
     def _watch_theme(self) -> None:
         while not self._stop.wait(self._poll):
             try:
-                if (self._state.icon_state, self._light_taskbar()) != self._shown:
+                key = self._key()
+                # An icon that failed to load is not read again every few seconds; a state or theme change (a new
+                # key) or an explicit refresh() tries again.
+                if key != self._shown and key not in self._warned:
                     self.refresh()
             except Exception as error:
                 _log.warning("The tray theme check failed (%s)", type(error).__name__)

@@ -104,7 +104,8 @@ def second_launch(
         return EXIT_REFUSED
 
     # A new client for the token: the probe's connection was opened before the owner check, so it could be talking to
-    # a different program than the one the check looked at. A fresh client opens a fresh connection.
+    # a different program than the one the check looked at. A fresh client opens a fresh connection, which narrows the
+    # gap (a program could still take the port between the owner check and this connection) but doesn't close it.
     with client_factory() as sender:
         ticket = _ask_for_ticket(sender, running.port, secrets)
     if ticket is None:
