@@ -92,7 +92,63 @@ The lead owns everything in `docs/` (except §3 here), `CLAUDE.md`, `CHANGELOG.m
 _(Tier B: none.)_
 
 ## 3. Builder report
-_(builder)_
+_(builder, Sonnet 5.5, 2026-10-26; branch `feat/m1a.1-backbone`)_
+
+**Result:** everything in "Done means" passes except one: **`uv run pip-audit` fails** on dev-only packages (see "Needs the owner"). Every heavy command ran through `tools/heavy.sh` on this PC. The workflow has **not been run on GitHub yet**.
+
+**Skills and tools:** Context7 for FastAPI, uvicorn, uv, pytest, pytest-cov, ruff, mypy, bandit and pip-audit. No other skill in 09 §3 fits this task (the AWS skills are for boto3 code, which comes later; no screens, so no browser or design skill).
+
+**What Context7 changed:**
+- uvicorn: `Server.serve(sockets=[sock])` takes an open, already-listening socket and skips its own binding, so the port is bound by us and never released. `Config(log_config=None)` leaves logging alone, so our handler on the root logger gets uvicorn's records.
+- FastAPI: `docs_url=None, redoc_url=None, openapi_url=None` removes the routes; `app.openapi()` still builds the schema in code (tested).
+- uv: a project can be `package = false` (virtual), which needs no build backend. A backend (hatchling) would be one more package outside the owner's list, so I used this. Consequence: `backend/` is on the path through `pytest pythonpath` and `mypy_path`, and `python -m shelfsync` needs `PYTHONPATH=backend` (see commands below).
+- pip-audit: `--require-hashes --disable-pip -r <file>` audits a hashed requirements file with no resolution; `uv export` produces that file from `uv.lock`.
+- pytest 9.1.1 accepts `[tool.pytest.ini_options]` (used). bandit needs no config. Coverage has no per-folder threshold (see "Decisions").
+
+**Files changed** (all new): `pyproject.toml`, `uv.lock`, `.python-version` (3.12.10), `.github/workflows/checks.yml`; `backend/shelfsync/`: `__init__.py`, `__main__.py`, `clock.py`, `paths.py`, `messages.py`, `logs.py`, `server.py`, `api/app.py`, `db/{connection,migrate,settings}.py`, `db/migrations/0001_base.sql`, `platform/notify.py`; `tests/`: `conftest.py`, `test_api_health.py`, `test_clock.py`, `test_db.py`, `test_logs.py`, `test_no_outbound.py`, `test_paths.py`, `test_server.py`. Nothing outside the allowed list was touched (`.gitattributes` was already in place).
+
+**Commands and results** (logs in `.logs/`, git-ignored):
+| Command | Result |
+|---|---|
+| `uv sync` (m1a.1-sync), then `uv sync --locked` (m1a.1-sync-locked) | exit 0; 59 packages, lock holds hashes |
+| `uv run ruff check` and `uv run ruff format --check` (whole repo) | pass; 26 files formatted |
+| `uv run mypy` (m1a.1-mypy) | pass, strict, 16 source files |
+| `uv run pytest` (m1a.1-pytest) | **44 passed**, coverage **97 %** total (branch on); 1 warning (below) |
+| `uv run bandit -r backend` (m1a.1-bandit) | pass, 0 issues in 386 lines |
+| `uv export --locked --no-emit-project ...` then `uv run pip-audit --require-hashes --disable-pip -r .logs/locked.txt` (m1a.1-pipaudit) | **FAIL, exit 1**: 7 known vulnerabilities in 2 packages: certifi 2026.7.22 (PYSEC-2026-4320, fix 2026.10.19) and filelock 4.1.1 (six CVEs, fix 4.2.1). Both are dev-only today (pulled in by pip-audit and httpx). The same audit with `--no-dev` (m1a.1-pipaudit-nodev) finds **nothing**. |
+| `npm --prefix brand ci` then `npm --prefix brand test` | pass, **221 tests** (5 files) |
+| `checks.yml` loaded with PyYAML | valid; jobs `python` and `brand`; uses only `actions/checkout`, `astral-sh/setup-uv`, `actions/setup-node` at the 04 §2.1 SHAs (upload-artifact not needed yet) |
+
+**Resolved versions** (cutoff 2026-10-12): starlette 1.7.0, pydantic 2.14.1, pydantic-core 2.50.1, anyio 4.15.1, h11 0.16.0, click 8.5.0; also certifi 2026.7.22 and filelock 4.1.1 (the two flagged).
+
+**Tests for "Done means"** (in `tests/`): health returns exactly the two fields and `/docs`, `/redoc`, `/openapi.json` give 404 (`test_api_health.py`); migrations: fresh, idempotent, broken one rolls back with the version table unchanged, plus trigger splitting, bad names, newer-database refusal (`test_db.py`); port: default 47615, 47615 held gives 47616 and the exact ERR-06 text, all ten held gives the "all in use" text and a non-zero exit, socket on `127.0.0.1`, `runtime.json` has only `port` and `pid`, start-up empties `tmp\`, and one test runs real uvicorn on a handed-over socket and calls `/api/health` (`test_server.py`); log line is JSON with the five fields and a `Z` time, rotation keeps the set count (`test_logs.py`); naive datetimes refused (`test_clock.py`); a connection to example.com fails the test (`test_no_outbound.py`).
+
+**Decisions I took** (record in 11 if you agree):
+- Busy timeout 5000 ms (a wait only happens while a backup or checkpoint runs; a real deadlock shows within seconds).
+- Time format `YYYY-MM-DDTHH:MM:SS.ffffffZ`, always six digits: fixed width, so the text sorts like the time.
+- ERR-06 is sent as **one** notification of two lines (first message, newline, second line).
+- A port setting outside 47615-47624 gets no fallback (only that port is tried). The settings screen (M1b) should validate the port.
+- Exit codes: 0 ok, 1 all ports in use, 2 migration failed (message on stderr).
+- Access log is **off** (uvicorn's access line carries the query string); `proxy_headers` and the `Server` header are off.
+- Redaction plugs in at **`shelfsync.logs.redact(text) -> str`** (`backend/shelfsync/logs.py`), called by `JsonFormatter.format` on every final message including tracebacks; a test proves the hook is called. M1a.2 replaces its body and adds its own test.
+- On Windows the listener sets `SO_EXCLUSIVEADDRUSE`; on Linux `SO_REUSEADDR` (so a restart can rebind).
+- Log retention is read once at start-up (a changed setting applies after a restart).
+- Ruff: line length 120, rules E F W I B UP SIM RUF, `RUF001` ignored (the en dash in ERR-06 is the owner's wording), and `docs`, `tools`, `brand`, `.claude` excluded so a bare `ruff check` covers app code only (the research and doc scripts there would fail it).
+- Coverage hook: `[tool.coverage]` measures `backend/shelfsync` with branches. coverage.py has no per-folder threshold, so CI has a step that runs `coverage report --include=<folders with code besides __init__.py> --fail-under=90`; it does nothing until `secure/`, `inspect/`, `match/` or `apply/` gets a `.py` file. That shell step is untested on GitHub.
+
+**Needs the owner (stopped, not guessed):**
+1. **pip-audit fails on the 14-day cutoff.** The fixed releases (certifi 2026.10.19, filelock 4.2.1) are newer than 2026-10-12. Options: (a) accept, and add `--ignore-vuln` for those seven IDs for the dev tools until the next pin refresh; (b) raise the cutoff or exempt certifi and filelock (uv has a per-package exclude-newer setting); (c) audit only run-time packages in CI (passes today). httpx becomes a run-time package in M2 and needs certifi then, so (c) alone won't hold.
+2. **Starlette warns** "Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead." (FastAPI's TestClient). httpx 0.28.1 is the owner's pin, so I installed nothing; harmless today. Flag for the next pin refresh.
+
+**Not verified:** the workflow on GitHub (the coverage step script, `uv export` and pip-audit there, setup-uv's `version` input); anything on Linux (tests ran only on this Windows PC); `SO_EXCLUSIVEADDRUSE` against a program that holds the port with `SO_REUSEADDR`; `python -m shelfsync` was not started by hand (the tests start the real server instead).
+
+**Suggested lines for `CLAUDE.md` § Commands** (repo root; heavy ones via `bash tools/heavy.sh --log <name> ...`):
+- Install: `uv sync --locked`
+- Python checks: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest` (coverage is on by default), `uv run bandit -r backend`
+- Audit: `uv export --locked --no-emit-project --format requirements-txt --output-file .logs/locked.txt` then `uv run pip-audit --require-hashes --disable-pip -r .logs/locked.txt`
+- Dev server: PowerShell `$env:PYTHONPATH = "backend"` then `uv run python -m shelfsync` (data goes to `%LOCALAPPDATA%\ShelfSync`, or to `SHELFSYNC_DATA_DIR`)
+- Brand, as CI runs it: `npm --prefix brand ci` and `npm --prefix brand test`
+- `.gitignore` needs nothing new (`.venv/`, `.logs/` and the caches are already covered).
 
 ## 4. Review
 _(reviewer reply, copied in by the lead)_
