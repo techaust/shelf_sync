@@ -6,6 +6,9 @@ ERR06_ALL_IN_USE = "Ports 47615–47624 are all in use. Close the program using 
 # docs/13 section 6: ERR-06, second line
 ERR06_OLD_ADDRESS = "Open ShelfSync from the tray icon. The old address now reaches the other program."
 
-# Not in docs/13 yet (placeholders for the lead to move into 13): start-up failures.
-START_FAILED = "ShelfSync couldn't start. The details are in the log."
-START_FAILED_MIGRATION = "ShelfSync couldn't start: {detail}"
+# docs/13 section 3: Start-up
+START_FAILED = r"ShelfSync couldn't start. The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
+START_FAILED_MIGRATION = (
+    "ShelfSync couldn't update its database, so it didn't start. "
+    r"The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
+)

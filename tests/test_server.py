@@ -15,7 +15,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
-from shelfsync import server
+from shelfsync import messages, server
 from shelfsync.api.app import create_app
 from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
@@ -133,7 +133,7 @@ def test_migration_failure_stops_startup_and_is_logged_and_notified(
     code, notifier, serve = start(data_paths)
     assert code == server.EXIT_MIGRATION_FAILED
     assert serve.sockname is None
-    assert notifier.messages == ["ShelfSync couldn't start: boom"]
+    assert notifier.messages == [messages.START_FAILED_MIGRATION]
     assert "boom" in (data_paths.logs / "shelfsync.log").read_text(encoding="utf-8")
     assert capsys.readouterr().err == ""  # no bare print
 
@@ -148,7 +148,7 @@ def test_any_startup_exception_is_logged_notified_and_has_its_own_exit_code(
     code, notifier, serve = start(data_paths)
     assert code == server.EXIT_START_FAILED
     assert code not in (server.EXIT_OK, server.EXIT_PORTS_IN_USE, server.EXIT_MIGRATION_FAILED)
-    assert notifier.messages == ["ShelfSync couldn't start. The details are in the log."]
+    assert notifier.messages == [messages.START_FAILED]
     assert "RuntimeError: disk on fire" in (data_paths.logs / "shelfsync.log").read_text(encoding="utf-8")
     assert serve.sockname is None
 
