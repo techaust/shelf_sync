@@ -1,0 +1,56 @@
+[project]
+name = "shelfsync"
+version = "0.1.0"
+description = "ShelfSync by TecHaust: updates WooCommerce downloads from vendor ZIPs (localhost only)."
+requires-python = "==3.12.*"
+dependencies = [
+    "fastapi==0.143.0",
+    "uvicorn==0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "hypothesis==6.169.0",
+    "ruff==0.17.0",
+    "mypy==2.4.0",
+    "bandit==1.9.4",
+    "pip-audit==2.10.1",
+]
+
+[tool.uv]
+# The app runs from source (backend/ is the import root, see tool.pytest and tool.mypy below) and is packaged later
+# by the installer. A build backend would be one more package to install, so none is used here.
+package = false
+# 14-day cutoff for everything the pins pull in: releases on or before 2026-10-12 (04 section 2.1).
+exclude-newer = "2026-10-13T00:00:00Z"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["backend", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# The en dash in the ERR-06 text is the owner-approved wording (docs/13), not a typo.
+ignore = ["RUF001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "backend"
+packages = ["shelfsync"]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov --cov-report=term-missing:skip-covered"
+
+[tool.coverage.run]
+source = ["backend/shelfsync"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
