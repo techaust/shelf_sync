@@ -150,6 +150,24 @@ Linux CI and GitHub (nothing run there; `mypy --platform linux` passes here, the
 3. Toasts use Command Prompt's AUMID until M1b. Fine for now?
 4. `Local\` versus `Global\` for the mutex (above): confirm `Local\`.
 
+### Fix round 1
+_(builder, Sonnet 5.5 medium; the "Fix now" rows of the §5 triage; rows 3 and 10 are not mine)_
+
+| # | What changed | Test that proves it |
+|---|---|---|
+| 1 | `Tray.start()` passes pystray a `setup` callback that sets `visible` and a ready Event; `stop()` waits for it (5 s, `ready_timeout`), then stops; if the loop never comes up it logs, stops anyway and returns | `test_tray.py`: `test_stop_before_pystray_is_ready_waits_for_it_then_stops` (fails if stop ran before setup), `..._never_gets_ready_still_returns_and_stops`, `test_the_setup_callback_shows_the_icon`, `test_an_icon_that_cant_be_stopped_is_logged_not_raised`; Windows: `test_the_real_icon_stopped_straight_after_start_really_stops` (the real loop ends) |
+| 2 | New `logs.RedactingAppendHandler` / `configure_append_logging` (never rotates or prunes; same redaction and `handleError`); the second launch uses it | `test_output_guards.py`: `test_the_second_launchs_handler_never_rotates_or_prunes_the_running_copys_log` (log file aged 3 days, rotate refused: nothing renamed, no toast), its control `test_the_rotating_handler_on_the_same_old_file_would_have_rotated_it`, the failed-write report test; `test_launcher.py::test_main_second_launch...` sees only the append handler |
+| 4 | `default_instance_lock()` moved inside the start-up `try` | `test_run_application.py::test_a_failing_default_lock_is_a_plain_exit_code_not_a_traceback` |
+| 5 | Comment in `tray/instance.py` corrected (a second logon session can start a second server on the next port; a data-folder lock file is M1b) | comment only |
+| 6 | `server.ServerStoppedError`, raised by `TrayServe` when the server dies after it came up; `run()` gives it `messages.SERVER_STOPPED` ("ShelfSync stopped unexpectedly. The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log") and exit code 7; a server that never starts stays "couldn't start" | `test_run_application.py::test_a_server_that_stops_by_itself_has_its_own_notice_and_exit_code`; `test_launcher.py::test_a_server_that_dies_ends_the_launcher_with_an_error` and `test_a_server_that_never_starts_is_still_a_start_failure` |
+| 7 | The token goes through a new client made after the owner check (the probe client is closed first) | `test_second_launch.py::test_the_token_goes_over_a_fresh_connection_not_the_one_probed_before_the_owner_check` |
+| 8 | `open_url` parses with `urlsplit`: scheme http, host exactly 127.0.0.1, whole port, no user info, authority equals `127.0.0.1:<port>`, no whitespace or control characters | new `tests/test_shell.py` (3 good, 24 bad addresses incl. `http://127.0.0.1:1@evil.example/`, on the fake and the real shell; error text never repeats the address) |
+| 9 | The "icon couldn't be changed" warning is once per (state, theme) icon, not every poll | `test_tray.py::test_a_missing_icon_file_is_warned_once_per_icon_not_every_poll` |
+| 11 | Quit test records the order (tray stopped while the server still answers 200, then the port closes) and asserts no `uvicorn` thread is left; `make_on_settings(run_key, installed)` takes a `FakeRunKey` and a forced `installed`, so no test calls the real `apply_start_with_windows` on the real key; the real-key Windows test forces "development" by patching `is_installed_copy`; the Windows tray test now also stops straight after start | `test_launcher.py::test_quit_stops_the_tray_then_the_server_and_returns`, `test_the_settings_hook_*`; `test_autostart.py::test_the_real_run_key_is_not_written_by_a_development_apply` |
+| 12 | `run_application(make_serve, ...)` builds `serve` from the one resolved `DataPaths`; the launcher no longer calls `resolve_data_paths()` again | `test_run_application.py::test_the_data_folder_found_once_is_the_one_serve_is_built_for` |
+
+**Commands** (logs `.logs/m1a.4-fix-*.log`): `ruff check` and `ruff format --check` clean (74 files); `mypy` and `mypy --platform linux`: no issues; `pytest`: **608 passed, 7 skipped, 27 deselected**; `pytest -m windows --no-cov`: **26 passed, 1 skipped** (V31, not run; `-m defender` not used); `secure/` coverage 100 %, exit 0; `bandit -r backend`: clean. After the Windows run: `reg query ...\Run` filtered for ShelfSync shows no line; `cmdkey /list:ShelfSync-test-*`, `/list:*@ShelfSync-test-*` and `/list:ShelfSync` all `* NONE *`. Not run: pip-audit (Pillow, the owner's), brand tests, Linux, GitHub.
+
 ## 4. Designer report
 _(none: native tray menu)_
 
