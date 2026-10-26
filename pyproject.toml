@@ -56,7 +56,7 @@ packages = ["shelfsync"]
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]
-markers = ["windows: needs Windows (skipped on other systems); proves behaviour the Linux CI can't"]
+markers = ["windows: needs Windows; deselected by default, run on purpose with `pytest -m windows`; proves behaviour the Linux CI can't"]
 # "-m 'not windows'": the Windows checks write throwaway Credential Manager entries, so a plain run skips them; run
 # them on purpose with `pytest -m windows` (a -m on the command line replaces this one).
 addopts = "-ra --strict-markers -m 'not windows' --cov --cov-report=term-missing:skip-covered"

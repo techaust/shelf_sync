@@ -33,7 +33,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(rf"((?:aws_)?secret_?access_?key{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
     (re.compile(rf"((?:aws_)?session_?token{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
     (
-        re.compile(rf"(X-Amz-(?:Signature|Credential|Security-Token)=){_VALUE}", re.IGNORECASE),
+        re.compile(rf"(X-Amz-(?:Signature|Credential|Security-Token){_SEP}){_VALUE}", re.IGNORECASE),
         rf"\1{MASK}",
     ),
     # GitHub tokens (docs.github.com, "About authentication to GitHub": ghp_ gho_ ghu_ ghs_ ghr_ github_pat_)

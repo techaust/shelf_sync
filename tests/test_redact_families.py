@@ -29,6 +29,7 @@ FAMILIES = [
     ("aws-session-token-camel", "SessionToken={s}", ALNUM + "/+=", 20, 80),
     ("amz-signature", "X-Amz-Signature={s}", ALNUM, 16, 64),
     ("amz-credential", "X-Amz-Credential={s}", ALNUM + "%/", 16, 64),
+    ("amz-security-token-header", "'X-Amz-Security-Token': '{s}'", ALNUM, 16, 64),
     ("github-classic", "gh" + "p_{s}", ALNUM, 20, 40),
     ("github-oauth", "gh" + "o_{s}", ALNUM, 20, 40),
     ("github-fine-grained", "github" + "_pat_{s}", ALNUM + "_", 20, 80),

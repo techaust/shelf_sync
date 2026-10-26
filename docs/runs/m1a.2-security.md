@@ -1,4 +1,4 @@
-Status: open
+Status: open (ready for PR)
 Tier: A
 Usage: `analyst claude-opus-5-5/high` (brief draft; no skill: `security-review` and `code-review` need a diff, none existed); lead at Opus 5.5 high for the final brief (12 §3, key step 1); 5-h 23 % at the start of the draft
 
@@ -206,7 +206,7 @@ The lead owns `docs/` (except the parts of this file named above), `CLAUDE.md`, 
     - `KeyringSecretStore`: set, get and delete one throwaway entry (`ShelfSync-test-<random>`), always removed in `finally`. Nothing else in Credential Manager is read or touched.
     - `load_or_create_install_token` twice through a throwaway service name gives the same value; cleaned up afterwards.
     - A missing entry returns `None`.
-    - Run them with `bash tools/heavy.sh --log m1a.2-windows-checks uv run pytest -m windows`.
+    - Run them with `bash tools/heavy.sh --log m1a.2-windows-checks uv run pytest -m windows --no-cov`.
     - `platform/` is measured by the Windows checks, not the CI gate ([07 §1](../07-testing.md)).
 
 11. **Contract for M1a.3 and M1a.4** (record it in §3 as built; the lead copies it into their briefs):
@@ -316,7 +316,7 @@ _(Final, builder Sonnet 5.5 high. The first part below was written at the early-
 
 **After the early check:**
 - *Item 9 (output guards):* `logs.install_output_guards()` is the first call in `server.main()`. It replaces `logging.lastResort` with `RedactingStderrHandler` (silent when `sys.stderr` is None; never reports its own failures), sends `sys.excepthook`, `threading.excepthook` and (added, same purpose) `sys.unraisablehook` through the logger `shelfsync.uncaught`, and turns on `logging.captureWarnings(True)`. `remove_output_guards()` puts everything back (tests). `tests/test_output_guards.py` has one distinct key-shaped secret per path: message and args, exception and traceback, `extra` fields, `uvicorn.error`, a warning, a record before logging is set up, one after it is removed, an uncaught exception in the main thread (a real child process, also with `sys.stderr = None`), in another thread, an unraisable one, `LogNotifier`, the 422 and 500 bodies, and `run()` with a start-up exception that holds the install token. A control test shows that without the guards Python's own handler of last resort does print the key. Ruff `T20` is on for `backend/` (tests exempt); no `print` exists.
-- *Item 10 (Windows checks):* `tests/test_windows_keyring.py`, five tests, each under its own one-off service `ShelfSync-test-<random>`, entries deleted in `finally`. `bash tools/heavy.sh --log m1a.2-windows-checks uv run pytest -m windows`: 7 passed (these five and the two M1a Windows tests in test_paths.py and test_server.py; 411 deselected). Afterwards `cmdkey /list:ShelfSync-test-*` and `cmdkey /list:*@ShelfSync-test-*` (these filters read only entries with that name) both show `* NONE *`. Nothing else in Credential Manager was read or listed. Two of the tests do write a throwaway entry (set and get, and the install token under a second throwaway service name), one at a time; the real `ShelfSync` service was never used.
+- *Item 10 (Windows checks):* `tests/test_windows_keyring.py`, five tests, each under its own one-off service `ShelfSync-test-<random>`, entries deleted in `finally`. `bash tools/heavy.sh --log m1a.2-windows-checks uv run pytest -m windows --no-cov`: 7 passed (these five and the two M1a Windows tests in test_paths.py and test_server.py; 411 deselected). Afterwards `cmdkey /list:ShelfSync-test-*` and `cmdkey /list:*@ShelfSync-test-*` (these filters read only entries with that name) both show `* NONE *`. Nothing else in Credential Manager was read or listed. Two of the tests do write a throwaway entry (set and get, and the install token under a second throwaway service name), one at a time; the real `ShelfSync` service was never used.
 - *Linux branch of `platform/secrets.py`:* `tests/test_secrets_not_windows.py` (skipped on Windows). I checked the same two assertions here by setting `sys.platform = "linux"` before importing the module: it raises `SecretStoreError` and does not import `keyring`. mypy never checks the Windows branch on Linux (mypy skips a `sys.platform == "win32"` block there); it is checked on this PC, and with keyring hidden `--platform linux` passes.
 
 **Final run** (everything through `tools/heavy.sh` where it is heavy; logs in `.logs/m1a.2-final-*.log`):
@@ -409,8 +409,22 @@ _(none: no screens)_
 
 Fixes by the `builder` at medium (no critical finding), then a re-check of the fix diff by the `reviewer` at medium.
 
+**Re-check** _(reviewer, Opus 5.5 medium, `code-review` on `521a8e8..872dea4`, 2026-10-27)_ **APPROVE**: all ten "Fix now" rows fixed as decided, each test fails without its fix, no regression. Ran `pytest`: 420 passed, 2 skipped, 9 deselected. Six lows, decided by the lead:
+
+| # | Finding | Decision |
+|---|---|---|
+| R1 | Delete-then-set leaves no stored token if the write fails after the delete (fails closed; a second launch can't sign in until the next start) | **Into the M1a.4 brief:** write first, then delete only the `<name>@<service>` leftover; M1a.4 owns second launches |
+| R2 | Ctrl+C now reaches `sys.__excepthook__`, which prints the chained traceback unredacted | **Into the M1a.4 brief** (its "Ctrl+C exit 0" item): one fixed line through the redacting stderr handler |
+| R3 | `X-Amz-*` pattern accepted only `=`, so the header/dict form wasn't masked | **Fixed by the lead** (`_SEP` in the pattern, one hypothesis family) |
+| R4 | The `windows` marker text said "skipped on other systems" | **Fixed by the lead** (marker text says it's deselected by default) |
+| R5 | §3 and the brief still showed the old `-m windows` command | **Fixed by the lead** (`--no-cov` added in both places) |
+| R6 | A new stderr handler per failed write; a rollover Windows refuses loses later lines silently under pythonw | **Into the M1a.4 brief** (pythonw logging) |
+
 ## 6. Integration notes
-_(empty)_
+_(lead, 2026-10-27)_
+- The lead's follow-up commit (R3–R5): `pytest` 421 passed, 2 skipped, 9 deselected; ruff and format clean; `secure/` coverage 100 % (`.logs/m1a.2-lead-followups.log`).
+- Not yet: push, PR and CI on GitHub (each needs the owner's yes); the brand tests (no brand file changed).
+- M1a.3 was cut from `872dea4` and is rebased onto `main` after this merges.
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Final brief written at Opus 5.5 high from the analyst's draft. The owner said yes to keyring in M1a.2, to its exact pins (keyring 25.7.0 and five Windows-only dependencies) and to in-memory sign-ins (2026-10-27). Next step: once merged, start the `builder` (Sonnet 5.5, high) in its worktree on `feat/m1a.2-security`.
+_(lead, 2026-10-27)_ Built, reviewed (APPROVE), fixed, re-checked (APPROVE) and the re-check's small items handled. Branch `feat/m1a.2-security` is ready and **waits for the owner's yes to push, open the PR and merge on green**. Then: CHANGELOG line, status, and rebase M1a.3.
