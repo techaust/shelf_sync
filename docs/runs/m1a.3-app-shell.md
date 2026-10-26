@@ -1,4 +1,4 @@
-Status: open
+Status: open (ready for PR after M1a.2 merges and a rebase)
 Tier: B (design effort A: designer at high, [12 §2](../12-models-and-usage.md))
 Usage: (filled from node tools/model-audit.mjs)
 
@@ -283,7 +283,11 @@ _(designer, Opus 5.5, 2026-10-27; commit `83085b0` on `feat/m1a.3-app-shell`, fr
 Fixes by the `designer` at medium, then a re-check (code and visual) by the `reviewer` at medium.
 
 ## 6. Integration notes
-_(empty)_
+_(lead, 2026-10-27)_
+- **Re-check** _(reviewer, Opus 5.5 medium, `code-review` + `frontend-design`, code and visual, `401b4da..d93eae2`)_ **APPROVE**: no critical, high or medium findings; seven lows. Six were fixed in round 2 (`83085b0`, report `8d8bcef`); #7 (dark rules written twice in `app.css`) goes to a later token task.
+- The lead added `color` to the `.btn` and `.nav-item` transitions (`70b072e`, `d93eae2`), and the scanner self-check to CI (`2c7d8ab`). The lead read the round 2 diff; no further re-check.
+- **Before the PR:** rebase onto `main` after M1a.2 merges (this branch starts at `872dea4`), then run the full checks again. The first CI run includes Playwright + axe, which has never run.
+- The wording is in [13](../13-content.md) §3 and the decisions in [11](../11-decisions.md). The `.gitignore` lines are on the docs branch.
 
 ## 7. Handover
 _(lead, 2026-10-27)_ Brief written at Opus 5.5 medium. Waits for M1a.2's fix round and re-check, then the designer starts from the head of `feat/m1a.2-security`.
