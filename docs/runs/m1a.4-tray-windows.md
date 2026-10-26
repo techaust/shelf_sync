@@ -154,7 +154,27 @@ Linux CI and GitHub (nothing run there; `mypy --platform linux` passes here, the
 _(none: native tray menu)_
 
 ## 5. Review
-_(empty)_
+**Review** _(reviewer, Opus 5.5 high, `code-review` + `security-review` by hand on `6dca164..00d3c79`, 2026-10-27)_ **APPROVE**: nothing critical or high. Security verdict: no other Windows user's program and no non-ShelfSync process can receive the install token (exclusive bind, mutex, SID check, PID check, token read only after a trusted verdict, `trust_env=False`, no redirects). Ran: `pytest` 565 passed, 7 skipped, 26 deselected; `mypy --platform linux`, ruff, format, `uv lock --check` clean. Not run: `-m windows`, `-m defender`, Linux, brand tests.
+
+**Triage** _(lead, Opus 5.5 medium, 2026-10-27; Tier B)_
+
+| # | Sev | Finding | Decision |
+|---|---|---|---|
+| 1 | M | `stop()` before pystray is ready does nothing; the process hangs holding the mutex | **Fix now:** a `setup` callback sets a ready Event (and `visible`); `stop()` waits on it with a timeout; a fake-pystray test with stop before ready; if pystray's thread fails before ready, the process still exits |
+| 2 | M | A second launch's rotating handler can fire a false "can't write its log" toast and prune with 30 | **Fix now:** the second launch logs through a handler that never rotates (same redacting formatter and `handleError`); test with an old file time |
+| 3 | M | pip-audit fails on Pillow 12.3.0 | **Owner's decision** (package); lead recommends Pillow 13.0.0 as a security exception, then rerun the tray tests and `-m windows` |
+| 4 | L | `default_instance_lock()` outside the `try` | **Fix now** |
+| 5 | L | Wrong comment: the port check doesn't stop a second session's server | **Fix now** (comment); a lock file in the data folder covering every session → **M1b brief** |
+| 6 | L | A server that dies mid-session is reported as "didn't start" | **Fix now:** its own exception and message, proposed for 13: "ShelfSync stopped unexpectedly. The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log" |
+| 7 | L | The token POST may reuse a connection opened before the owner check | **Fix now:** a fresh client for the POST |
+| 8 | L | `open_url` prefix check accepts `http://127.0.0.1:1@evil.example/` | **Fix now:** `urlsplit` (scheme http, hostname 127.0.0.1, no user info, integer port) with tests |
+| 9 | L | A missing `.ico` warns every 5 s | **Fix now:** warn once per key |
+| 10 | L | Private keyring methods `_read_credential`, `_delete_password` | **Keep**, with a note: rerun `-m windows` on every keyring upgrade (lead adds it to 09) |
+| 11 | L | Quit-order test proves neither order nor shutdown; two tests call the real `apply_start_with_windows`; the Windows tray test hides #1 | **Fix now:** record call order and assert the uvicorn thread ended; inject `FakeRunKey` / patch `is_installed_copy` |
+| 12 | L | `serve` resolves data paths a second time | **Fix now:** pass the resolved paths in |
+| Q | — | Image check widening; `Local\` mutex; Command Prompt AUMID | **Accept** the widening (the SID is the boundary, 06 §10) and `Local\`. Optional tightening to the install folder for installed copies and ShelfSync's own AUMID → **M1b brief** |
+
+Fixes by the `builder` at medium, then a re-check by the `reviewer` at medium.
 
 ## 6. Integration notes
 _(empty)_
