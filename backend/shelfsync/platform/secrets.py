@@ -4,6 +4,7 @@
 outside the `windows` marker, and the Linux CI, uses. Neither ever puts a secret into an error message.
 """
 
+import contextlib
 import sys
 import threading
 from typing import Protocol
@@ -60,6 +61,11 @@ if sys.platform == "win32":
         It uses its own `WinVaultKeyring()` instance, never keyring's process-wide backend, so no other backend
         (and no keyring configuration file or environment setting) can be picked in its place.
 
+        Entries are kept "local machine" (they never roam with a roaming profile); `persist` is set after the backend
+        is built, so no `KEYRING_PROPERTY_*` environment variable can change it. `set` removes the old entry first:
+        keyring's own `set_password` would otherwise re-save the old value under `<name>@<service>`, leaving a
+        replaced install token behind in Credential Manager.
+
         Only the entries this adapter is asked about are touched. Any keyring failure becomes a
         `SecretStoreError` that names the failure type and nothing else, so no value or backend detail can leak
         into a log line.
@@ -68,7 +74,9 @@ if sys.platform == "win32":
         def __init__(self, service: str = SERVICE_NAME) -> None:
             self._service = service
             # keyring's WinVaultKeyring class is untyped; the base class gives the three methods their types
-            self._backend: KeyringBackend = WinVaultKeyring()  # type: ignore[no-untyped-call]
+            backend = WinVaultKeyring()  # type: ignore[no-untyped-call]
+            backend.persist = "local machine"  # after construction: the environment can't override it
+            self._backend: KeyringBackend = backend
 
         def get(self, name: str) -> str | None:
             try:
@@ -78,6 +86,9 @@ if sys.platform == "win32":
 
         def set(self, name: str, value: str) -> None:
             try:
+                # no leftover copy of the old value; PasswordDeleteError just means there was no earlier entry
+                with contextlib.suppress(keyring.errors.PasswordDeleteError):
+                    self._backend.delete_password(self._service, name)
                 self._backend.set_password(self._service, name, value)
             except Exception as error:
                 raise SecretStoreError(f"Credential Manager write failed ({type(error).__name__})") from None

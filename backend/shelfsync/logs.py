@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import threading
+import warnings
 from datetime import UTC, datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -54,13 +55,30 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
+def _report_write_failure() -> None:
+    """One fixed line to stderr, through the redacting handler, when a log line couldn't be written. It names the
+    exception type and nothing from the record (the stdlib's own report prints the raw message and arguments)."""
+    kind = sys.exc_info()[0]
+    text = f"A log line couldn't be written ({kind.__name__ if kind is not None else 'unknown error'})"
+    record = logging.LogRecord("shelfsync.logs", logging.ERROR, __file__, 0, text, None, None)
+    RedactingStderrHandler().emit(record)
+
+
+class RedactingFileHandler(TimedRotatingFileHandler):
+    """The log file handler. A failed write (bad arguments, a rollover refused by Windows) is reported as one fixed
+    line instead of the stdlib's dump of the message and arguments."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        _report_write_failure()
+
+
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:
     """Send every log record (ShelfSync's and uvicorn's) to logs\\shelfsync.log; return the handler.
 
     Rotation at UTC midnight keeps `retention_days` rotated files. uvicorn's loggers have no handlers of their own
     here (the server is started with log_config=None) and propagate to the root logger, where this handler sits.
     """
-    handler = TimedRotatingFileHandler(
+    handler = RedactingFileHandler(
         logs_dir / LOG_FILE_NAME, when="midnight", utc=True, backupCount=retention_days, encoding="utf-8"
     )
     handler.setFormatter(JsonFormatter())
@@ -120,6 +138,9 @@ def _exc_info(
 
 
 def _log_uncaught(exc_type: type[BaseException], exc_value: BaseException, traceback: TracebackType | None) -> None:
+    if issubclass(exc_type, KeyboardInterrupt):  # Ctrl+C is not a crash: leave it to Python's own hook
+        _originals.get("excepthook", sys.__excepthook__)(exc_type, exc_value, traceback)
+        return
     _UNCAUGHT.critical("Uncaught exception", exc_info=(exc_type, exc_value, traceback))
 
 
@@ -140,6 +161,12 @@ def _log_unraisable(unraisable: "sys.UnraisableHookArgs") -> None:
     )
 
 
+def _warnings_captured() -> bool:
+    """Whether `logging.captureWarnings(True)` is already in force: then `warnings.showwarning` is the logging
+    module's own function (the stdlib has no public way to ask)."""
+    return getattr(warnings.showwarning, "__module__", None) == "logging"
+
+
 def install_output_guards() -> None:
     """Called first in `server.main()`. Replaces `logging.lastResort` with a redacting stderr handler, sends
     uncaught exceptions (main thread, other threads, unraisable ones) through the logger, and sends warnings to the
@@ -147,6 +174,7 @@ def install_output_guards() -> None:
     if _originals:
         return
     _originals.update(
+        capture_warnings=_warnings_captured(),
         last_resort=logging.lastResort,
         excepthook=sys.excepthook,
         thread_excepthook=threading.excepthook,
@@ -167,5 +195,5 @@ def remove_output_guards() -> None:
     sys.excepthook = _originals["excepthook"]
     threading.excepthook = _originals["thread_excepthook"]
     sys.unraisablehook = _originals["unraisablehook"]
-    logging.captureWarnings(False)
+    logging.captureWarnings(_originals["capture_warnings"])
     _originals.clear()

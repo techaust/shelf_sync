@@ -63,10 +63,6 @@ class InstallToken:
         self._lock = threading.Lock()
         self._token = load_or_create_install_token(store)
 
-    def matches(self, presented: str) -> bool:
-        with self._lock:
-            return verify_install_token(presented, self._token)
-
     def run_if_matches[T](self, presented: str, action: Callable[[], T]) -> T | None:
         """Run `action` and return its result if `presented` is the current token, all under the lock; otherwise
         return None."""

@@ -347,3 +347,74 @@ def test_main_installs_the_guards_before_anything_else(monkeypatch: pytest.Monke
     with pytest.raises(RuntimeError):
         server.main()
     assert order == ["guards", "resolve"]
+
+
+# ---- review round 1 -----------------------------------------------------------------------------------------------
+
+
+@contextmanager
+def only_the_file_handler() -> Iterator[logging.Logger]:
+    """A logger that reaches ShelfSync's file handler and nothing else (pytest's own capture handler on the root
+    logger would raise on bad arguments before the file handler is asked)."""
+    logger = logging.getLogger("shelfsync.badwrite")
+    root_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logs.RedactingFileHandler)]
+    logger.handlers[:] = root_handlers
+    logger.propagate = False
+    try:
+        yield logger
+    finally:
+        logger.handlers.clear()
+        logger.propagate = True
+
+
+def test_a_failed_log_write_prints_one_fixed_line_and_nothing_from_the_record(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01: bad arguments make `record.getMessage()` fail; the stdlib's own report would print the message and
+    arguments (here a key) to stderr."""
+    secret = key(30)
+    with guards(), file_log(tmp_path) as log_file, only_the_file_handler() as logger:
+        logger.error("%s and %s", secret)  # one argument too few
+    captured = capfd.readouterr()
+    assert secret not in captured.out + captured.err
+    assert "A log line couldn't be written (TypeError)" in captured.err
+    assert secret not in (log_file.read_text(encoding="utf-8") if log_file.exists() else "")
+
+
+def test_a_failed_log_write_is_reported_even_without_the_guards(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01: the file handler's own handleError does not depend on install_output_guards()."""
+    secret = key(31)
+    with file_log(tmp_path), only_the_file_handler() as logger:
+        logger.error("%s and %s", secret)
+    captured = capfd.readouterr()
+    assert secret not in captured.out + captured.err
+    assert "A log line couldn't be written (TypeError)" in captured.err
+
+
+def test_ctrl_c_goes_to_the_original_hook_and_is_not_logged_as_a_crash(tmp_path: Path) -> None:
+    """LOG-01: a KeyboardInterrupt isn't a CRITICAL "Uncaught exception"."""
+    seen: list[type[BaseException]] = []
+    original = sys.excepthook
+    sys.excepthook = lambda exc_type, exc_value, traceback: seen.append(exc_type)
+    try:
+        with guards(), file_log(tmp_path) as log_file:
+            sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
+    finally:
+        sys.excepthook = original
+    assert seen == [KeyboardInterrupt]
+    assert not log_file.exists() or "Uncaught" not in log_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("before", [False, True])
+def test_removing_the_guards_restores_the_earlier_warnings_capture(before: bool) -> None:
+    """LOG-01: captureWarnings goes back to what it was, not always to off."""
+    logging.captureWarnings(before)
+    try:
+        logs.install_output_guards()
+        logs.remove_output_guards()
+        assert (warnings.showwarning.__module__ == "logging") is before
+    finally:
+        logs.remove_output_guards()
+        logging.captureWarnings(False)

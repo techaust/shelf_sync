@@ -91,17 +91,21 @@ def test_verify_with_a_non_ascii_expected_value() -> None:
     assert verify_install_token("é", "é") is True
 
 
+def _matches(holder: InstallToken, presented: str) -> bool:
+    return holder.run_if_matches(presented, lambda: True) is True
+
+
 def test_install_token_holder_follows_a_reset() -> None:
     """SET-06: after a reset only the new value matches."""
     store = MemorySecretStore()
     holder = InstallToken(store)
     old = store.get(INSTALL_TOKEN_NAME)
-    assert old is not None and holder.matches(old)
+    assert old is not None and _matches(holder, old)
     holder.reset()
     new = store.get(INSTALL_TOKEN_NAME)
     assert new is not None and new != old
-    assert holder.matches(new)
-    assert not holder.matches(old)
+    assert _matches(holder, new)
+    assert not _matches(holder, old)
 
 
 class _FailingStore:
@@ -124,7 +128,7 @@ def test_a_failed_reset_keeps_the_old_token() -> None:
     holder._store = _FailingStore()
     with pytest.raises(SecretStoreError):
         holder.reset()
-    assert holder.matches(old)
+    assert _matches(holder, old)
 
 
 def test_run_if_matches_runs_the_action_only_for_the_current_token() -> None:
@@ -147,7 +151,7 @@ def test_reset_runs_its_follow_up_after_the_new_token_is_in_force() -> None:
     seen: list[str | None] = []
     holder.reset(then=lambda: seen.append(store.get(INSTALL_TOKEN_NAME)))
     assert seen and seen[0] != old
-    assert holder.matches(seen[0] or "")
+    assert _matches(holder, seen[0] or "")
 
 
 def test_a_failed_reset_does_not_run_its_follow_up() -> None:

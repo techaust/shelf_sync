@@ -362,6 +362,28 @@ _(Final, builder Sonnet 5.5 high. The first part below was written at the early-
 - `KeyringSecretStore` error mapping for real keyring failures (locked profile, quota) was only checked with a fake backend; real failures weren't produced.
 - The analyst's item 2 wording ("a store whose second `get` raises: the server never starts, and `get` is called exactly once") cannot hold literally after the fix (there is no second `get`, so the server starts). I tested the intent: `get` is called exactly once and the server starts; and a first-read failure stops start-up before the bind.
 
+### Fix round 1
+_(builder, Sonnet 5.5 medium, after the review and triage in §5; rows 6 and 8d are not mine.)_
+
+- **1 (handleError):** `logs.RedactingFileHandler` (the file handler `configure_logging` returns) overrides `handleError` to write one fixed line, "A log line couldn't be written (<exception type>)", through `RedactingStderrHandler`; nothing from the record. Tests: `test_output_guards.py::test_a_failed_log_write_prints_one_fixed_line_and_nothing_from_the_record` (with guards, `capfd`, a mismatched-args call holding a key: fixed line, no key) and `..._is_reported_even_without_the_guards`. They use a logger that reaches only the file handler, because pytest's own capture handler on the root logger raises on bad arguments first.
+- **2 (old token left behind):** `KeyringSecretStore.set` deletes the existing entry first (`contextlib.suppress(PasswordDeleteError)`), then writes. Windows test `test_replacing_a_value_leaves_no_copy_of_the_old_one_behind`: after two sets no `<name>@ShelfSync-test-...` entry exists (`_read_credential`) and the value is the second one.
+- **3 (persistence):** `backend.persist = "local machine"` after construction; docstring fixed. Windows test `test_entries_are_kept_on_this_machine_even_if_the_environment_asks_otherwise`: with `KEYRING_PROPERTY_PERSIST=enterprise` set, `Persist == 2`.
+- **4 (Ctrl+C):** `_log_uncaught` hands `KeyboardInterrupt` to the original hook and logs nothing. Test `test_ctrl_c_goes_to_the_original_hook_and_is_not_logged_as_a_crash`.
+- **5 (captureWarnings):** `install_output_guards` records whether capture was already on (`warnings.showwarning` is the logging module's function; the stdlib has no public query) and `remove_output_guards` restores that. Test `test_removing_the_guards_restores_the_earlier_warnings_capture` (both starting states).
+- **7 (AWS labels):** the secret-key pattern is now `(aws_)?secret_?access_?key` and a new one covers `(aws_)?session_?token`, so `SecretAccessKey`, `aws_session_token` and `SessionToken` (also in the JSON form) are masked. Tests: four new families in `test_redact_families.py` (hypothesis, neighbours of separators only). I also made that file's property test `assume` the random secret is not part of the kept label: hypothesis found `shelfsync_se` inside `shelfsync_session=` (a test flaw that already existed, not a redaction gap).
+- **8a:** the hand-set `Cache-Control` in `api/session.py` is gone (the headers middleware sets it on every `/api` response; the existing ticket-route test of `no-store` still passes).
+- **8b:** `create_app(port, install_token, clock=time.monotonic)`; the app only gets the `InstallToken`. `server._start` passes the one it built before the bind; tests build `InstallToken(MemorySecretStore())` (`tests/support.py`, `test_api_health.py`, `test_server.py`, `test_single_token_load.py`).
+- **8c:** `InstallToken.matches` removed; `tests/test_token.py` uses `run_if_matches` through a small helper.
+- **9 (plain pytest skips `windows`):** `addopts` now has `-m 'not windows'`. A `-m` on the command line replaces it: `pytest -m windows` ran 9 tests and deselected 422 (the five keyring tests, the two new ones, and the two M1a Windows tests in `test_paths.py` and `test_server.py`, which a plain run now skips too; the lead may want to know for CI, where Linux skipped them anyway). **The `-m windows` run line in §3 above is now `bash tools/heavy.sh --log m1a.2-fix-windows uv run pytest -m windows --no-cov`** (`--no-cov` only keeps the run from printing a partial coverage table).
+
+**Commands** (logs in `.logs/m1a.2-fix-*.log`):
+- `uv sync --locked`: exit 0. `ruff check`: all passed. `ruff format --check`: 53 files formatted. `mypy` (strict): no issues in 26 files.
+- `uv run pytest`: **420 passed, 2 skipped, 9 deselected** (the nine `windows` tests). The first run failed once on the hypothesis flaw named in row 7; fixed and re-run.
+- `uv run pytest -m windows --no-cov`: **9 passed**, 422 deselected. Afterwards `cmdkey /list:ShelfSync-test-*` and `cmdkey /list:*@ShelfSync-test-*` both show `* NONE *`.
+- `coverage report --include="backend/shelfsync/secure/*" --fail-under=90`: exit 0; `headers.py` 100 %, `middleware.py` 100 %, `redact.py` 100 %, `sessions.py` 100 %, `token.py` 100 % (40 statements, 6 branches), total 242 statements, 66 branches, 100 %.
+- `bandit -r backend`: no issues. `uv export --locked --no-emit-project --format requirements-txt` then `pip-audit --require-hashes --disable-pip -r .logs/locked.txt`: no known vulnerabilities.
+- **Not verified:** Linux CI and GitHub (nothing run there); the mypy check of the Windows branch of `secrets.py` happens only on this PC (the new `persist` assignment type-checks here); real keyring failures (locked profile) still only checked with a fake backend; the brand tests (not run, as before).
+
 ## 4. Designer report
 _(none: no screens)_
 

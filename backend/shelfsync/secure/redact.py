@@ -28,8 +28,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<![A-Za-z0-9])(c[ks]_)[A-Za-z0-9]{20,}"), rf"\1{MASK}"),
     # AWS access key IDs
     (re.compile(r"(?<![A-Z0-9])(AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"), rf"\1{MASK}"),
-    # AWS secret key and pre-signed URL parts
-    (re.compile(rf"(aws_secret_access_key{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
+    # AWS secret key and session token by label (aws_secret_access_key, SecretAccessKey, aws_session_token,
+    # SessionToken), then the pre-signed URL parts. A secret key has no prefix of its own, so only its label shows it.
+    (re.compile(rf"((?:aws_)?secret_?access_?key{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
+    (re.compile(rf"((?:aws_)?session_?token{_SEP}){_VALUE}", re.IGNORECASE), rf"\1{MASK}"),
     (
         re.compile(rf"(X-Amz-(?:Signature|Credential|Security-Token)=){_VALUE}", re.IGNORECASE),
         rf"\1{MASK}",

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import shelfsync
 from shelfsync.api.app import create_app
 from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure.token import InstallToken
 from tests.support import PORT, make_harness
 
 
@@ -30,7 +31,7 @@ def test_docs_and_schema_routes_are_not_served(client: TestClient, path: str) ->
 
 
 def test_schema_is_still_available_in_code() -> None:
-    schema = create_app(PORT, MemorySecretStore()).openapi()
+    schema = create_app(PORT, InstallToken(MemorySecretStore())).openapi()
     assert "/api/health" in schema["paths"]
 
 

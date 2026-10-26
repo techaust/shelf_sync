@@ -141,7 +141,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, secrets, install_token=install_token), sock)
+        serve(create_app(port, install_token), sock)
     finally:
         sock.close()
     return EXIT_OK

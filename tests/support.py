@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from shelfsync.api.app import create_app
 from shelfsync.platform.secrets import MemorySecretStore
-from shelfsync.secure.token import INSTALL_TOKEN_NAME
+from shelfsync.secure.token import INSTALL_TOKEN_NAME, InstallToken
 
 PORT = 47615
 HOST = f"127.0.0.1:{PORT}"
@@ -121,5 +121,5 @@ def asgi_http(
 def make_harness(port: int = PORT, store: MemorySecretStore | None = None) -> Harness:
     secret_store = store if store is not None else MemorySecretStore()
     clock = FakeClock()
-    app = create_app(port, secret_store, clock)
+    app = create_app(port, InstallToken(secret_store), clock)
     return Harness(app=app, store=secret_store, clock=clock, port=port)

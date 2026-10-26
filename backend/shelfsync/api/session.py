@@ -35,7 +35,7 @@ def make_session_router(sessions: SessionStore, install_token: InstallToken) -> 
     router = APIRouter()
 
     @router.post(TICKET_PATH, response_model=TicketResponse, responses={401: {"model": ErrorResponse}})
-    def issue_ticket(request: Request, response: Response) -> TicketResponse:
+    def issue_ticket(request: Request) -> TicketResponse:
         # Called by the launcher (a program, not a browser): no session, no Origin (the middleware refuses any),
         # no X-ShelfSync. The install token is accepted only here, only in this header.
         presented = _bearer_token(request)
@@ -43,7 +43,7 @@ def make_session_router(sessions: SessionStore, install_token: InstallToken) -> 
         ticket = None if presented is None else install_token.run_if_matches(presented, sessions.issue_ticket)
         if ticket is None:
             raise ApiError(401, "bad_token")
-        response.headers["Cache-Control"] = "no-store"
+        # Cache-Control: no-store comes from SecurityHeadersMiddleware (every /api response)
         return TicketResponse(ticket=ticket, expires_in=int(TICKET_LIFETIME_SECONDS))
 
     @router.post(SIGN_IN_PATH, status_code=204, responses={401: {"model": ErrorResponse}})

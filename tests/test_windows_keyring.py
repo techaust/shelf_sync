@@ -98,3 +98,31 @@ def test_the_app_store_is_credential_manager_under_the_shelfsync_service_name() 
     store = default_secret_store()
     assert isinstance(store, KeyringSecretStore)
     assert store._service == SERVICE_NAME == "ShelfSync"
+
+
+def test_replacing_a_value_leaves_no_copy_of_the_old_one_behind() -> None:
+    """SET-06: keyring's own set_password would re-save the old value under `<name>@<service>`; the adapter deletes
+    first, so after two sets only the second value exists in Credential Manager under this throwaway service."""
+    name = "replaced"
+    with throwaway_store([name]) as store:
+        service = store._service
+        first, second = "first-" + secrets.token_urlsafe(8), "second-" + secrets.token_urlsafe(8)
+        store.set(name, first)
+        store.set(name, second)
+        assert store.get(name) == second
+        assert store._backend._read_credential(f"{name}@{service}") is None  # type: ignore[attr-defined]
+        current = store._backend._read_credential(service)  # type: ignore[attr-defined]
+        assert current is not None and current.value == second
+
+
+def test_entries_are_kept_on_this_machine_even_if_the_environment_asks_otherwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SYS-03: persistence is "local machine" (Persist == 2), set after construction, so KEYRING_PROPERTY_PERSIST
+    can't change it."""
+    monkeypatch.setenv("KEYRING_PROPERTY_PERSIST", "enterprise")
+    name = "persisted"
+    with throwaway_store([name]) as store:
+        store.set(name, "value-" + secrets.token_urlsafe(8))
+        entry = store._backend._read_credential(store._service)  # type: ignore[attr-defined]
+        assert entry is not None and entry["Persist"] == 2  # CRED_PERSIST_LOCAL_MACHINE

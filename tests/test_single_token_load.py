@@ -40,7 +40,7 @@ def test_create_app_with_a_ready_token_does_not_touch_the_store() -> None:
     store = CountingStore()
     holder = InstallToken(store)
     assert store.gets == 1
-    create_app(PORT, store, install_token=holder)
+    create_app(PORT, holder)
     assert store.gets == 1
 
 

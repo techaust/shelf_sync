@@ -3,7 +3,7 @@
 import string
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from shelfsync.secure.redact import MASK, clear_secrets, redact
@@ -23,6 +23,10 @@ FAMILIES = [
     ("aws-key-id", "AK" + "IA{s}", UPPER_DIGITS, 16, 16),
     ("aws-temp-key-id", "AS" + "IA{s}", UPPER_DIGITS, 16, 16),
     ("aws-secret-key", "aws_secret_access_key={s}", ALNUM + "/+", 20, 40),
+    ("aws-secret-key-camel", "SecretAccessKey={s}", ALNUM + "/+", 20, 40),
+    ("aws-secret-key-json", '"SecretAccessKey": "{s}"', ALNUM + "/+", 20, 40),
+    ("aws-session-token", "aws_session_token={s}", ALNUM + "/+=", 20, 80),
+    ("aws-session-token-camel", "SessionToken={s}", ALNUM + "/+=", 20, 80),
     ("amz-signature", "X-Amz-Signature={s}", ALNUM, 16, 64),
     ("amz-credential", "X-Amz-Credential={s}", ALNUM + "%/", 16, 64),
     ("github-classic", "gh" + "p_{s}", ALNUM, 20, 40),
@@ -50,6 +54,7 @@ def test_property_the_secret_never_survives_among_separators(
     """LOG-01: for each pattern family, the secret inside the text is gone whatever separators surround it."""
     secret = data.draw(st.text(alphabet=alphabet, min_size=shortest, max_size=longest))
     before, after = data.draw(SEPARATORS), data.draw(SEPARATORS)
+    assume(secret not in template.replace("{s}", ""))  # a "secret" that is part of the kept label can't be absent
     clear_secrets()
     result = redact(before + template.format(s=secret) + after)
     assert secret not in result, family
