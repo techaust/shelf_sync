@@ -198,8 +198,21 @@ _(reviewer, Opus 5.5 high, `code-review` + `security-review`, 2026-10-26)_ **APP
 | 11 | L | Output before logging skips `redact` | **Into the M1a.2 brief**; the bare `print` goes with #2 |
 | 12 | L | Run file says pip-audit fails; `runtime.json` not removed; `held()` skips silently | **Fix now:** `held()` fails instead of skipping; §3 note by the lead in §5. `runtime.json`: **into the M1a.4 brief** (the launcher checks `/api/health` identity, never the PID) |
 
+**Re-check** _(reviewer, Opus 5.5 medium, `code-review`, 2026-10-26)_ **APPROVE**: all ten "Fix now" rows fixed correctly. One medium already there before (a second launch empties the first copy's `tmp\` and runs a second server: no single-instance check yet) and nine lows. All go to **M1a.4**, which owns the launcher, single instance (SYS-03) and start-up, so they're fixed in the code that changes anyway:
+- single-instance check before anything touches `tmp\` or the database (medium; also settles the concurrent-migration low)
+- "all in use" wording when the port setting isn't 47615 (needs a 13 line, or keep the setting inside 47615–47624)
+- `resolve_data_paths()` inside the start-up `try`; Ctrl+C returns exit 0; `UnicodeDecodeError` counts as a migration error
+- the notice when the data folder can't be created shouldn't point to a log that doesn't exist
+- a migration ending in a `/* … */` comment after its last `;` is accepted again
+- the Windows rebind test's docstring says what it proves; remove `prepare_data_folder`
+
 ## 5. Integration notes
-_(lead)_
+_(lead, 2026-10-26)_
+- §3's first report says pip-audit FAILS; that was before the lead's 00ed866 (owner-approved certifi/filelock security exceptions). pip-audit is clean since.
+- The lead re-ran every check after each round (`.logs/m1a.1-lead-check*.log`, `-relock`, `-recheck*`): all pass, 58 tests, 97 % coverage, no known vulnerabilities, brand 221 tests (builder).
+- The lead changed the start-up failure wording (c091cab): plain, pointing to the log; added to 13 §3; decision row in 11.
+- Not verified yet: CI on GitHub and Linux (first run on the PR), the per-folder coverage gate there, the 3 s retry against a real 2-minute TIME_WAIT, `python -m shelfsync` by hand.
+- Follow-ups: M1b, logs pruned by age (#10). M1a.2 brief, every output through `redact` (#11). M1a.4 brief, the re-check list above plus `runtime.json` (#12).
 
 ## 6. Handover
-_(lead, 2026-10-26)_ Brief written on `docs/m1a-plan-and-pins`, not yet pushed. Next: the owner's yes to push that branch and open a PR; merge on the owner's yes; then start the builder from `main`.
+_(lead, 2026-10-26)_ Built, reviewed (APPROVE), fixed, re-checked (APPROVE). Next: the owner's yes to push `feat/m1a.1-backbone` and open the PR; CI's first run; merge on green with the owner's yes; add the CHANGELOG line.
