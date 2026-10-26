@@ -31,7 +31,8 @@ CSRF_VALUE = b"1"
 HEALTH_PATH = "/api/health"
 TICKET_PATH = "/api/session/ticket"
 SIGN_IN_PATH = "/api/session"
-RESET_TOKEN_PATH = "/api/session/reset-token"
+# bandit B105 flags the name: this is a URL path, not a password
+RESET_TOKEN_PATH = "/api/session/reset-token"  # nosec B105
 
 # The only /api paths that don't need a session (the contract in docs/runs/m1a.2-security.md item 11). The method
 # isn't part of the exemption: a wrong method on these paths reaches the router and gets its 405.

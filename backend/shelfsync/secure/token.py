@@ -11,7 +11,8 @@ import threading
 from shelfsync.platform.secrets import SecretStore
 from shelfsync.secure.redact import register_secret
 
-INSTALL_TOKEN_NAME = "install-token"
+# bandit B105 flags the name: this is the name of the Credential Manager entry, not the token
+INSTALL_TOKEN_NAME = "install-token"  # nosec B105
 _TOKEN_BYTES = 32
 MIN_TOKEN_LENGTH = 32  # a stored value shorter than this (edited by hand, damaged) is not trusted and is replaced
 

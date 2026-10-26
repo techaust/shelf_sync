@@ -269,10 +269,41 @@ The lead owns `docs/` (except the parts of this file named above), `CLAUDE.md`, 
 - **R5.** AWS secret keys have no prefix, so no pattern can catch them; from M2 every secret read from Credential Manager is registered with `redact`.
 
 ## 2. Early check
-_(empty)_
+**Ready for early check** (builder, Sonnet 5.5 high, branch `feat/m1a.2-security`, not pushed). Done: `secure/` (token, sessions, middleware, headers, redact), `platform/secrets.py`, `api/session.py`, `api/errors.py`, wired into `create_app(port, secrets, clock)` and `server._start` (token loaded before the bind; failure exits 3). Not done yet, as the brief says: item 9 (output guards, T20 is already on), item 10 (Windows checks), the final full run, `uv export` + pip-audit, §3 report. State: 351 tests pass, ruff, mypy (strict) and bandit clean, `secure/` coverage 100 % lines and branches.
+
+Points for the analyst:
+1. **R4 confirmed by test.** A 500 from Starlette's outermost `ServerErrorMiddleware` skips every user middleware. Fixed by adding the headers in the `Exception` handler (`api/errors.py`); `tests/test_headers_errors.py` fails without that line.
+2. **FastAPI 0.143 `app.routes` is not flat.** `include_router` leaves one lazy `_IncludedRouter` in it, so the route-table test walks `fastapi.routing.iter_route_contexts(app.routes)` (the function FastAPI's own OpenAPI builder uses). A plain walk would have checked zero routes.
+3. **FastAPI's default 422 body does echo `input`** (checked); replaced by `{"error":"invalid_request"}`.
+4. **uvicorn/h11:** two Host headers, a missing Host (HTTP/1.1) and an absolute-form target without Host get 400 from h11 before the app; HTTP/1.0 with no Host and an empty Host reach the app and get 403. Those 400s carry no security headers (below ASGI).
+5. **Cookie:** Starlette writes `SameSite=strict` in lower case (valid, case-insensitive); the test compares case-insensitively.
+6. **Session cookie and other local servers (R3 follow-on):** cookies aren't port-scoped, so the browser also sends `shelfsync_session` to any other server on `127.0.0.1` the owner visits; such a server could replay it with its own Origin and `X-ShelfSync` headers. Not fixable in this task; raised for 06 §10.
+7. **Choices inside the brief:** exemption is by path (so GET on the ticket route reaches 405, as item 4 wants); WebSockets are refused outright until someone adds one; a stored token under 32 characters is replaced; `register_secret` ignores values under 16 characters and returns False; `X-Amz-Security-Token` is masked too; `KeyringSecretStore` errors carry the exception type name only.
 
 ## 3. Builder report
-_(empty)_
+_(Interim, up to the early-check stop; the final report is written when the builder finishes.)_
+
+**Skills:** none of the 09 §3 skills fits the builder here: `security-review` and `code-review` are the reviewer's; `aws-sdk-python-usage` and `aws-iam` (no S3 or IAM code); `frontend-design`, `dataviz`, `artifact-design` (no screens); `run` (no browser or running-app check needed). Context7 was used for every library in the brief.
+
+**Item 1 evidence:** `tests/test_server.py::test_socket_is_bound_to_loopback_never_all_interfaces` (M1a) plus `tests/test_startup_security.py::test_the_uvicorn_config_host_is_loopback`.
+
+**Packages:** `uv lock` added exactly `keyring 25.7.0`, `jaraco-classes 3.4.0`, `jaraco-context 6.1.2`, `jaraco-functools 4.6.0`, `more-itertools 11.1.0`, `pywin32-ctypes 0.2.3`; `uv export` shows each with `; sys_platform == 'win32'`.
+
+**Item 13, covered so far** (C7 = Context7, E = checked by running it on the pinned versions):
+- Starlette 1.7.0 (C7 lists 1.0.0 and 1.8.0, not 1.7.0; behaviour checked on 1.7.0 itself): the docs recommend pure ASGI middleware (BaseHTTPMiddleware breaks contextvars propagation and is awkward for SSE), so the guard and the headers are pure ASGI. `ServerErrorMiddleware` is always the outermost layer, so a user middleware's headers do not reach its 500 (C7, E). 404, 405 and 422 do pass through user middleware and get the headers (E). Raw `host` headers come from `scope["headers"]`, a list of `(bytes, bytes)` with duplicates kept (C7).
+- FastAPI 0.143.0: the default 422 body includes `input` (C7 example, E). `set_cookie(key, value, max_age, expires, path, domain, secure, httponly, samesite)` defaults give no Domain, Expires, Max-Age or Secure (C7, E; output `HttpOnly; Path=/; SameSite=strict`). `add_exception_handler` for `ApiError`, `RequestValidationError` and `Exception`; the `Exception` one is what `ServerErrorMiddleware` calls (C7, E). `app.routes` holds `_IncludedRouter` objects (E, source read).
+- uvicorn 0.54.0 / h11 0.16.0 (E, raw sockets against a real server): see the early-check point 4. With `log_config=None` and no handler, h11's "Invalid HTTP request received." (a `uvicorn.error` WARNING) goes to stderr through `logging.lastResort`; with our file handler on the root logger nothing reaches stdout or stderr. INFO records don't reach `lastResort`.
+- TestClient (Starlette 1.7.0 with httpx 0.28.1): default host `testserver` (E), `base_url="http://127.0.0.1:<port>"` works, the cookie jar keeps `shelfsync_session` for the IP host (E). It prints a `StarletteDeprecationWarning` asking for `httpx2` (not installed; no package may be added here).
+- stdlib: `hmac.compare_digest("é", "é")` raises `TypeError: comparing strings with non-ASCII characters is not supported` (E), hence bytes. `logging.lastResort`, `captureWarnings`, `sys.excepthook`, `threading.excepthook`: item 9, not yet.
+- coverage 7.16.2 (C7, docs for file patterns): a pattern ending `/*` is treated as `/**`, so `--include=backend/shelfsync/secure/*` also matches subfolders.
+- keyring 25.7.0: the Windows backend's `get_password` returns `None` for a missing entry; `delete_password` raises `PasswordDeleteError` when nothing matched; errors derive from `KeyringError` (`InitError`, `NoKeyringError`, `PasswordDeleteError`, `PasswordSetError`); the package ships `py.typed` (E, file present).
+- mypy (C7): by default it takes `sys.platform` from the running system and treats a `sys.platform == "win32"` block as unreachable on Linux. Verified: with the keyring package hidden, `mypy --platform linux` passes and `--platform win32` fails with import errors. No per-module override is needed.
+- uv: the lock has the six packages only under `sys_platform == 'win32'` (see Packages).
+- WooCommerce key format (C7 `/woocommerce/woocommerce-rest-api-docs`): shows `ck_…` and `cs_…` placeholders only; the "40 hex" length is **not** stated there, so the pattern accepts any run of 20 or more letters and digits. GitHub prefixes (C7 `/github/docs`, "About authentication to GitHub"): `ghp_`, `github_pat_`, `gho_`, `ghu_`, `ghs_`, `ghr_`.
+
+**Coverage** (`coverage report --include="backend/shelfsync/secure/*"`): `headers.py` 26/0/10/0 100 %, `middleware.py` 74/0/30/0 100 %, `redact.py` 30/0/6/0 100 %, `sessions.py` 61/0/14/0 100 %, `token.py` 37/0/2/0 100 %, `__init__.py` 0 stmts; total 228 statements, 62 branches, 100 %.
+
+**Commands so far:** `uv lock`, `uv sync --locked`; `bash tools/heavy.sh --log m1a.2-mypy uv run mypy` (exit 0, 26 files); `bash tools/heavy.sh --log m1a.2-pytest uv run pytest` (351 passed); `bash tools/heavy.sh --log m1a.2-bandit uv run bandit -r backend -q` (exit 0; two `# nosec B105` on names that only contain the word "token", each with its reason on the line above); `uv run ruff check backend tests` and `ruff format` clean.
 
 ## 4. Designer report
 _(none: no screens)_

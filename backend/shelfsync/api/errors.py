@@ -5,7 +5,7 @@ less fixed body can't skip it.
 """
 
 import json
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -45,8 +45,8 @@ def signed_out() -> Response:
 
 
 async def _api_error(request: Request, exc: Exception) -> Response:
-    assert isinstance(exc, ApiError)
-    return error_response(exc.status_code, exc.code)
+    api_error = cast("ApiError", exc)  # registered for ApiError only
+    return error_response(api_error.status_code, api_error.code)
 
 
 async def _invalid_request(request: Request, exc: Exception) -> Response:
