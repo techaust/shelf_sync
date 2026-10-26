@@ -1,6 +1,7 @@
 """SYS-03, NFR-5: the Host, Origin, CSRF and session checks (DNS rebinding, other web pages, other local servers)."""
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,6 +18,15 @@ WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"]
 @pytest.fixture
 def harness() -> Harness:
     return make_harness()
+
+
+@pytest.fixture(params=["api only", "with the UI"])
+def any_harness(request: pytest.FixtureRequest, tmp_path: Path) -> Harness:
+    """The app without and with the static UI mount (M1a.3), for the route-table tests."""
+    if request.param == "api only":
+        return make_harness()
+    (tmp_path / "index.html").write_text("<!doctype html><title>ShelfSync</title>", encoding="utf-8")
+    return make_harness(ui_dir=tmp_path)
 
 
 def assert_nothing_happened(harness: Harness, client: TestClient, token_before: str) -> None:
@@ -183,9 +193,9 @@ def test_two_csrf_headers_are_refused(harness: Harness) -> None:
 # ---- 4. Session --------------------------------------------------------------------------------------------------
 
 
-# Routes outside /api that may exist, because they are served without a session (the static UI). Empty today;
-# M1a.3 adds its static mount here, on purpose, in the same change.
-ALLOWED_OUTSIDE_API: set[str] = set()
+# Routes outside /api that may exist, because they are served without a session (the static UI). M1a.3's static
+# mount at "/" is the one entry: Starlette stores a mount at "/" with the path "" (it strips the trailing slash).
+ALLOWED_OUTSIDE_API: set[str] = {""}
 
 # The routes that need no session: exactly these three (docs/runs/m1a.2-security.md item 11).
 EXPECTED_EXEMPT_ROUTES = {("GET", "/api/health"), ("POST", "/api/session/ticket"), ("POST", "/api/session")}
@@ -211,9 +221,9 @@ def _api_routes(app: Any) -> list[tuple[str, str]]:
     return found
 
 
-def test_every_route_is_a_known_kind_under_api_or_on_the_allowlist(harness: Harness) -> None:
-    """SYS-03: nothing slips through the route-table test unseen."""
-    seen = _route_contexts(harness.app)
+def test_every_route_is_a_known_kind_under_api_or_on_the_allowlist(any_harness: Harness) -> None:
+    """SYS-03: nothing slips through the route-table test unseen, with and without the static UI mount."""
+    seen = _route_contexts(any_harness.app)
     assert seen  # the walk found routes at all
     for path, methods in seen:
         assert isinstance(path, str), f"a route with no path ({methods!r}) isn't understood by this test"
@@ -223,18 +233,26 @@ def test_every_route_is_a_known_kind_under_api_or_on_the_allowlist(harness: Harn
             assert path in ALLOWED_OUTSIDE_API, f"{path} is outside /api and not on the allowlist"
 
 
-def test_the_exempt_routes_are_exactly_the_three_documented_ones(harness: Harness) -> None:
+def test_the_ui_mount_is_the_only_route_outside_api(any_harness: Harness) -> None:
+    """SYS-03: with the UI built, exactly one route sits outside /api, the static mount (path "", see the
+    allowlist); without it, none does."""
+    outside = [path for path, _ in _route_contexts(any_harness.app) if isinstance(path, str) and not is_api_path(path)]
+    has_ui = any(getattr(route, "name", None) == "ui" for route in any_harness.app.routes)
+    assert outside == ([""] if has_ui else [])
+
+
+def test_the_exempt_routes_are_exactly_the_three_documented_ones(any_harness: Harness) -> None:
     """SYS-03: the routes that need no session, as (method, path) pairs, are pinned."""
-    exempt = {(method, path) for method, path in _api_routes(harness.app) if path in SESSION_EXEMPT_PATHS}
+    exempt = {(method, path) for method, path in _api_routes(any_harness.app) if path in SESSION_EXEMPT_PATHS}
     assert exempt == EXPECTED_EXEMPT_ROUTES
     assert set(SESSION_EXEMPT_PATHS) == {"/api/health", "/api/session/ticket", "/api/session"}
 
 
-def test_route_table_every_api_route_outside_the_exemption_table_refuses_without_a_cookie(harness: Harness) -> None:
+def test_route_table_every_api_route_outside_the_exemption_table_refuses_without_a_cookie(any_harness: Harness) -> None:
     """SYS-03: walks the route table, so a route added in a later milestone is checked without anyone remembering to."""
-    routes = _api_routes(harness.app)
+    routes = _api_routes(any_harness.app)
     assert ("GET", "/api/health") in routes
-    client = harness.client()
+    client = any_harness.client()
     checked = 0
     for method, path in routes:
         if path in SESSION_EXEMPT_PATHS:

@@ -1,10 +1,13 @@
 """The FastAPI app factory (04 section 5)."""
 
+import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from starlette.staticfiles import StaticFiles
 
 from shelfsync import __version__
 from shelfsync.api.errors import register_error_handlers
@@ -14,18 +17,45 @@ from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
 from shelfsync.secure.token import InstallToken
 
+_log = logging.getLogger("shelfsync.api")
+
+# The built UI (`npm run build` in frontend/) in the source layout: <repo>/frontend/dist. Where the installer puts
+# it is decided with the packaging (M1b); this default is the development layout.
+UI_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+
+# The mount's name and path. Starlette stores a mount at "/" with the path "" (it strips the trailing slash), which
+# is the path the route-table test sees (tests/test_guard.py ALLOWED_OUTSIDE_API).
+UI_MOUNT_PATH = "/"
+UI_MOUNT_NAME = "ui"
+
 
 class HealthResponse(BaseModel):
     app: str
     version: str
 
 
-def create_app(port: int, install_token: InstallToken, clock: Callable[[], float] = time.monotonic) -> FastAPI:
+def _mount_ui(app: FastAPI, ui_dir: Path) -> None:
+    """Serve the built UI at "/" (html mode: "/" gives index.html). Files only: there is no catch-all fallback, so
+    a path that isn't a file is a 404 and nothing under /api is ever answered with the page. The UI routes with
+    the URL hash (#/review), so a refresh always asks for "/". Without the build (backend-only CI, tests) the app
+    starts without it and says so in one log line."""
+    if not (ui_dir / "index.html").is_file():
+        _log.info("UI files not found, so only the API is served (looked in %s)", ui_dir)
+        return
+    app.mount(UI_MOUNT_PATH, StaticFiles(directory=ui_dir, html=True), name=UI_MOUNT_NAME)
+
+
+def create_app(
+    port: int,
+    install_token: InstallToken,
+    clock: Callable[[], float] = time.monotonic,
+    ui_dir: Path | None = UI_DIR,
+) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
     `install_token` is the one token holder: start-up builds it before binding the port (so the secret store is read
     once and a failure holds no port) and the app never touches the store itself. `clock` times the 60-second
-    tickets (tests pass their own).
+    tickets (tests pass their own). `ui_dir` holds the built UI; None serves the API only (most tests).
     """
     # No interactive docs and no public schema route (docs_url, redoc_url, openapi_url all None). The schema is
     # still available in code through app.openapi(), for openapi-typescript in M1a.3. debug stays off, so an
@@ -40,6 +70,12 @@ def create_app(port: int, install_token: InstallToken, clock: Callable[[], float
         return HealthResponse(app="shelfsync", version=__version__)
 
     app.include_router(make_session_router(sessions, install_token))
+
+    # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
+    # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed
+    # to load them (06 section 2); every /api call the page makes still needs one.
+    if ui_dir is not None:
+        _mount_ui(app, ui_dir)
 
     # The last middleware added is the outermost: the headers wrap the guard, so a refusal carries them too.
     app.add_middleware(GuardMiddleware, port=port, sessions=sessions)
