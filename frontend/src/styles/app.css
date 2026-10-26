@@ -406,7 +406,9 @@
     font-size: var(--text-sm);
     font-weight: 500;
     white-space: nowrap;
-    transition: background var(--duration-fast) var(--ease-standard);
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
   }
   .nav-item .icon {
     color: var(--color-text-muted);
