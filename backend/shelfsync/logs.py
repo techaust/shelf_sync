@@ -2,9 +2,13 @@
 
 import json
 import logging
+import sys
+import threading
 from datetime import UTC, datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 from shelfsync.clock import to_iso
 from shelfsync.secure.redact import redact as _redact
@@ -69,3 +73,99 @@ def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileH
 def remove_logging(handler: logging.Handler) -> None:
     logging.getLogger().removeHandler(handler)
     handler.close()
+
+
+# ---- Every output goes through redact (LOG-01, 06 section 3) -----------------------------------------------------
+#
+# The file handler above redacts everything it writes. These guards cover the other places text can leave the
+# process: Python's handler of last resort (records logged before logging is set up or after it is removed), the
+# uncaught-exception hooks, and warnings.
+
+_UNCAUGHT = logging.getLogger("shelfsync.uncaught")
+_originals: dict[str, Any] = {}
+
+
+class _RedactingFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact(super().format(record))
+
+
+class RedactingStderrHandler(logging.Handler):
+    """Writes WARNING and above to stderr, redacted. Does nothing when there is no stderr (`sys.stderr` is None
+    under pythonw), and never reports its own failures: Python's default error report would print the unredacted
+    message and arguments."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.setFormatter(_RedactingFormatter("%(levelname)s: %(name)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        stream = sys.stderr
+        if stream is None:
+            return
+        try:
+            stream.write(self.format(record) + "\n")
+            stream.flush()
+        except Exception:
+            self.handleError(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        return None
+
+
+def _exc_info(
+    exc_type: type[BaseException], exc_value: BaseException | None, traceback: TracebackType | None
+) -> tuple[type[BaseException], BaseException, TracebackType | None] | None:
+    return None if exc_value is None else (exc_type, exc_value, traceback)
+
+
+def _log_uncaught(exc_type: type[BaseException], exc_value: BaseException, traceback: TracebackType | None) -> None:
+    _UNCAUGHT.critical("Uncaught exception", exc_info=(exc_type, exc_value, traceback))
+
+
+def _log_uncaught_in_thread(args: threading.ExceptHookArgs) -> None:
+    if args.exc_type is SystemExit:  # the default hook ignores it too
+        return
+    name = args.thread.name if args.thread is not None else "unknown"
+    _UNCAUGHT.critical(
+        "Uncaught exception in thread %s", name, exc_info=_exc_info(args.exc_type, args.exc_value, args.exc_traceback)
+    )
+
+
+def _log_unraisable(unraisable: "sys.UnraisableHookArgs") -> None:
+    _UNCAUGHT.error(
+        "Unraisable exception: %s",
+        unraisable.err_msg or "exception ignored",
+        exc_info=_exc_info(unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback),
+    )
+
+
+def install_output_guards() -> None:
+    """Called first in `server.main()`. Replaces `logging.lastResort` with a redacting stderr handler, sends
+    uncaught exceptions (main thread, other threads, unraisable ones) through the logger, and sends warnings to the
+    log (`logging.captureWarnings`). Calling it again does nothing."""
+    if _originals:
+        return
+    _originals.update(
+        last_resort=logging.lastResort,
+        excepthook=sys.excepthook,
+        thread_excepthook=threading.excepthook,
+        unraisablehook=sys.unraisablehook,
+    )
+    logging.lastResort = RedactingStderrHandler()
+    sys.excepthook = _log_uncaught
+    threading.excepthook = _log_uncaught_in_thread
+    sys.unraisablehook = _log_unraisable
+    logging.captureWarnings(True)
+
+
+def remove_output_guards() -> None:
+    """Put back what `install_output_guards` replaced (for tests)."""
+    if not _originals:
+        return
+    logging.lastResort = _originals["last_resort"]
+    sys.excepthook = _originals["excepthook"]
+    threading.excepthook = _originals["thread_excepthook"]
+    sys.unraisablehook = _originals["unraisablehook"]
+    logging.captureWarnings(False)
+    _originals.clear()

@@ -16,7 +16,7 @@ from shelfsync.api.app import create_app
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError, migrate
 from shelfsync.db.settings import DEFAULTS, get_setting
-from shelfsync.logs import configure_logging, remove_logging
+from shelfsync.logs import configure_logging, install_output_guards, remove_logging
 from shelfsync.paths import DataPaths, create_data_folders, empty_tmp, resolve_data_paths, write_runtime_json
 from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
@@ -181,4 +181,5 @@ def run(
 
 def main() -> int:
     """`python -m shelfsync`: a development entry point (the launcher is M1a.4)."""
+    install_output_guards()  # first: from here nothing leaves the process unredacted, even before logging is set up
     return run(resolve_data_paths(), LogNotifier())
