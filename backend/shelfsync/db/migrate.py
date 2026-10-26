@@ -51,9 +51,11 @@ def _statements(sql: str) -> list[str]:
     """
     statements: list[str] = []
     current = ""
-    for line in sql.splitlines(keepends=True):
-        current += line
-        if sqlite3.complete_statement(current):
+    for character in sql:
+        current += character
+        # Test only at a semicolon: sqlite3 knows whether it ends a statement or sits in a string, a comment or a
+        # trigger body. This also splits two statements written on one line.
+        if character == ";" and sqlite3.complete_statement(current):
             statements.append(current)
             current = ""
     if current.strip() and not all(part.strip().startswith("--") or not part.strip() for part in current.splitlines()):
@@ -93,9 +95,10 @@ def migrate(connection: sqlite3.Connection, migrations_dir: Path = DEFAULT_MIGRA
                 )
                 connection.execute("COMMIT")
             except BaseException:
-                connection.execute("ROLLBACK")
+                if connection.in_transaction:  # not after a failed BEGIN, which would hide the real cause
+                    connection.execute("ROLLBACK")
                 raise
         except (sqlite3.Error, MigrationError, OSError) as error:
-            raise MigrationError(f"Migration {migration.path.name} failed and was rolled back: {error}") from error
+            raise MigrationError(f"Migration {migration.path.name} failed, nothing of it was kept: {error}") from error
         applied_now.append(migration.version)
     return applied_now

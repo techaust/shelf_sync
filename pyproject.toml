@@ -50,6 +50,7 @@ packages = ["shelfsync"]
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]
+markers = ["windows: needs Windows (skipped on other systems); proves behaviour the Linux CI can't"]
 addopts = "-ra --strict-markers --cov --cov-report=term-missing:skip-covered"
 
 [tool.coverage.run]

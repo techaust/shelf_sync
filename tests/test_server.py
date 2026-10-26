@@ -1,7 +1,10 @@
 """SET-06 and ERR-06: the port, runtime.json, start-up, and the real server on a handed-over socket."""
 
+import asyncio
 import json
+import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -29,7 +32,7 @@ def held(ports: list[int]) -> Iterator[None]:
             try:
                 sock.bind(("127.0.0.1", port))
             except OSError:
-                pytest.skip(f"port {port} is already used on this PC")
+                pytest.fail(f"port {port} is already used on this PC, so the test can't hold it")
             sock.listen(1)
         yield
 
@@ -46,10 +49,10 @@ class RecordingServe:
         self.sockname = sock.getsockname()
 
 
-def start(paths: DataPaths) -> tuple[int, FakeNotifier, RecordingServe]:
+def start(paths: DataPaths, retry_seconds: float = 0.0) -> tuple[int, FakeNotifier, RecordingServe]:
     notifier = FakeNotifier()
     serve = RecordingServe()
-    code = server.run(paths, notifier, serve)
+    code = server.run(paths, notifier, serve, retry_seconds)
     return code, notifier, serve
 
 
@@ -71,7 +74,7 @@ def test_fallback_port_when_47615_is_held(data_paths: DataPaths) -> None:
     ]
     assert json.loads(data_paths.runtime_json.read_text()) == {
         "port": 47616,
-        "pid": __import__("os").getpid(),
+        "pid": os.getpid(),
     }
 
 
@@ -120,17 +123,67 @@ def test_startup_empties_tmp(data_paths: DataPaths) -> None:
     assert data_paths.backups.is_dir()
 
 
-def test_migration_failure_stops_startup(
+def test_migration_failure_stops_startup_and_is_logged_and_notified(
     data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def broken(connection: object) -> None:
         raise server.MigrationError("boom")
 
     monkeypatch.setattr(server, "migrate", broken)
-    code, _, serve = start(data_paths)
+    code, notifier, serve = start(data_paths)
     assert code == server.EXIT_MIGRATION_FAILED
     assert serve.sockname is None
-    assert "boom" in capsys.readouterr().err
+    assert notifier.messages == ["ShelfSync couldn't start: boom"]
+    assert "boom" in (data_paths.logs / "shelfsync.log").read_text(encoding="utf-8")
+    assert capsys.readouterr().err == ""  # no bare print
+
+
+def test_any_startup_exception_is_logged_notified_and_has_its_own_exit_code(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(path: object) -> None:
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(server, "connect", broken)
+    code, notifier, serve = start(data_paths)
+    assert code == server.EXIT_START_FAILED
+    assert code not in (server.EXIT_OK, server.EXIT_PORTS_IN_USE, server.EXIT_MIGRATION_FAILED)
+    assert notifier.messages == ["ShelfSync couldn't start. The details are in the log."]
+    assert "RuntimeError: disk on fire" in (data_paths.logs / "shelfsync.log").read_text(encoding="utf-8")
+    assert serve.sockname is None
+
+
+def test_preferred_port_is_retried_before_falling_back(data_paths: DataPaths) -> None:
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 47615))
+    holder.listen(1)
+    threading.Timer(0.6, holder.close).start()  # the old process lets go a moment later
+    code, notifier, serve = start(data_paths, retry_seconds=3.0)
+    assert code == server.EXIT_OK
+    assert serve.sockname == ("127.0.0.1", 47615)
+    assert notifier.messages == []
+
+
+def test_port_setting_outside_1024_65535_is_an_error() -> None:
+    for bad in (0, 80, 1023, 65536):
+        with pytest.raises(ValueError):
+            server.candidate_ports(bad)
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only: the port's state after a closed connection")
+def test_port_can_be_rebound_after_a_connection_closed_by_the_server() -> None:
+    first = server.bind_first_free([0])
+    assert first is not None
+    port = first.getsockname()[1]
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    connection, _ = first.accept()
+    connection.close()  # closed from the server side, which leaves the port in the closing state
+    client.close()
+    first.close()
+    second = server.bind_first_free([port], retry_seconds=server.PREFERRED_PORT_RETRY_SECONDS)
+    assert second is not None
+    second.close()
 
 
 def test_uvicorn_config_has_no_access_log_and_no_own_logging(data_paths: DataPaths) -> None:
@@ -146,7 +199,7 @@ def test_real_uvicorn_serves_health_on_the_handed_over_socket() -> None:
     assert sock is not None
     port = sock.getsockname()[1]
     uv = uvicorn.Server(server.make_uvicorn_config(create_app(), port))
-    thread = threading.Thread(target=lambda: __import__("asyncio").run(uv.serve(sockets=[sock])))
+    thread = threading.Thread(target=lambda: asyncio.run(uv.serve(sockets=[sock])), daemon=True)
     thread.start()
     try:
         deadline = time.monotonic() + 10

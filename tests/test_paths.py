@@ -1,10 +1,55 @@
 """The data folder and its override."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from shelfsync.paths import DATA_DIR_ENV, DataPaths, prepare_data_folder, resolve_data_paths
+from shelfsync.paths import (
+    DATA_DIR_ENV,
+    DataPaths,
+    create_data_folders,
+    empty_tmp,
+    prepare_data_folder,
+    resolve_data_paths,
+)
+
+
+def test_an_entry_that_cant_be_removed_is_logged_and_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    paths = DataPaths(tmp_path / "ShelfSync")
+    create_data_folders(paths)
+    (paths.tmp / "locked.bin").write_text("x")
+    (paths.tmp / "ordinary.bin").write_text("x")
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "locked.bin":
+            raise PermissionError("in use")
+        real_unlink(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level("WARNING"):
+        empty_tmp(paths)  # does not raise
+    assert [p.name for p in paths.tmp.iterdir()] == ["locked.bin"]
+    assert "locked.bin" in caplog.text
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only: directory junctions")
+def test_a_junction_in_tmp_is_removed_without_touching_its_target(tmp_path: Path) -> None:
+    paths = DataPaths(tmp_path / "ShelfSync")
+    create_data_folders(paths)
+    target = tmp_path / "precious"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep")
+    link = paths.tmp / "link"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    empty_tmp(paths)
+    assert list(paths.tmp.iterdir()) == []
+    assert (target / "keep.txt").read_text() == "keep"
 
 
 def test_env_var_overrides_the_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
