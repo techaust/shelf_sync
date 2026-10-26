@@ -131,3 +131,59 @@ def test_settings_refuse_unknown_keys_and_wrong_types(connection: sqlite3.Connec
     with pytest.raises(TypeError):
         set_setting(connection, "port", True)  # a bool is not a port
     assert set(DEFAULTS) == {"port", "theme", "start_with_windows", "notifications", "log_retention_days"}
+
+
+def test_two_statements_on_one_line_are_split(connection: sqlite3.Connection, tmp_path: Path) -> None:
+    folder = tmp_path / "migrations"
+    folder.mkdir()
+    (folder / "0001_base.sql").write_text(
+        "CREATE TABLE schema_migration (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);\n"
+        "CREATE TABLE a (x TEXT DEFAULT 'a;b'); CREATE TABLE b (y INTEGER); -- note; with a semicolon\n"
+    )
+    migrate(connection, folder)
+    assert {"a", "b"} <= tables(connection)
+
+
+def test_failed_begin_shows_the_real_cause_not_a_rollback_error(tmp_path: Path) -> None:
+    path = tmp_path / "locked.db"
+    holder = connect(path)
+    waiter = sqlite3.connect(path, timeout=0.05, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")  # another connection holds the write lock
+        with pytest.raises(MigrationError, match="locked") as info:
+            migrate(waiter)
+        assert "no transaction is active" not in str(info.value)
+    finally:
+        holder.close()
+        waiter.close()
+
+
+def test_connect_closes_the_connection_when_a_pragma_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[bool] = []
+
+    class Failing:
+        def execute(self, sql: str) -> None:
+            raise sqlite3.DatabaseError("file is not a database")
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr("shelfsync.db.connection.sqlite3.connect", lambda *a, **k: Failing())
+    with pytest.raises(sqlite3.DatabaseError):
+        connect(tmp_path / "x.db")
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("bad", [0, 80, 1023, 65536])
+def test_port_setting_outside_1024_65535_is_refused(connection: sqlite3.Connection, bad: int) -> None:
+    migrate(connection)
+    with pytest.raises(ValueError):
+        set_setting(connection, "port", bad)
+    set_setting(connection, "port", 1024)
+    set_setting(connection, "port", 65535)
+
+
+def test_default_port_comes_from_one_place() -> None:
+    from shelfsync.ports import DEFAULT_PORT
+
+    assert DEFAULTS["port"] == DEFAULT_PORT == 47615

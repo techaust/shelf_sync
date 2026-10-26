@@ -1,10 +1,13 @@
 """The data folder (04 section 8): %LOCALAPPDATA%\\ShelfSync\\ with logs\\, tmp\\, backups\\ and runtime.json."""
 
 import json
+import logging
 import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger("shelfsync.paths")
 
 DATA_DIR_ENV = "SHELFSYNC_DATA_DIR"  # for tests and Linux CI; nothing else overrides the root
 
@@ -47,15 +50,39 @@ def resolve_data_paths() -> DataPaths:
     return DataPaths(Path(local_app_data) / "ShelfSync")
 
 
-def prepare_data_folder(paths: DataPaths) -> None:
-    """Create the folders and empty tmp\\ (leftovers of a crash, 06 section 4)."""
+def create_data_folders(paths: DataPaths) -> None:
+    """Create the data folder and its logs\\, backups\\ and tmp\\ folders."""
     for folder in (paths.root, paths.logs, paths.backups, paths.tmp):
         folder.mkdir(parents=True, exist_ok=True)
+
+
+def _remove_entry(entry: Path) -> None:
+    if entry.is_symlink() or os.path.isjunction(entry):
+        # A link (a symlink, or a Windows directory junction) is removed itself, never followed into its target.
+        try:
+            entry.unlink()
+        except (IsADirectoryError, PermissionError):
+            entry.rmdir()  # how Windows removes a directory junction
+    elif entry.is_dir():
+        shutil.rmtree(entry)
+    else:
+        entry.unlink()
+
+
+def empty_tmp(paths: DataPaths) -> None:
+    """Empty tmp\\ (leftovers of a crash, 06 section 4). An entry that can't be removed is logged and skipped,
+    so one locked file can't stop start-up."""
     for entry in paths.tmp.iterdir():
-        if entry.is_dir() and not entry.is_symlink():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()  # a symlink is removed itself, never followed
+        try:
+            _remove_entry(entry)
+        except OSError as error:
+            _log.warning("Couldn't remove %s from tmp: %s", entry.name, error)
+
+
+def prepare_data_folder(paths: DataPaths) -> None:
+    """Create the folders and empty tmp\\."""
+    create_data_folders(paths)
+    empty_tmp(paths)
 
 
 def write_runtime_json(paths: DataPaths, port: int, pid: int) -> None:

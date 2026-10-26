@@ -17,6 +17,7 @@ jobs:
   python:
     name: Python checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Get the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,17 +49,17 @@ jobs:
       # folder has code besides __init__.py; until then there is nothing to measure.
       - name: Check coverage of secure, inspect, match and apply
         run: |
-          include=""
+          # Each folder must reach 90 % on its own, so a well-covered folder can't hide a poorly covered one.
+          failed=0
           for folder in secure inspect match apply; do
             if find "backend/shelfsync/$folder" -name '*.py' ! -name '__init__.py' 2>/dev/null | grep -q .; then
-              include="$include,backend/shelfsync/$folder/*"
+              echo "Coverage of $folder:"
+              uv run coverage report --include="backend/shelfsync/$folder/*" --fail-under=90 || failed=1
+            else
+              echo "No code in $folder yet: nothing to check."
             fi
           done
-          if [ -n "$include" ]; then
-            uv run coverage report --include="${include#,}" --fail-under=90
-          else
-            echo "No code in secure, inspect, match or apply yet: nothing to check."
-          fi
+          exit "$failed"
 
       - name: Scan the code for security problems (bandit)
         run: uv run bandit -r backend
@@ -71,6 +72,7 @@ jobs:
   brand:
     name: Brand checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Get the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,7 +82,7 @@ jobs:
       - name: Install Node 24
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "24.19.0"
 
       - name: Install the locked brand packages
         run: npm ci

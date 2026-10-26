@@ -150,6 +150,35 @@ _(builder, Sonnet 5.5, 2026-10-26; branch `feat/m1a.1-backbone`)_
 - Brand, as CI runs it: `npm --prefix brand ci` and `npm --prefix brand test`
 - `.gitignore` needs nothing new (`.venv/`, `.logs/` and the caches are already covered).
 
+### Fix round 1
+_(builder, Sonnet 5.5; the "Fix now" rows of the §4 triage)_
+
+| # | What changed |
+|---|---|
+| 1 | `server.bind_first_free(ports, retry_seconds)` retries the first port every 0.25 s for `PREFERRED_PORT_RETRY_SECONDS` (3.0) before moving on; `SO_EXCLUSIVEADDRUSE` kept. Tests: a holder that lets go after 0.6 s gives 47615, not 47616; a `windows`-marked test (skipped elsewhere; marker registered in `pyproject.toml`) binds, accepts one connection closed from the server side, closes, and rebinds within the retry. It **passed on this PC**. |
+| 2 | `run()` creates the folders, then sets up logging first (default retention, adjusted from the setting once read), then everything else. Any start-up exception is logged with its traceback, sent to the notifier in plain words and returns a distinct code: exit codes are now **0 ok, 1 all ports in use, 2 migration failed, 3 any other start-up failure** (`EXIT_START_FAILED`). The bare `print` is gone. `connect()` closes the connection if a PRAGMA raises (tested with a fake). Two new strings in `messages.py` (`START_FAILED`, `START_FAILED_MIGRATION`) are **not in docs/13: the lead should add them**. A crash while serving also returns 3 with the same message (it says "couldn't start"). |
+| 3 | `timeout-minutes: 15` on both jobs; the test thread has `daemon=True`. |
+| 4 | Port must be 1024-65535 in `settings._check` (`ValueError`) and in `candidate_ports` (`ValueError`, so a bad stored value ends in exit 3 with a log entry). New `ports.py` holds the numbers. |
+| 5 | `ROLLBACK` only when `connection.in_transaction`; test: a locked database reports "locked", not "no transaction is active". Message now reads "failed, nothing of it was kept". |
+| 6 | The splitter tests each `;` with `sqlite3.complete_statement`, so two statements on a line work (also `;` inside a string or a comment). Test added. |
+| 7 | `ERR06_ALL_IN_USE` is the fixed text "Ports 47615–47624 ..."; `settings.DEFAULTS["port"]` uses `ports.DEFAULT_PORT`; the extra `PRAGMA busy_timeout` is gone (`timeout=` sets it; the existing pragma test still proves 5000). |
+| 8 | `empty_tmp` removes symlinks and junctions themselves (`unlink`, then `rmdir`), checks `os.path.isjunction` before `rmtree`, and logs and skips any entry it can't remove. Tests: a skipped locked entry; a Windows junction removed with its target intact (passed here). |
+| 9 | CI coverage gate runs `coverage report --fail-under=90` per folder and exits non-zero if any folder fails; `node-version: "24.19.0"`. Still untested on GitHub. |
+| 12 | `held()` in the tests fails (not skips) when a port is already in use. |
+
+**Commands and results** (all through `tools/heavy.sh`, logs `m1a.1-fix1-*`):
+| Check | Result |
+|---|---|
+| `uv sync --locked` | pass (59 packages) |
+| `uv run ruff check` / `uv run ruff format --check` | pass / 27 files formatted |
+| `uv run mypy` | pass, 17 files, strict |
+| `uv run pytest` | pass, **58 tests**, coverage 97 % |
+| `uv run bandit -r backend` | pass |
+| `uv run pip-audit` (after `uv export --locked ...`) | pass, "No known vulnerabilities found" |
+| `npm --prefix brand test` | pass, 221 tests |
+
+Not verified: the workflow on GitHub; anything on Linux (the `windows` tests skip there). The retry's 3 s is not proof that a real Windows port in the closing state frees within 3 s; the Windows test passes here, but I did not try to reproduce the reviewer's ~2 minute case.
+
 ## 4. Review
 _(reviewer, Opus 5.5 high, `code-review` + `security-review`, 2026-10-26)_ **APPROVE**: no critical or high findings; 3 medium, 9 low. Checks re-run by the reviewer: all pass, pip-audit clean after 00ed866. Not verified: anything on Linux or GitHub, `python -m shelfsync` by hand.
 

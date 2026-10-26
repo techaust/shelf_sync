@@ -13,10 +13,14 @@ def connect(path: Path | str) -> sqlite3.Connection:
     """Open a connection with WAL, foreign keys on and the busy timeout.
 
     The connection is in autocommit mode (isolation_level=None): transactions are explicit
-    (`BEGIN` ... `COMMIT`), which the migration runner relies on.
+    (`BEGIN` ... `COMMIT`), which the migration runner relies on. `timeout` sets the busy timeout.
+    If a PRAGMA fails (for example the file isn't a database), the connection is closed before the error is raised.
     """
     connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None)
-    connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    connection.execute("PRAGMA journal_mode = WAL")
-    connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA foreign_keys = ON")
+    except BaseException:
+        connection.close()
+        raise
     return connection
