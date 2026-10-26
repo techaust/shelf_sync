@@ -26,6 +26,8 @@ dev = [
 package = false
 # 14-day cutoff for everything the pins pull in: releases on or before 2026-10-12 (04 section 2.1).
 exclude-newer = "2026-10-13T00:00:00Z"
+# Security-fix exceptions (owner, 2026-10-26, docs/11): pip-audit findings fixed only in newer releases.
+exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-18T00:00:00Z" }
 
 [tool.ruff]
 line-length = 120
