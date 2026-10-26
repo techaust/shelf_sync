@@ -151,7 +151,23 @@ _(builder, Sonnet 5.5, 2026-10-26; branch `feat/m1a.1-backbone`)_
 - `.gitignore` needs nothing new (`.venv/`, `.logs/` and the caches are already covered).
 
 ## 4. Review
-_(reviewer reply, copied in by the lead)_
+_(reviewer, Opus 5.5 high, `code-review` + `security-review`, 2026-10-26)_ **APPROVE**: no critical or high findings; 3 medium, 9 low. Checks re-run by the reviewer: all pass, pip-audit clean after 00ed866. Not verified: anything on Linux or GitHub, `python -m shelfsync` by hand.
+
+**Lead triage** (Tier B, at medium):
+| # | Sev | Finding | Decision |
+|---|---|---|---|
+| 1 | M | Restart within ~2 min may fall back to 47616 (Windows TIME_WAIT with `SO_EXCLUSIVEADDRUSE`) | **Fix now:** retry the preferred port for ~3 s before falling back; Windows-only test |
+| 2 | M | Start-up failures before logging is set up leave no log and no notification | **Fix now:** logging first; any start-up exception logged + notified + distinct exit code; close the connection if a PRAGMA fails |
+| 3 | M | No CI timeouts; non-daemon test thread | **Fix now:** `timeout-minutes: 15`; `daemon=True` |
+| 4 | L | Port setting not range-checked | **Fix now:** 1024–65535 |
+| 5 | L | Unconditional `ROLLBACK` can hide the real cause | **Fix now** |
+| 6 | L | Two statements on one line rejected | **Fix now:** split with `sqlite3.complete_statement` |
+| 7 | L | "All in use" text drifts; default port defined twice; duplicate busy-timeout PRAGMA | **Fix now** |
+| 8 | L | One bad `tmp\` entry stops start-up | **Fix now:** junction check; log and skip |
+| 9 | L | Coverage gate combined; Node `"24"` | **Fix now:** per-folder gate; Node `24.19.0` |
+| 10 | L | Logs kept by count, not age | **Follow-up M1b** (with the retention setting) |
+| 11 | L | Output before logging skips `redact` | **Into the M1a.2 brief**; the bare `print` goes with #2 |
+| 12 | L | Run file says pip-audit fails; `runtime.json` not removed; `held()` skips silently | **Fix now:** `held()` fails instead of skipping; §3 note by the lead in §5. `runtime.json`: **into the M1a.4 brief** (the launcher checks `/api/health` identity, never the PID) |
 
 ## 5. Integration notes
 _(lead)_
