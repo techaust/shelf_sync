@@ -85,8 +85,11 @@ declare global {
 // (POST /api/session) or from the session check (GET /api/session/status): that is the signed-out state working.
 // Those 401s, on those two paths only, are not counted as problems; every other status and path still is.
 const EXPECTED_401_PATHS = new Set(["/api/session", "/api/session/status"]);
-function isExpectedSessionAnswer(text: string, url: string): boolean {
-  if (!/^Failed to load resource: the server responded with a status of 401\b/.test(text)) return false;
+function isExpectedSessionAnswer(text: string, url: string, abortsSessionRequests: boolean): boolean {
+  const refused = /^Failed to load resource: net::ERR_/.test(text);
+  if (!/^Failed to load resource: the server responded with a status of 401\b/.test(text)) {
+    if (!(refused && abortsSessionRequests)) return false;
+  }
   try {
     return EXPECTED_401_PATHS.has(new URL(url).pathname);
   } catch {
@@ -94,16 +97,21 @@ function isExpectedSessionAnswer(text: string, url: string): boolean {
   }
 }
 
+/** A test that makes the session requests get no answer (page.route aborts them) marks itself with this
+ *  annotation; the network error Chrome logs for those two paths is then expected too. */
+export const ABORTS_SESSION_REQUESTS = "aborts-session-requests";
+
 /**
  * Every test fails on a console error, an uncaught page error or a CSP violation (the console message and the
  * securitypolicyviolation event are both watched; the listener is added before any page script runs).
  */
 export const test = base.extend<{ problems: string[] }>({
   problems: [
-    async ({ page }, use) => {
+    async ({ page }, use, testInfo) => {
       const problems: string[] = [];
+      const aborts = () => testInfo.annotations.some((annotation) => annotation.type === ABORTS_SESSION_REQUESTS);
       page.on("console", (message) => {
-        if (isExpectedSessionAnswer(message.text(), message.location().url)) return;
+        if (isExpectedSessionAnswer(message.text(), message.location().url, aborts())) return;
         if (message.type() === "error" || /Content Security Policy|Refused to/i.test(message.text())) {
           problems.push(`console ${message.type()}: ${message.text()}`);
         }

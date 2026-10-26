@@ -1,6 +1,7 @@
 // UI-SHELL, SYS-03, NFR-1 and 05 section 7 / 07 section 4, against the real backend serving the built UI.
 // Every test also fails on any console error or CSP violation (support.ts).
 import {
+  ABORTS_SESSION_REQUESTS,
   addressHolds,
   axe,
   expect,
@@ -90,6 +91,7 @@ test.describe("sign-in (SYS-03)", () => {
   });
 
   test("no answer to a ticket sign-in offers no Try again (the ticket is used up)", async ({ page, request }) => {
+    test.info().annotations.push({ type: ABORTS_SESSION_REQUESTS });
     await page.route("**/api/session", (route) => route.abort("connectionrefused"));
     await openSignInAddress(page, await newTicket(request));
     await expect(page.getByRole("heading", { level: 1, name: /didn't answer/ })).toBeVisible();
@@ -98,6 +100,7 @@ test.describe("sign-in (SYS-03)", () => {
 
   test("no answer to the session check offers Try again, which checks once more", async ({ page, request }) => {
     await signIn(page, request);
+    test.info().annotations.push({ type: ABORTS_SESSION_REQUESTS });
     await page.route("**/api/session/status", (route) => route.abort("connectionrefused"));
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: /didn't answer/ })).toBeVisible();
