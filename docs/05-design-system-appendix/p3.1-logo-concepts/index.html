@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShelfSync logo concepts (P3.1)</title>
+<style>
+/* Patina tokens, copied once from techaust_platform packages/ui/tokens/tokens.json (identity "Patina", 2026-10-06).
+   brand/tokens.json does not exist yet (P3.3); every colour on this board comes from these custom properties. */
+:root {
+  --ink-950: #0D1613; /* palette.ink-950 */
+  --ink-900: #14231F; /* palette.ink-900 */
+  --ink-800: #15211D; /* palette.ink-800 */
+  --ink-750: #111C18; /* palette.ink-750 */
+  --ink-700: #1B2924; /* palette.ink-700 */
+  --ink-600: #26352F; /* palette.ink-600 */
+  --ink-500: #61796F; /* palette.ink-500 */
+  --ink-400: #485752; /* palette.ink-400 */
+  --ink-300: #9DB0A8; /* palette.ink-300 */
+  --verdigris-900: #1F4A40; /* palette.verdigris-900 */
+  --verdigris-700: #1E6B5C; /* palette.verdigris-700 */
+  --verdigris-500: #2E8B77; /* palette.verdigris-500 */
+  --verdigris-300: #6CC4AE; /* palette.verdigris-300 */
+  --verdigris-100: #D7ECE5; /* palette.verdigris-100 */
+  --stone-50: #F6F7F5; /* palette.stone-50 */
+  --stone-100: #ECEFEB; /* palette.stone-100 */
+  --stone-200: #E1E6E2; /* palette.stone-200 */
+  --stone-300: #D3DBD6; /* palette.stone-300 */
+  --stone-500: #75867F; /* palette.stone-500 */
+  --mist: #E4EBE7; /* palette.mist */
+  --white: #FFFFFF; /* palette.white */
+  --black: #000000; /* palette.black */
+  /* Mock Windows 11 taskbar surfaces, mixed from the white and black tokens (no Patina token matches Windows' neutral greys). */
+  --taskbar-light: color-mix(in srgb, var(--white) 95%, var(--black));
+  --taskbar-dark: color-mix(in srgb, var(--black) 87.5%, var(--white));
+  /* Type and space, from tokens.json text / space (docs/05 §3–4). */
+  --text-display-2: 36px; --text-h2: 28px; --text-h4: 20px; --text-body: 16px; --text-sm: 14px; --text-caption: 12px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px; --space-12: 48px; --space-16: 64px;
+  --radius-sm: 4px; --radius-md: 8px;
+}
+@font-face { font-family: "Archivo"; src: url("fonts/archivo-latin.woff2") format("woff2"); font-weight: 400 600; font-stretch: 100% 116%; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-latin.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+
+/* Semantic tokens (docs/05 §2.2). The board follows the system theme; the button overrides it. */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --color-bg: var(--stone-50); --color-surface: var(--white); --color-surface-alt: var(--stone-100);
+  --color-text: var(--ink-900); --color-text-muted: var(--ink-400); --color-text-accent: var(--verdigris-700);
+  --color-border: var(--stone-300); --color-border-control: var(--stone-500); --color-focus: var(--verdigris-700);
+  --mark-base: var(--ink-900); --mark-accent: var(--verdigris-700);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: var(--ink-950); --color-surface: var(--ink-800); --color-surface-alt: var(--ink-750);
+    --color-text: var(--mist); --color-text-muted: var(--ink-300); --color-text-accent: var(--verdigris-300);
+    --color-border: var(--ink-600); --color-border-control: var(--ink-500); --color-focus: var(--verdigris-300);
+    --mark-base: var(--mist); --mark-accent: var(--verdigris-300);
+  }
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: var(--ink-950); --color-surface: var(--ink-800); --color-surface-alt: var(--ink-750);
+  --color-text: var(--mist); --color-text-muted: var(--ink-300); --color-text-accent: var(--verdigris-300);
+  --color-border: var(--ink-600); --color-border-control: var(--ink-500); --color-focus: var(--verdigris-300);
+  --mark-base: var(--mist); --mark-accent: var(--verdigris-300);
+}
+/* Fixed tones, whatever the board theme: the brief asks for every lockup and tray icon on light and on dark. */
+.tone-light { --mark-base: var(--ink-900); --mark-accent: var(--verdigris-700); --mark-text: var(--ink-900); }
+.tone-dark { --mark-base: var(--mist); --mark-accent: var(--verdigris-300); --mark-text: var(--mist); }
+
+* { box-sizing: border-box; }
+html { background: var(--color-bg); color: var(--color-text); }
+body { margin: 0; font-family: "Archivo", Arial, Helvetica, sans-serif; font-size: var(--text-body); line-height: 1.6; }
+.b { fill: var(--mark-base); }
+.a { fill: var(--mark-accent); }
+.w { fill: var(--mark-text, var(--mark-base)); }
+a { color: var(--color-text); text-underline-offset: 3px; }
+a:hover { color: var(--color-text-accent); }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 2px; }
+
+.board { padding: var(--space-12) var(--space-8) var(--space-16); max-width: 1440px; }
+.board-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-8); margin-bottom: var(--space-10); }
+h1 { font-size: var(--text-display-2); font-stretch: 116%; font-weight: 560; line-height: 1.1; margin: 0 0 var(--space-3); letter-spacing: -0.01em; }
+.lede { margin: 0; max-width: 68ch; color: var(--color-text-muted); }
+.lede + .lede { margin-top: var(--space-2); }
+.theme-btn {
+  flex: none; min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text);
+  font: 500 var(--text-sm)/1 "Archivo", Arial, sans-serif; cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-2);
+}
+.theme-btn:hover { border-color: var(--color-text); }
+.theme-btn svg { width: 16px; height: 16px; }
+
+.concepts { display: grid; grid-template-columns: repeat(3, 304px); column-gap: var(--space-6); grid-template-rows: repeat(6, auto); }
+@media (min-width: 1360px) { .board { padding-left: var(--space-16); padding-right: var(--space-16); } .concepts { grid-template-columns: repeat(3, 416px); column-gap: var(--space-8); } }
+@media (max-width: 1000px) { .concepts { grid-template-columns: minmax(0, 416px); } .concept + .concept { margin-top: var(--space-16); } }
+.concept { display: grid; grid-row: span 6; grid-template-rows: subgrid; min-width: 0; }
+.cell { margin: 0; padding: var(--space-6) 0; border-top: 1px solid var(--color-border); min-width: 0; }
+.cell--head { border-top: 2px solid var(--color-text); padding-top: var(--space-4); }
+h2 { font-size: var(--text-h2); font-stretch: 116%; font-weight: 560; line-height: 1.15; margin: 0 0 var(--space-3); display: flex; align-items: baseline; gap: var(--space-3); }
+h2 .num { font-size: var(--text-sm); font-stretch: 100%; font-weight: 500; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.idea { margin: 0 0 var(--space-3); }
+.file { margin: 0; font: 400 var(--text-sm)/1.5 "IBM Plex Mono", Consolas, monospace; }
+figcaption { margin-top: var(--space-3); font-size: var(--text-sm); line-height: 1.45; color: var(--color-text-muted); }
+h3 { font-size: var(--text-h4); font-weight: 600; line-height: 1.3; margin: 0 0 var(--space-3); }
+
+.plate-row { display: flex; gap: var(--space-6); align-items: flex-start; }
+.plate { display: block; flex: none; width: 200px; height: 200px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.plate .grid { stroke: var(--color-border); stroke-width: 1; vector-effect: non-scaling-stroke; fill: none; }
+.plate .frame { stroke: var(--color-border-control); stroke-width: 1; vector-effect: non-scaling-stroke; fill: none; }
+.plate .dim { stroke: var(--color-text); stroke-width: 1.5; vector-effect: non-scaling-stroke; fill: none; }
+.plate .dim-label { font: 400 5px "IBM Plex Mono", Consolas, monospace; fill: var(--color-text); text-anchor: middle; paint-order: stroke; stroke: var(--color-surface); stroke-width: 1.2px; }
+
+.sizes { display: flex; flex-direction: column; gap: var(--space-4); }
+.size { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.mk { display: block; flex: none; }
+.px { font-size: var(--text-caption); line-height: 16px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.px::after { content: " px"; }
+.zoom-pair { display: inline-flex; margin-top: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.zoom { display: block; width: 96px; height: 96px; image-rendering: pixelated; padding: 16px; box-sizing: content-box; }
+.zoom.tone-light { background: var(--white); }
+.zoom.tone-dark { background: var(--ink-900); }
+
+.lockup-panel { border-radius: var(--radius-md); padding: var(--space-6) var(--space-6) var(--space-5); display: flex; flex-direction: column; gap: var(--space-5); }
+.lockup-panel + .lockup-panel { margin-top: var(--space-3); }
+.lockup-panel.tone-light { background: var(--white); border: 1px solid var(--color-border); }
+.lockup-panel.tone-dark { background: var(--ink-900); border: 1px solid var(--ink-600); }
+.lockup { display: block; width: 100%; height: auto; }
+.min .lockup { width: 96px; }
+
+.taskbar { height: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 0; padding: 0 var(--space-3); border-radius: var(--radius-sm); }
+.taskbar + .taskbar { margin-top: var(--space-2); }
+.taskbar--light { background: var(--taskbar-light); color: var(--ink-900); border: 1px solid var(--stone-300); --mark-base: var(--ink-900); --mark-accent: var(--verdigris-700); --neighbour: var(--stone-500); }
+.taskbar--dark { background: var(--taskbar-dark); color: var(--mist); border: 1px solid var(--ink-600); --mark-base: var(--mist); --mark-accent: var(--verdigris-300); --neighbour: var(--ink-500); }
+.tb-slot, .tb-neighbour { width: 32px; height: 32px; display: grid; place-items: center; flex: none; }
+.tb-neighbour::before { content: ""; width: 16px; height: 12px; border: 2px solid var(--neighbour); border-radius: 3px; }
+.tb-neighbour--wide::before { width: 14px; height: 14px; border-radius: 50%; }
+.tb-clock { display: flex; flex-direction: column; align-items: flex-end; margin-left: var(--space-3); font-size: var(--text-caption); line-height: 16px; font-variant-numeric: tabular-nums; }
+
+.cell--small p { margin: 0 0 var(--space-2); font-size: var(--text-sm); line-height: 1.5; }
+.checks { list-style: none; margin: 0; padding: 0; font-size: var(--text-sm); line-height: 1.45; }
+.checks li { display: grid; grid-template-columns: 64px 1fr; column-gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--color-border); }
+.checks p { margin: 0; }
+.checks li:first-child { border-top: 0; padding-top: 0; }
+.verdict { font-weight: 600; }
+.verdict--pass::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: currentColor; vertical-align: 1px; }
+.verdict--note::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border: 1px solid currentColor; vertical-align: 1px; }
+.rule { font-weight: 500; }
+.note { color: var(--color-text-muted); }
+
+.board-foot { margin-top: var(--space-12); padding-top: var(--space-6); border-top: 1px solid var(--color-border); max-width: 80ch; font-size: var(--text-sm); color: var(--color-text-muted); }
+.board-foot p { margin: 0 0 var(--space-2); }
+.mono { font-family: "IBM Plex Mono", Consolas, monospace; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="wordmark" overflow="visible"><path d="M50.14 101.75Q39.81 101.75 30.68 100.21Q21.56 98.67 14.67 94.99Q7.77 91.32 3.89 85.13Q0 78.94 0 69.64Q0 69.15 0.02 68.56Q0.05 67.97 0.14 67.61L21.54 67.61Q21.44 68.1 21.37 68.88Q21.3 69.67 21.3 70.52Q21.3 75.12 24.78 78.14Q28.25 81.16 34.72 82.62Q41.18 84.09 49.88 84.09Q54.22 84.09 58.24 83.66Q62.26 83.23 65.71 82.4Q69.15 81.56 71.75 80.2Q74.36 78.84 75.8 76.93Q77.24 75.02 77.24 72.58Q77.24 68.69 74.12 66.29Q70.99 63.89 65.67 62.31Q60.35 60.72 53.69 59.54Q47.03 58.35 39.93 56.99Q32.84 55.62 26.17 53.46Q19.51 51.3 14.19 47.99Q8.88 44.68 5.75 39.51Q2.62 34.34 2.62 26.91Q2.62 19.85 5.89 14.48Q9.15 9.11 15.36 5.49Q21.57 1.88 30.33 0.06Q39.08 -1.75 50.07 -1.75Q60.95 -1.75 69.49 0.15Q78.03 2.05 83.93 5.76Q89.84 9.47 92.9 14.86Q95.96 20.25 95.96 27.22L95.96 29.33L74.85 29.33L74.85 27.64Q74.85 24.11 71.76 21.49Q68.67 18.87 63.28 17.37Q57.88 15.86 50.88 15.86Q41.94 15.86 36.15 17.13Q30.35 18.39 27.54 20.67Q24.73 22.95 24.73 25.92Q24.73 29.34 27.86 31.51Q30.99 33.68 36.31 35.08Q41.62 36.48 48.29 37.64Q54.95 38.8 62.04 40.23Q69.14 41.66 75.8 43.74Q82.46 45.83 87.78 49.2Q93.1 52.57 96.23 57.62Q99.35 62.66 99.35 69.93Q99.35 81.47 93.08 88.48Q86.81 95.5 75.71 98.62Q64.62 101.75 50.14 101.75Z"/><path d="M115.77 100L115.77 -5.39L135.55 -5.39L135.55 33.19L136.57 33.19Q140.07 29.04 144.53 26.49Q148.99 23.94 154.07 22.75Q159.15 21.55 164.39 21.55Q173.95 21.55 180.6 24.66Q187.25 27.77 190.74 34.27Q194.22 40.78 194.22 51.09L194.22 100L174.39 100L174.39 54.5Q174.39 49.94 173.18 46.81Q171.97 43.68 169.72 41.78Q167.47 39.88 164.28 39.06Q161.09 38.23 157.16 38.23Q151.38 38.23 146.47 40.72Q141.55 43.21 138.55 47.61Q135.55 52.01 135.55 57.89L135.55 100L115.77 100Z"/><path d="M253.63 101.75Q239.65 101.75 229.78 97.45Q219.92 93.16 214.67 84.27Q209.42 75.39 209.42 61.69Q209.42 48.14 214.58 39.24Q219.73 30.33 229.54 25.94Q239.34 21.55 253.12 21.55Q266.97 21.55 276.41 25.89Q285.86 30.22 290.63 38.78Q295.41 47.34 295.41 60.15L295.41 66.46L230.02 66.46Q230.4 73.52 233.24 77.99Q236.08 82.46 241.34 84.52Q246.6 86.59 254.04 86.59Q257.33 86.59 260.93 85.81Q264.52 85.02 267.63 83.44Q270.75 81.85 272.82 79.34Q274.9 76.84 275.17 73.35L295.05 73.35Q295.05 79.73 292.18 84.99Q289.32 90.25 283.89 93.98Q278.47 97.7 270.8 99.73Q263.14 101.75 253.63 101.75ZM230.13 53.32L274.59 53.32Q274.59 48.96 272.97 45.84Q271.34 42.72 268.43 40.68Q265.53 38.65 261.68 37.71Q257.84 36.76 253.35 36.76Q246.6 36.76 241.58 38.6Q236.55 40.44 233.7 44.14Q230.85 47.85 230.13 53.32Z"/><path d="M311.19 100L311.19 -5.39L330.98 -5.39L330.98 100L311.19 100Z"/><path d="M356.18 100L356.18 38.73L342.11 38.73L342.11 23.3L356.18 23.3L356.18 15.73Q356.18 8.98 358.63 3.88Q361.07 -1.22 366.22 -4.03Q371.38 -6.85 379.46 -6.85Q382.12 -6.85 384.98 -6.55Q387.83 -6.26 390.48 -5.74Q393.13 -5.23 395.17 -4.46L395.17 8.59L386.24 8.59Q380.73 8.59 378.34 10.4Q375.96 12.21 375.96 16.26L375.96 23.3L395.17 23.3L395.17 38.73L375.96 38.73L375.96 100L356.18 100Z"/><path d="M453.81 101.75Q443.48 101.75 434.35 100.21Q425.23 98.67 418.34 94.99Q411.45 91.32 407.56 85.13Q403.67 78.94 403.67 69.64Q403.67 69.15 403.69 68.56Q403.72 67.97 403.81 67.61L425.21 67.61Q425.11 68.1 425.04 68.88Q424.97 69.67 424.97 70.52Q424.97 75.12 428.45 78.14Q431.92 81.16 438.39 82.62Q444.85 84.09 453.55 84.09Q457.89 84.09 461.91 83.66Q465.93 83.23 469.38 82.4Q472.82 81.56 475.42 80.2Q478.03 78.84 479.47 76.93Q480.91 75.02 480.91 72.58Q480.91 68.69 477.79 66.29Q474.66 63.89 469.34 62.31Q464.02 60.72 457.36 59.54Q450.7 58.35 443.6 56.99Q436.51 55.62 429.85 53.46Q423.18 51.3 417.87 47.99Q412.55 44.68 409.42 39.51Q406.29 34.34 406.29 26.91Q406.29 19.85 409.56 14.48Q412.82 9.11 419.03 5.49Q425.24 1.88 434 0.06Q442.75 -1.75 453.74 -1.75Q464.62 -1.75 473.16 0.15Q481.7 2.05 487.6 5.76Q493.51 9.47 496.57 14.86Q499.63 20.25 499.63 27.22L499.63 29.33L478.52 29.33L478.52 27.64Q478.52 24.11 475.43 21.49Q472.34 18.87 466.95 17.37Q461.55 15.86 454.55 15.86Q445.61 15.86 439.82 17.13Q434.02 18.39 431.21 20.67Q428.4 22.95 428.4 25.92Q428.4 29.34 431.53 31.51Q434.66 33.68 439.98 35.08Q445.29 36.48 451.96 37.64Q458.62 38.8 465.71 40.23Q472.81 41.66 479.47 43.74Q486.13 45.83 491.45 49.2Q496.77 52.57 499.9 57.62Q503.02 62.66 503.02 69.93Q503.02 81.47 496.75 88.48Q490.48 95.5 479.38 98.62Q468.29 101.75 453.81 101.75Z"/><path d="M529.75 128.11Q525.16 128.11 521.77 127.4Q518.37 126.68 516.3 125.88L516.3 112.72L525.83 112.72Q531.22 112.72 534.81 111.16Q538.4 109.61 540.79 106.77Q543.18 103.93 544.96 100L510.16 23.3L531.52 23.3L547.1 60.1Q548.29 62.65 549.74 66.47Q551.19 70.28 552.71 74.21Q554.22 78.15 555.31 81.15L556.33 81.15Q556.56 80.31 557.33 77.87Q558.11 75.43 559.27 72.21Q560.43 69 561.65 65.72Q562.88 62.44 563.82 59.88L577.4 23.3L597.94 23.3L568.67 93.97Q565.37 101.65 562.01 107.94Q558.64 114.22 554.33 118.75Q550.02 123.27 544.05 125.69Q538.08 128.11 529.75 128.11Z"/><path d="M607.68 100L607.68 23.3L623.8 23.3L625.29 35.36L626.49 35.36Q630.14 30.47 634.88 27.45Q639.62 24.43 645.14 22.99Q650.67 21.55 656.3 21.55Q665.87 21.55 672.52 24.66Q679.17 27.77 682.65 34.27Q686.14 40.78 686.14 51.09L686.14 100L666.31 100L666.31 54.5Q666.31 49.94 665.1 46.81Q663.89 43.68 661.64 41.78Q659.38 39.88 656.19 39.06Q653 38.23 649.08 38.23Q643.3 38.23 638.39 40.72Q633.47 43.21 630.47 47.61Q627.47 52.01 627.47 57.89L627.47 100L607.68 100Z"/><path d="M744.61 101.75Q730.76 101.75 721.08 97.36Q711.39 92.96 706.37 84.04Q701.36 75.11 701.36 61.61Q701.36 48.05 706.4 39.19Q711.44 30.33 721.13 25.94Q730.81 21.55 744.61 21.55Q753.32 21.55 760.67 23.49Q768.01 25.43 773.48 29.39Q778.95 33.35 781.92 39.18Q784.89 45.02 784.89 52.81L764.92 52.81Q764.92 47.57 762.27 44.06Q759.61 40.55 755.02 38.74Q750.42 36.93 744.51 36.93Q737.18 36.93 732.1 39.59Q727.01 42.25 724.39 47.42Q721.76 52.6 721.76 60.31L721.76 62.95Q721.76 70.53 724.44 75.77Q727.11 81.01 732.34 83.69Q737.58 86.37 745.25 86.37Q751.03 86.37 755.63 84.46Q760.23 82.56 762.97 78.95Q765.72 75.34 765.72 70.4L784.89 70.4Q784.89 78.13 781.88 84.01Q778.86 89.9 773.46 93.83Q768.06 97.77 760.69 99.76Q753.32 101.75 744.61 101.75Z"/></symbol></svg>
+<div class="board">
+  <header class="board-head">
+    <div>
+      <h1>ShelfSync logo concepts</h1>
+      <p class="lede">Three directions for the ShelfSync symbol, drawn on the TecHaust mark's construction: solid blocks on a 100-unit grid, one 45° channel exactly one stroke wide, ink with a verdigris accent. Pick one; P3.2 refines and audits it.</p>
+      <p class="lede">The wordmark is Archivo at weight 620 and 116 % width, outlined from the font with its own kerning. Bespoke letter edits come in P3.2.</p>
+    </div>
+    <button class="theme-btn" id="theme" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="b" d="M8 1a7 7 0 1 0 0 14Z"/><path d="M8 1a7 7 0 0 1 0 14" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Dark board</span></button>
+  </header>
+  <main class="concepts">
+
+  <article class="concept" aria-labelledby="h-1-shelves">
+    <header class="cell cell--head">
+      <h2 id="h-1-shelves"><span class="num">1</span> Shelves</h2>
+      <p class="idea">An ink upright carries two shelves. The verdigris product is still sliding in on the middle shelf: its leading edge is cut at 45°, one stroke clear of the ink.</p>
+      <p class="file"><a href="concept-1-shelves.svg">concept-1-shelves.svg</a></p>
+    </header>
+    <figure class="cell cell--plate">
+      <div class="plate-row">
+        <svg class="plate" viewBox="-6 -6 112 112" role="img" aria-label="Shelves on the 100-unit grid, channel measured at 19 units">
+    <path class="grid" d="M10 0V100M0 10H100M20 0V100M0 20H100M30 0V100M0 30H100M40 0V100M0 40H100M50 0V100M0 50H100M60 0V100M0 60H100M70 0V100M0 70H100M80 0V100M0 80H100M90 0V100M0 90H100"/><rect class="frame" x="0" y="0" width="100" height="100"/>
+    <path class="b" d="M0 0H81V17.5H19V39.75H45.25L27.75 57.25H19V82.5H81V100H0Z"/><path class="a" d="M72.12 39.75H100V57.25H54.62Z"/>
+    <path class="dim" d="M45.25 39.75L58.69 53.19M42.25 42.75L48.25 36.75M55.69 56.19L61.69 50.19"/>
+    <text class="dim-label" x="56.97" y="42.47">19</text>
+  </svg>
+        <div class="sizes">
+          <span class="size"><svg class="mk " viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Shelves at 64 px"><path class="b" d="M0 0H52V11H12V26H29L18 37H12V53H52V64H0Z"/><path class="a" d="M46 26H64V37H35Z"/></svg><span class="px">64</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Shelves at 32 px"><path class="b" d="M0 0H26V6H6V13H15L9 19H6V26H26V32H0Z"/><path class="a" d="M23 13H32V19H17Z"/></svg><span class="px">32</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="Shelves at 16 px"><path class="b" d="M0 0H13V3H3V6H8L5 9H3V13H13V16H0Z"/><path class="a" d="M12 6H16V9H9Z"/></svg><span class="px">16</span></span>
+        </div>
+      </div>
+      <figcaption>Vector, 100 units. Ink stub cut at 45.25, verdigris bar cut at 72.12; the shelves stop at 81 so the bar stands proud. Right: pixel-fitted at 64, 32 and 16 px.</figcaption>
+    </figure>
+    <figure class="cell cell--lockups">
+      <div class="lockup-panel tone-light"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, Shelves, on light"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H81V17.5H19V39.75H45.25L27.75 57.25H19V82.5H81V100H0Z"/><path class="a" d="M72.12 39.75H100V57.25H54.62Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H81V17.5H19V39.75H45.25L27.75 57.25H19V82.5H81V100H0Z"/><path class="a" d="M72.12 39.75H100V57.25H54.62Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <div class="lockup-panel tone-dark"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, Shelves, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H81V17.5H19V39.75H45.25L27.75 57.25H19V82.5H81V100H0Z"/><path class="a" d="M72.12 39.75H100V57.25H54.62Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H81V17.5H19V39.75H45.25L27.75 57.25H19V82.5H81V100H0Z"/><path class="a" d="M72.12 39.75H100V57.25H54.62Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <figcaption>Primary lockup on white and on the ink-900 app bar, full size and at the 96 px minimum.</figcaption>
+    </figure>
+    <figure class="cell cell--tray">
+      
+  <div class="taskbar taskbar--light" role="img" aria-label="Sample Windows 11 taskbar, light, with the Shelves tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H13V3H3V6H8L5 9H3V13H13V16H0Z"/><path class="a" d="M12 6H16V9H9Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      
+  <div class="taskbar taskbar--dark" role="img" aria-label="Sample Windows 11 taskbar, dark, with the Shelves tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H13V3H3V6H8L5 9H3V13H13V16H0Z"/><path class="a" d="M12 6H16V9H9Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      <div class="zoom-pair">
+        <canvas class="zoom tone-light" width="16" height="16" data-concept="0" role="img" aria-label="Shelves rendered at 16 px, light, enlarged six times"></canvas>
+        <canvas class="zoom tone-dark" width="16" height="16" data-concept="0" role="img" aria-label="Shelves rendered at 16 px, dark, enlarged six times"></canvas>
+      </div>
+      <figcaption>Tray icon at 16 px between placeholder icons on a mock taskbar, light and dark. Below, the real 16 px raster enlarged 6×.</figcaption>
+    </figure>
+    <section class="cell cell--small" aria-label="Shelves at small size">
+      <h3>At small size</h3>
+      <p><strong>Strongest:</strong> the open bracket and the proud verdigris bar keep their shape at 16 px, and the mark looks like nothing else in the tray.</p>
+      <p><strong>Weakest:</strong> it reads first as a capital E (close to a euro sign at tray size), and the ink stub ahead of the channel is only 2 to 5 px wide at 16 px, so the cut reads as a small notch.</p>
+    </section>
+    <section class="cell cell--checks" aria-label="Shelves rule checks">
+      <h3>Rule checks</h3>
+      <ul class="checks"><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Solid blocks, 100-unit grid.</span> <span class="note">Every edge is on the grid except the cut ends (45.25, 72.12), which follow from a one-stroke channel at 45°, as TecHaust's 73.13 does.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">One decorative device.</span> <span class="note">One channel, in the middle bar. No other cut, curve or detail.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Channel exactly one stroke.</span> <span class="note">19 units square to the cut (26.87 across), equal to the vertical stroke. At 16 px it is 4 px across, 2.8 px square to the cut, as in TecHaust's favicon.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Horizontals about 8 % thinner.</span> <span class="note">17.5 against 19 (7.9 %) in the vector and 11 against 12 px at 64 px. At 32 and 16 px they are equal, the same pixel-fitting rule as TecHaust's.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Ink base, verdigris accent.</span> <span class="note">Verdigris only on the product bar, the smallest share of the three concepts. 6.3 to 1 on white.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Colour on dark.</span> <span class="note">Mist with verdigris-300: 13.4 and 7.9 to 1 on the ink-900 app bar, 13.5 and 7.9 to 1 on the dark taskbar mock.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">No sync clichés.</span> <span class="note">No arrows, circles, clouds or ticks. The upright keeps the three bars from reading as a menu icon.</span></p></li></ul>
+    </section>
+  </article>
+
+  <article class="concept" aria-labelledby="h-2-s-cut">
+    <header class="cell cell--head">
+      <h2 id="h-2-s-cut"><span class="num">2</span> S-cut</h2>
+      <p class="idea">An S from two offset blocks: the ink top half and the verdigris bottom half meet in the spine, split by the one-stroke channel, as the T and H share a channel in TecHaust's mark.</p>
+      <p class="file"><a href="concept-2-s-cut.svg">concept-2-s-cut.svg</a></p>
+    </header>
+    <figure class="cell cell--plate">
+      <div class="plate-row">
+        <svg class="plate" viewBox="-6 -6 112 112" role="img" aria-label="S-cut on the 100-unit grid, channel measured at 19 units">
+    <path class="grid" d="M10 0V100M0 10H100M20 0V100M0 20H100M30 0V100M0 30H100M40 0V100M0 40H100M50 0V100M0 50H100M60 0V100M0 60H100M70 0V100M0 70H100M80 0V100M0 80H100M90 0V100M0 90H100"/><rect class="frame" x="0" y="0" width="100" height="100"/>
+    <path class="b" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/><path class="a" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/>
+    <path class="dim" d="M45.31 39.75L58.75 53.19M42.31 42.75L48.31 36.75M55.75 56.19L61.75 50.19"/>
+    <text class="dim-label" x="57.03" y="42.47">19</text>
+  </svg>
+        <div class="sizes">
+          <span class="size"><svg class="mk " viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="S-cut at 64 px"><path class="b" d="M0 0H64V11H12V26H29L18 37H0Z"/><path class="a" d="M46 26H64V64H0V53H52V37H35Z"/></svg><span class="px">64</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="S-cut at 32 px"><path class="b" d="M0 0H32V6H6V13H15L9 19H0Z"/><path class="a" d="M23 13H32V32H0V26H26V19H17Z"/></svg><span class="px">32</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="S-cut at 16 px"><path class="b" d="M0 0H16V3H3V6H8L5 9H0Z"/><path class="a" d="M12 6H16V16H0V13H13V9H9Z"/></svg><span class="px">16</span></span>
+        </div>
+      </div>
+      <figcaption>Vector, 100 units. The channel is centred on the spine: ink cut at 45.32, verdigris cut at 72.19, spine centred at 48.5. Right: pixel-fitted at 64, 32 and 16 px.</figcaption>
+    </figure>
+    <figure class="cell cell--lockups">
+      <div class="lockup-panel tone-light"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, S-cut, on light"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/><path class="a" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/><path class="a" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <div class="lockup-panel tone-dark"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, S-cut, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/><path class="a" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/><path class="a" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <figcaption>Primary lockup on white and on the ink-900 app bar, full size and at the 96 px minimum.</figcaption>
+    </figure>
+    <figure class="cell cell--tray">
+      
+  <div class="taskbar taskbar--light" role="img" aria-label="Sample Windows 11 taskbar, light, with the S-cut tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H16V3H3V6H8L5 9H0Z"/><path class="a" d="M12 6H16V16H0V13H13V9H9Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      
+  <div class="taskbar taskbar--dark" role="img" aria-label="Sample Windows 11 taskbar, dark, with the S-cut tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H16V3H3V6H8L5 9H0Z"/><path class="a" d="M12 6H16V16H0V13H13V9H9Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      <div class="zoom-pair">
+        <canvas class="zoom tone-light" width="16" height="16" data-concept="1" role="img" aria-label="S-cut rendered at 16 px, light, enlarged six times"></canvas>
+        <canvas class="zoom tone-dark" width="16" height="16" data-concept="1" role="img" aria-label="S-cut rendered at 16 px, dark, enlarged six times"></canvas>
+      </div>
+      <figcaption>Tray icon at 16 px between placeholder icons on a mock taskbar, light and dark. Below, the real 16 px raster enlarged 6×.</figcaption>
+    </figure>
+    <section class="cell cell--small" aria-label="S-cut at small size">
+      <h3>At small size</h3>
+      <p><strong>Strongest:</strong> the closest relative of the TecHaust mark, and the letter gives the name; the two halves stay apart at every size.</p>
+      <p><strong>Weakest:</strong> a square S built from blocks can be taken for a 5, and in dark mist and verdigris-300 differ more in hue than in lightness (1.7 to 1), so the split between the halves leans on the 4 px gap.</p>
+    </section>
+    <section class="cell cell--checks" aria-label="S-cut rule checks">
+      <h3>Rule checks</h3>
+      <ul class="checks"><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Solid blocks, 100-unit grid.</span> <span class="note">Every edge is on the grid except the cut ends (45.32, 72.19), which follow from a one-stroke channel at 45°, as TecHaust's 73.13 does.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">One decorative device.</span> <span class="note">One channel, in the spine. The terminals are square.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Channel exactly one stroke.</span> <span class="note">19 units square to the cut (26.87 across), equal to the vertical stroke. At 16 px it is 4 px across, 2.8 px square to the cut, as in TecHaust's favicon.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Horizontals about 8 % thinner.</span> <span class="note">17.5 against 19 (7.9 %) in the vector and 11 against 12 px at 64 px. At 32 and 16 px they are equal, the same pixel-fitting rule as TecHaust's.</span></p></li><li><span class="verdict verdict--note">Note</span><p><span class="rule">Ink base, verdigris accent.</span> <span class="note">Never swapped, but verdigris takes half the mark, more than the other two concepts and more than "used sparingly" suggests. 6.3 to 1 on white.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Colour on dark.</span> <span class="note">Mist with verdigris-300: 13.4 and 7.9 to 1 on the ink-900 app bar, 13.5 and 7.9 to 1 on the dark taskbar mock.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">No sync clichés.</span> <span class="note">No arrows, circles, clouds or ticks. The channel runs across the spine, so there is no arrowhead.</span></p></li></ul>
+    </section>
+  </article>
+
+  <article class="concept" aria-labelledby="h-3-one-to-many">
+    <header class="cell cell--head">
+      <h2 id="h-3-one-to-many"><span class="num">3</span> One to many</h2>
+      <p class="idea">One ink block, the file, feeds two verdigris stems, the stores. A single 45° channel separates them; its far edge cuts the tops of both stems.</p>
+      <p class="file"><a href="concept-3-one-to-many.svg">concept-3-one-to-many.svg</a></p>
+    </header>
+    <figure class="cell cell--plate">
+      <div class="plate-row">
+        <svg class="plate" viewBox="-6 -6 112 112" role="img" aria-label="One to many on the 100-unit grid, channel measured at 19 units">
+    <path class="grid" d="M10 0V100M0 10H100M20 0V100M0 20H100M30 0V100M0 30H100M40 0V100M0 40H100M50 0V100M0 50H100M60 0V100M0 60H100M70 0V100M0 70H100M80 0V100M0 80H100M90 0V100M0 90H100"/><rect class="frame" x="0" y="0" width="100" height="100"/>
+    <path class="b" d="M0 0H73.13L55.63 17.5H19V100H0Z"/><path class="a" d="M81 19L100 0V100H81ZM40.5 59.5L59.5 40.5V100H40.5Z"/>
+    <path class="dim" d="M69.13 4L82.57 17.44M66.13 7L72.13 1M79.57 20.44L85.57 14.44"/>
+    <text class="dim-label" x="80.85" y="6.72">19</text>
+  </svg>
+        <div class="sizes">
+          <span class="size"><svg class="mk " viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="One to many at 64 px"><path class="b" d="M0 0H47L36 11H12V64H0Z"/><path class="a" d="M52 12L64 0V64H52ZM26 38L38 26V64H26Z"/></svg><span class="px">64</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="One to many at 32 px"><path class="b" d="M0 0H24L18 6H6V32H0Z"/><path class="a" d="M26 6L32 0V32H26ZM13 19L19 13V32H13Z"/></svg><span class="px">32</span></span>
+          <span class="size"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="One to many at 16 px"><path class="b" d="M0 0H12L9 3H3V16H0Z"/><path class="a" d="M13 3L16 0V16H13ZM7 9L10 6V16H7Z"/></svg><span class="px">16</span></span>
+        </div>
+      </div>
+      <figcaption>Vector, 100 units. Ink bar cut at 73.13 (TecHaust's own value); both stem tops lie on x + y = 100, stems at 40.5 and 81. Right: pixel-fitted at 64, 32 and 16 px.</figcaption>
+    </figure>
+    <figure class="cell cell--lockups">
+      <div class="lockup-panel tone-light"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, One to many, on light"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H73.13L55.63 17.5H19V100H0Z"/><path class="a" d="M81 19L100 0V100H81ZM40.5 59.5L59.5 40.5V100H40.5Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H73.13L55.63 17.5H19V100H0Z"/><path class="a" d="M81 19L100 0V100H81ZM40.5 59.5L59.5 40.5V100H40.5Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <div class="lockup-panel tone-dark"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="ShelfSync primary lockup, One to many, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H73.13L55.63 17.5H19V100H0Z"/><path class="a" d="M81 19L100 0V100H81ZM40.5 59.5L59.5 40.5V100H40.5Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg><span class="min"><svg class="lockup" viewBox="0 -14 961.53 143" role="img" aria-label="The same lockup at its 96 px minimum, on dark"><g transform="translate(0 -14) scale(1.28)"><path class="b" d="M0 0H73.13L55.63 17.5H19V100H0Z"/><path class="a" d="M81 19L100 0V100H81ZM40.5 59.5L59.5 40.5V100H40.5Z"/></g><g class="w" transform="translate(176.64 0)"><use href="#wordmark"/></g></svg></span></div>
+      <figcaption>Primary lockup on white and on the ink-900 app bar, full size and at the 96 px minimum.</figcaption>
+    </figure>
+    <figure class="cell cell--tray">
+      
+  <div class="taskbar taskbar--light" role="img" aria-label="Sample Windows 11 taskbar, light, with the One to many tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H12L9 3H3V16H0Z"/><path class="a" d="M13 3L16 0V16H13ZM7 9L10 6V16H7Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      
+  <div class="taskbar taskbar--dark" role="img" aria-label="Sample Windows 11 taskbar, dark, with the One to many tray icon at 16 px">
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-neighbour tb-neighbour--wide" aria-hidden="true"></span>
+    <span class="tb-slot"><svg class="mk " viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path class="b" d="M0 0H12L9 3H3V16H0Z"/><path class="a" d="M13 3L16 0V16H13ZM7 9L10 6V16H7Z"/></svg></span>
+    <span class="tb-neighbour" aria-hidden="true"></span>
+    <span class="tb-clock" aria-hidden="true"><span>14:05</span><span>26/10/2026</span></span>
+  </div>
+      <div class="zoom-pair">
+        <canvas class="zoom tone-light" width="16" height="16" data-concept="2" role="img" aria-label="One to many rendered at 16 px, light, enlarged six times"></canvas>
+        <canvas class="zoom tone-dark" width="16" height="16" data-concept="2" role="img" aria-label="One to many rendered at 16 px, dark, enlarged six times"></canvas>
+      </div>
+      <figcaption>Tray icon at 16 px between placeholder icons on a mock taskbar, light and dark. Below, the real 16 px raster enlarged 6×.</figcaption>
+    </figure>
+    <section class="cell cell--small" aria-label="One to many at small size">
+      <h3>At small size</h3>
+      <p><strong>Strongest:</strong> one clean 45° line runs through the bar end and both stem tops, and it still reads as one line at 16 px; the idea of one file reaching every store is the most literal of the three.</p>
+      <p><strong>Weakest:</strong> at 16 px the two verdigris stems read as a rising bar chart, a stock stats icon; the middle stem's tip sits under open space, so the feeding needs explaining; and the top right corner is TecHaust's own construction.</p>
+    </section>
+    <section class="cell cell--checks" aria-label="One to many rule checks">
+      <h3>Rule checks</h3>
+      <ul class="checks"><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Solid blocks, 100-unit grid.</span> <span class="note">Every edge is on the grid except the cut ends (73.13), which follow from a one-stroke channel at 45°, as TecHaust's 73.13 does.</span></p></li><li><span class="verdict verdict--note">Note</span><p><span class="rule">One decorative device.</span> <span class="note">One channel, but it cuts two stem tops along its far edge: one line, two cut ends. P3.2 should rule whether that counts as one device.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Channel exactly one stroke.</span> <span class="note">19 units square to the cut (26.87 across), equal to the vertical stroke. At 16 px it is 4 px across, 2.8 px square to the cut, as in TecHaust's favicon.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Horizontals about 8 % thinner.</span> <span class="note">17.5 against 19 (7.9 %) in the vector and 11 against 12 px at 64 px. At 32 and 16 px they are equal, the same pixel-fitting rule as TecHaust's.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Ink base, verdigris accent.</span> <span class="note">Ink carries the bar and the first stem; verdigris the two stores. 6.3 to 1 on white.</span></p></li><li><span class="verdict verdict--pass">Pass</span><p><span class="rule">Colour on dark.</span> <span class="note">Mist with verdigris-300: 13.4 and 7.9 to 1 on the ink-900 app bar, 13.5 and 7.9 to 1 on the dark taskbar mock.</span></p></li><li><span class="verdict verdict--note">Note</span><p><span class="rule">No sync clichés.</span> <span class="note">No arrows, circles, clouds or ticks. Not a banned motif, but the two stepped verdigris stems recall a bar chart or signal-strength icon at small sizes.</span></p></li></ul>
+    </section>
+  </article>
+  </main>
+  <footer class="board-foot">
+    <p>Colours: the Patina palette from TecHaust's <span class="mono">packages/ui/tokens/tokens.json</span>, set once at the top of this page. The two taskbar greys are mixed from the white and black tokens to stand in for Windows 11; the real taskbar is checked when the tray icons are built (P3.3).</p>
+    <p>Sample content: the taskbar clock and the neighbouring tray icons are placeholders.</p>
+    <p>Fonts: Archivo and IBM Plex Mono, SIL Open Font License 1.1 (<a href="fonts/LICENSES.md">fonts/LICENSES.md</a>).</p>
+  </footer>
+</div>
+<script>
+(() => {
+  const root = document.documentElement;
+  const btn = document.getElementById("theme");
+  const label = btn.querySelector("span");
+  const sysDark = matchMedia("(prefers-color-scheme: dark)");
+  const isDark = () => root.dataset.theme ? root.dataset.theme === "dark" : sysDark.matches;
+  const sync = () => { const d = isDark(); btn.setAttribute("aria-pressed", String(d)); label.textContent = d ? "Light board" : "Dark board"; };
+  btn.addEventListener("click", () => { root.dataset.theme = isDark() ? "light" : "dark"; sync(); });
+  sysDark.addEventListener("change", sync);
+  sync();
+
+  // The real 16 px raster: draw the pixel-fitted SVG into a 16 × 16 canvas, then show it enlarged with no smoothing.
+  const marks = [{"base":"M0 0H13V3H3V6H8L5 9H3V13H13V16H0Z","accent":"M12 6H16V9H9Z"},{"base":"M0 0H16V3H3V6H8L5 9H0Z","accent":"M12 6H16V16H0V13H13V9H9Z"},{"base":"M0 0H12L9 3H3V16H0Z","accent":"M13 3L16 0V16H13ZM7 9L10 6V16H7Z"}];
+  for (const cv of document.querySelectorAll("canvas.zoom")) {
+    const cs = getComputedStyle(cv);
+    const m = marks[Number(cv.dataset.concept)];
+    const fill = (v) => cs.getPropertyValue(v).trim();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">' +
+      '<path fill="' + fill("--mark-base") + '" d="' + m.base + '"/><path fill="' + fill("--mark-accent") + '" d="' + m.accent + '"/></svg>';
+    const img = new Image();
+    img.onload = () => cv.getContext("2d").drawImage(img, 0, 0, 16, 16);
+    img.src = "data:image/svg+xml," + encodeURIComponent(svg);
+  }
+})();
+</script>
+</body>
+</html>

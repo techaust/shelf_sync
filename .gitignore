@@ -1,0 +1,35 @@
+# Dependencies and build output
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+build/
+.vite/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local logs from tools/heavy.sh
+.logs/
+*.log
+
+# Local-only settings and secrets (never committed)
+.claude/settings.local.json
+.env
+.env.*
+*.pem
+*.key
+config.env
+
+# App data, if ever created inside the folder
+*.sqlite
+*.sqlite3
+*.db
+
+# OS files
+Thumbs.db
+desktop.ini
+.DS_Store

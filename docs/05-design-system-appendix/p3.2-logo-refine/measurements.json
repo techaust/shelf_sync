@@ -1,0 +1,590 @@
+{
+  "generatedBy": "brand/draft/build.mjs",
+  "recommended": "a-cut-piece",
+  "wordmark": {
+    "pairs": {
+      "1": 2,
+      "4": 2,
+      "5": 3,
+      "6": 3,
+      "7": 2
+    },
+    "tracking": -6,
+    "fCut": {
+      "barTop": 23.3,
+      "barBottom": 38.73,
+      "height": 15.43,
+      "maxX": 391.17,
+      "cutX": 375.74,
+      "edge": {
+        "dx": -15.43,
+        "dy": 15.43
+      }
+    },
+    "width": 772.89,
+    "widthBefore": 784.89
+  },
+  "lockup": {
+    "markSize": 128,
+    "wx": 176.64,
+    "stroke": 24.32,
+    "y0": -14,
+    "y1": 129,
+    "width": 949.53,
+    "eTop": 124.32,
+    "eBottom": 154.32,
+    "vb": {
+      "primary": "0 -14 949.53 143",
+      "wordmark": "0 -7 772.89 136",
+      "endorsed": "0 -14 949.53 168.32"
+    },
+    "minimum": {
+      "primaryWidth": 96,
+      "markAtPrimaryMin": 12.94,
+      "capAtPrimaryMin": 10.11,
+      "primaryWidthForSymbolMin": 118.69,
+      "endorsedWidth": 265.11,
+      "endorsedCap": 27.92,
+      "endorsementCapPx": 8.38
+    }
+  },
+  "endorsement": {
+    "cap": 30,
+    "emSize": 42.98,
+    "width": 313.41
+  },
+  "shares": [
+    {
+      "id": "p3.1",
+      "name": "P3.1 (before)",
+      "what": "the whole lower block",
+      "ink": 2812.6,
+      "verdigris": 2869.7,
+      "share": 50.5,
+      "share16": 50.1
+    },
+    {
+      "id": "a-cut-piece",
+      "name": "Cut piece",
+      "what": "only the spine end the channel cuts off",
+      "ink": 5384.3,
+      "verdigris": 640,
+      "share": 10.6,
+      "share16": 9.3
+    },
+    {
+      "id": "b-lower-bowl",
+      "name": "Lower bowl",
+      "what": "the spine end and the lower stem",
+      "ink": 4904.6,
+      "verdigris": 1119.7,
+      "share": 18.6,
+      "share16": 20.9
+    },
+    {
+      "id": "c-lower-terminal",
+      "name": "Lower terminal",
+      "what": "the bottom bar's free end and its spur",
+      "ink": 4435.8,
+      "verdigris": 1588.5,
+      "share": 26.4,
+      "share16": 24.6
+    }
+  ],
+  "contrasts": [
+    {
+      "label": "Ink on white",
+      "fg": "ink-900",
+      "bg": "white",
+      "ratio": 16.28
+    },
+    {
+      "label": "Verdigris on white",
+      "fg": "verdigris-700",
+      "bg": "white",
+      "ratio": 6.34
+    },
+    {
+      "label": "Ink on stone-50 page",
+      "fg": "ink-900",
+      "bg": "stone-50",
+      "ratio": 15.15
+    },
+    {
+      "label": "Verdigris on stone-50 page",
+      "fg": "verdigris-700",
+      "bg": "stone-50",
+      "ratio": 5.9
+    },
+    {
+      "label": "Mist on ink-900 (dark app bar)",
+      "fg": "mist",
+      "bg": "ink-900",
+      "ratio": 13.44
+    },
+    {
+      "label": "Verdigris-300 on ink-900",
+      "fg": "verdigris-300",
+      "bg": "ink-900",
+      "ratio": 7.86
+    },
+    {
+      "label": "Mist on ink-950 (dark page)",
+      "fg": "mist",
+      "bg": "ink-950",
+      "ratio": 15.19
+    },
+    {
+      "label": "Verdigris-300 on ink-950",
+      "fg": "verdigris-300",
+      "bg": "ink-950",
+      "ratio": 8.89
+    },
+    {
+      "label": "Halves against each other, light (verdigris-700 / ink-900)",
+      "fg": "verdigris-700",
+      "bg": "ink-900",
+      "ratio": 2.57
+    },
+    {
+      "label": "Halves against each other, dark (verdigris-300 / mist)",
+      "fg": "verdigris-300",
+      "bg": "mist",
+      "ratio": 1.71
+    },
+    {
+      "label": "Ink on light taskbar mock",
+      "fg": "ink-900",
+      "bg": "taskbar-light",
+      "ratio": 14.54
+    },
+    {
+      "label": "Verdigris on light taskbar mock",
+      "fg": "verdigris-700",
+      "bg": "taskbar-light",
+      "ratio": 5.66
+    },
+    {
+      "label": "Mist on dark taskbar mock",
+      "fg": "mist",
+      "bg": "taskbar-dark",
+      "ratio": 13.45
+    },
+    {
+      "label": "Verdigris-300 on dark taskbar mock",
+      "fg": "verdigris-300",
+      "bg": "taskbar-dark",
+      "ratio": 7.87
+    },
+    {
+      "label": "One colour: ink on white",
+      "fg": "ink-900",
+      "bg": "white",
+      "ratio": 16.28
+    },
+    {
+      "label": "One colour: white on ink-900",
+      "fg": "white",
+      "bg": "ink-900",
+      "ratio": 16.28
+    }
+  ],
+  "deltaE": {
+    "light": 24.6,
+    "dark": 22.9,
+    "lightness": {
+      "mist": 92.4,
+      "verdigris-300": 73.4,
+      "ink-900": 12.3,
+      "verdigris-700": 40.5
+    }
+  },
+  "pixelFit": [
+    {
+      "px": 16,
+      "v": 3,
+      "h": 2,
+      "thinned": true,
+      "spur": 2,
+      "channelRun": 4,
+      "channelSquare": 2.83,
+      "channelVsStroke": 94.3,
+      "spineTop": 7,
+      "cutInk": 7,
+      "cutVerdigris": 11,
+      "upperCounter": 5,
+      "lowerCounter": 5,
+      "upperOpening": 3,
+      "lowerOpening": 3,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    },
+    {
+      "px": 20,
+      "v": 4,
+      "h": 4,
+      "thinned": false,
+      "spur": 2,
+      "channelRun": 6,
+      "channelSquare": 4.24,
+      "channelVsStroke": 106.1,
+      "spineTop": 8,
+      "cutInk": 9,
+      "cutVerdigris": 15,
+      "upperCounter": 4,
+      "lowerCounter": 4,
+      "upperOpening": 2,
+      "lowerOpening": 2,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    },
+    {
+      "px": 24,
+      "v": 5,
+      "h": 5,
+      "thinned": false,
+      "spur": 2,
+      "channelRun": 7,
+      "channelSquare": 4.95,
+      "channelVsStroke": 99,
+      "spineTop": 9,
+      "cutInk": 11,
+      "cutVerdigris": 18,
+      "upperCounter": 4,
+      "lowerCounter": 5,
+      "upperOpening": 2,
+      "lowerOpening": 3,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    },
+    {
+      "px": 32,
+      "v": 6,
+      "h": 6,
+      "thinned": false,
+      "spur": 3,
+      "channelRun": 8,
+      "channelSquare": 5.66,
+      "channelVsStroke": 94.3,
+      "spineTop": 13,
+      "cutInk": 15,
+      "cutVerdigris": 23,
+      "upperCounter": 7,
+      "lowerCounter": 7,
+      "upperOpening": 4,
+      "lowerOpening": 4,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    },
+    {
+      "px": 48,
+      "v": 9,
+      "h": 8,
+      "thinned": false,
+      "spur": 4,
+      "channelRun": 13,
+      "channelSquare": 9.19,
+      "channelVsStroke": 102.1,
+      "spineTop": 19,
+      "cutInk": 22,
+      "cutVerdigris": 35,
+      "upperCounter": 11,
+      "lowerCounter": 13,
+      "upperOpening": 7,
+      "lowerOpening": 9,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    },
+    {
+      "px": 64,
+      "v": 12,
+      "h": 11,
+      "thinned": false,
+      "spur": 6,
+      "channelRun": 17,
+      "channelSquare": 12.02,
+      "channelVsStroke": 100.2,
+      "spineTop": 26,
+      "cutInk": 29,
+      "cutVerdigris": 46,
+      "upperCounter": 15,
+      "lowerCounter": 16,
+      "upperOpening": 9,
+      "lowerOpening": 10,
+      "whole": true,
+      "diagonals": 2,
+      "diagonals45slash": true,
+      "coords": 26
+    }
+  ],
+  "darkSplit": {
+    "p3.1": {
+      "px": 16,
+      "rows": [
+        {
+          "row": 6,
+          "clear": 3
+        },
+        {
+          "row": 7,
+          "clear": 3
+        },
+        {
+          "row": 8,
+          "clear": 3
+        }
+      ],
+      "minClear": 3,
+      "channelSquare": 2.83,
+      "jointEdges": 0
+    },
+    "a-cut-piece": {
+      "px": 16,
+      "rows": [
+        {
+          "row": 7,
+          "clear": 3
+        },
+        {
+          "row": 8,
+          "clear": 3
+        }
+      ],
+      "minClear": 3,
+      "channelSquare": 2.83,
+      "jointEdges": 3
+    },
+    "b-lower-bowl": {
+      "px": 16,
+      "rows": [
+        {
+          "row": 7,
+          "clear": 3
+        },
+        {
+          "row": 8,
+          "clear": 3
+        }
+      ],
+      "minClear": 3,
+      "channelSquare": 2.83,
+      "jointEdges": 3
+    },
+    "c-lower-terminal": {
+      "px": 16,
+      "rows": [
+        {
+          "row": 7,
+          "clear": 3
+        },
+        {
+          "row": 8,
+          "clear": 3
+        }
+      ],
+      "minClear": 3,
+      "channelSquare": 2.83,
+      "jointEdges": 2
+    }
+  },
+  "notFive": {
+    "px": 16,
+    "before": 12,
+    "after": 20,
+    "spurPixels": 12
+  },
+  "notFive32": {
+    "px": 32,
+    "before": 48,
+    "after": 84,
+    "spurPixels": 36
+  },
+  "ratios": {
+    "stroke": 19,
+    "horizontal": 17.5,
+    "horizontalThinner": 7.9,
+    "channelSquare": 19,
+    "channelRun": 26.87,
+    "channelVsStroke": 100,
+    "spineCentre": 48.5,
+    "spur": 9,
+    "spurVsStroke": 47.4
+  },
+  "calibration": {
+    "rows": [
+      {
+        "pair": "no",
+        "published": 20.3,
+        "ours": 20.7,
+        "diff": 0.4
+      },
+      {
+        "pair": "cH",
+        "published": 24.1,
+        "ours": 24,
+        "diff": -0.1
+      },
+      {
+        "pair": "Ha",
+        "published": 23.2,
+        "ours": 23.3,
+        "diff": 0.1
+      },
+      {
+        "pair": "st",
+        "published": 23.1,
+        "ours": 22.9,
+        "diff": -0.2
+      }
+    ],
+    "maxDiff": 0.4
+  },
+  "spacing": {
+    "reference": 20.7,
+    "tolerance": 0.08,
+    "pairs": [
+      {
+        "pair": "Sh",
+        "before": 22.4,
+        "beforeOff": 8.5,
+        "after": 21.1,
+        "afterOff": 2.1,
+        "kern": 2,
+        "openBefore": 36,
+        "openAfter": 33,
+        "outlier": true,
+        "closestBefore": 16.4,
+        "closestAfter": 14.4
+      },
+      {
+        "pair": "he",
+        "before": 20.6,
+        "beforeOff": -0.1,
+        "after": 20.6,
+        "afterOff": -0.1,
+        "kern": 0,
+        "openBefore": 24,
+        "openAfter": 24,
+        "outlier": false,
+        "closestBefore": 15.2,
+        "closestAfter": 15.2
+      },
+      {
+        "pair": "el",
+        "before": 21.1,
+        "beforeOff": 1.9,
+        "after": 21.1,
+        "afterOff": 1.9,
+        "kern": 0,
+        "openBefore": 26,
+        "openAfter": 26,
+        "outlier": false,
+        "closestBefore": 15.8,
+        "closestAfter": 15.8
+      },
+      {
+        "pair": "lf",
+        "before": 22.4,
+        "beforeOff": 8.2,
+        "after": 20.4,
+        "afterOff": -1.5,
+        "kern": 2,
+        "openBefore": 0,
+        "openAfter": 0,
+        "outlier": true,
+        "closestBefore": 11.1,
+        "closestAfter": 9.1
+      },
+      {
+        "pair": "fS",
+        "before": 24.3,
+        "beforeOff": 17.7,
+        "after": 24.9,
+        "afterOff": 20.3,
+        "kern": 3,
+        "openBefore": 80,
+        "openAfter": 60,
+        "outlier": true,
+        "closestBefore": 11.1,
+        "closestAfter": 8.5
+      },
+      {
+        "pair": "Sy",
+        "before": 26,
+        "beforeOff": 26,
+        "after": 25,
+        "afterOff": 21,
+        "kern": 3,
+        "openBefore": 72,
+        "openAfter": 59,
+        "outlier": true,
+        "closestBefore": 10.9,
+        "closestAfter": 7.9
+      },
+      {
+        "pair": "yn",
+        "before": 22.5,
+        "beforeOff": 9,
+        "after": 21.4,
+        "afterOff": 3.3,
+        "kern": 2,
+        "openBefore": 44,
+        "openAfter": 38,
+        "outlier": true,
+        "closestBefore": 9.8,
+        "closestAfter": 7.8
+      },
+      {
+        "pair": "nc",
+        "before": 20.6,
+        "beforeOff": -0.3,
+        "after": 20.6,
+        "afterOff": -0.3,
+        "kern": 0,
+        "openBefore": 23,
+        "openAfter": 23,
+        "outlier": false,
+        "closestBefore": 15.2,
+        "closestAfter": 15.2
+      }
+    ],
+    "cut": {
+      "d": "M352.18 100L352.18 38.73L338.11 38.73L338.11 23.3L352.18 23.3L352.18 15.73Q352.18 8.98 354.63 3.88Q357.07 -1.22 362.22 -4.03Q367.38 -6.85 375.46 -6.85Q378.12 -6.85 380.98 -6.55Q383.83 -6.26 386.48 -5.74Q389.13 -5.23 391.17 -4.46L391.17 8.59L382.24 8.59Q376.73 8.59 374.34 10.4Q371.96 12.21 371.96 16.26L371.96 23.3L391.17 23.3L375.74 38.73L371.96 38.73L371.96 100L352.18 100Z",
+      "barTop": 23.3,
+      "barBottom": 38.73,
+      "height": 15.43,
+      "maxX": 391.17,
+      "cutX": 375.74,
+      "edge": {
+        "dx": -15.43,
+        "dy": 15.43
+      }
+    },
+    "beforeWidth": 784.89,
+    "afterWidth": 772.89
+  },
+  "taskbar": {
+    "light": "#F2F2F2",
+    "dark": "#202020"
+  },
+  "params16": {
+    "size": 16,
+    "v": 3,
+    "h": 2,
+    "cy": 7.76,
+    "spur": 2,
+    "ch": 4,
+    "pixel": true,
+    "thinned": true
+  }
+}

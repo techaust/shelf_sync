@@ -1,0 +1,142 @@
+# 11: Decisions
+
+One row per decision. A decided question is never asked again; to change one, add a new row that says what it replaces.
+
+**Who:**
+- **Owner:** decided by the owner. "Owner (accepted with plan Draft 3)" = a Lead default the owner accepted by approving that plan.
+- **Lead (accepted with the Phase 2 docs):** a Lead default the owner accepted by approving Phase 2 on 2026-10-25.
+- **Lead:** a routine engineering decision by Claude, the lead conversation, within the owner's rules.
+- **Lead (proposed):** a Lead default written into a draft and still open to the owner's review; it becomes "Lead" when the owner approves the document it's in.
+
+| Date | Decision | Who | Applied in |
+|---|---|---|---|
+| 2026-10-25 | Name ShelfSync; a new private GitHub repo | Owner | [02 §1](02-plan.md) |
+| 2026-10-25 | Project folder `ShelfSync` → `shelf_sync`; the GitHub repo is `shelf_sync`; the product name stays ShelfSync | Owner | [02 §1](02-plan.md), [03 D-1](03-prd.md) |
+| 2026-10-25 | Single user, this PC, Windows only | Owner | [03 D-2](03-prd.md) |
+| 2026-10-25 | No login screen (unreachable from outside) | Owner (accepted with plan Draft 3) | [ADR 0005](adr/0005-localhost-only.md) |
+| 2026-10-25 | ZIPs by drag-and-drop in the browser | Owner | [03 UI-UPL](03-prd.md) |
+| 2026-10-25 | Any number of stores, one S3-compatible bucket | Owner | [04 §4](04-architecture.md) |
+| 2026-10-25 | Start clean from the live stores; nothing imported from OmniSync; OmniSync read-only until retired after M7 | Owner | [01](01-audit.md), [CLAUDE.md](../CLAUDE.md) |
+| 2026-10-25 | Certain auto-applies after a 50-ZIP trust ramp; everything else goes to Review | Owner | [02 §4](02-plan.md), [07 §6](07-testing.md) |
+| 2026-10-25 | Downgrades held; main item only; bundled items never touch other products; one previous file kept | Owner | [03 MAT-08, APL-07](03-prd.md) |
+| 2026-10-25 | Catalog linked by product URL slug; near misses suggested, never silent | Owner | [ADR 0003](adr/0003-catalog-linked-by-slug.md) |
+| 2026-10-25 | Rule-based matching, no AI; weights from calibration with a 0-wrong-in-Certain bar | Owner | [ADR 0004](adr/0004-rule-based-matching.md) |
+| 2026-10-25 | Python 3.12 + FastAPI + SQLite; React + TypeScript (Vite) | Owner | [ADR 0001](adr/0001-python-fastapi-sqlite-react.md) |
+| 2026-10-25 | Per-user Setup.exe with the embedded signed Python; tray; in-app updates; no code-signing certificate | Owner | [ADR 0002](adr/0002-embedded-python-nsis.md) |
+| 2026-10-25 | A product must be linked on every active store before it's updated; teach-from-current-files on by default | Owner (accepted with plan Draft 3) | [03 D-8, D-9](03-prd.md) |
+| 2026-10-25 | Calibration on the S3 corpus with range reads; writes proven on a local test stack, then one live canary | Owner | [07](07-testing.md) |
+| 2026-10-25 | Plan Draft 3 approved | Owner | [02](02-plan.md) |
+| 2026-10-25 | $0 tools only; paid options mentioned only as optional | Owner | [CLAUDE.md](../CLAUDE.md) |
+| 2026-10-25 | Screenshots in the built-in browser pane, not headless Chrome | Owner | [05 §8](05-design-system.md), [09](09-tooling.md) |
+| 2026-10-25 | Old docs deleted; research scripts kept in `tools/research/`; plan link kept and republished later | Owner | this folder |
+| 2026-10-25 | Docs categorised like `techaust_platform` | Owner | [ADR 0007](adr/0007-docs-and-workflow-like-techaust.md) |
+| 2026-10-25 | Copy TecHaust's docs + rules + automatic skills + start/end-the-day skills | Owner | [ADR 0007](adr/0007-docs-and-workflow-like-techaust.md) |
+| 2026-10-25 | Tools are used automatically per the task map | Owner | [09 §3](09-tooling.md), CLAUDE.md rule 8 |
+| 2026-10-25 | ShelfSync is a TecHaust product: Patina tokens, Archivo + IBM Plex Mono, a new ShelfSync logo and asset set; the Draft 3 look retired | Owner | [ADR 0006](adr/0006-techaust-product-brand.md) |
+| 2026-10-25 | Store colours only as small identifiers (shape + dot + code) | Owner | [05 §2.3](05-design-system.md) |
+| 2026-10-25 | Mockups and screenshots only after the docs are approved | Owner | [08 Phase 3](08-roadmap.md) |
+| 2026-10-25 | Models: Opus, Sonnet, Haiku 5.5 only; never Fable | Owner | [12 §1](12-models-and-usage.md) |
+| 2026-10-25 | Lead on Opus 5.5 medium; high only for five named key steps, switched by the owner | Owner | [12 §3](12-models-and-usage.md) |
+| 2026-10-25 | TecHaust's full agent system (analyst, builder, designer, reviewer, Haiku helpers, run files, tiers, model hook); replaces ADR 0007's "not copied" | Owner | [ADR 0008](adr/0008-agent-system-and-models.md) |
+| 2026-10-25 | A light usage check (daily; limits concurrency, never model or effort) | Owner | [12 §5](12-models-and-usage.md) |
+| 2026-10-25 | **NSIS** replaces Inno Setup (Inno 6.5+ asks commercial users for a licence) | Owner | [ADR 0002](adr/0002-embedded-python-nsis.md) |
+| 2026-10-25 | Release signing key kept **offline** on the owner's PC; CI builds unsigned; the owner signs | Owner | [06 §6](06-security.md) |
+| 2026-10-25 | Every ZIP is scanned with Windows Defender before upload; a detection holds it | Owner | [03 INS-06](03-prd.md), [06 §4](06-security.md) |
+| 2026-10-25 | A ZIP whose scan can't run is held as "not scanned" with Apply anyway; 120 s timeout | Lead (accepted with the Phase 2 docs) | [03 INS-06](03-prd.md) |
+| 2026-10-25 | Heavy-command lock shared with techaust_platform (one heavy command at a time on this PC) | Lead (accepted with the Phase 2 docs) | [12 §4](12-models-and-usage.md), `tools/heavy.sh` |
+| 2026-10-25 | moto server as the local S3 emulator (MinIO is source-only now) | Lead (accepted with the Phase 2 docs) | [04 §10](04-architecture.md), [04-A V7](04-architecture-appendix/A-stack-verification.md) |
+| 2026-10-25 | windows-toasts for notifications (pystray has no notification click) | Lead (accepted with the Phase 2 docs) | [04 §2](04-architecture.md) |
+| 2026-10-25 | Token → `HttpOnly`, `SameSite=Strict` session cookie, plus Host/Origin and an `X-ShelfSync` header | Lead (accepted with the Phase 2 docs) | [06 §2](06-security.md) |
+| 2026-10-25 | A `current` directory junction for stable shortcut and start-up paths | Lead (accepted with the Phase 2 docs) | [04 §8](04-architecture.md) |
+| 2026-10-25 | Nightly full ID listing to find deleted and trashed products | Lead (accepted with the Phase 2 docs) | [03 SYNC-04](03-prd.md) |
+| 2026-10-25 | S3 name collisions get `-r2`, `-r3`…; never overwrite | Lead (accepted with the Phase 2 docs) | [03 CAT-04](03-prd.md) |
+| 2026-10-25 | Version family jump = first number down, or up by more than 1; disagreement = two different numeric versions | Lead (accepted with the Phase 2 docs) | [03 INS-04, MAT-08](03-prd.md) |
+| 2026-10-25 | Trust-ramp "agree" = the owner approves exactly the proposed action; only Certain-without-guard ZIPs count | Lead (accepted with the Phase 2 docs) | [03 APL-13](03-prd.md) |
+| 2026-10-25 | A separate read-only S3 key for calibration and teaching | Lead (accepted with the Phase 2 docs) | [06 §5](06-security.md) |
+| 2026-10-25 | Tests on Linux runners; the Windows build only on release tags (Windows minutes count 2×) | Lead (accepted with the Phase 2 docs) | [04 §2](04-architecture.md) |
+| 2026-10-25 | Standard-library `sqlite3` with numbered SQL migrations (no ORM); pystray for the tray; keyring for Credential Manager; uv for hash locks | Lead (accepted with the Phase 2 docs) | [04 §2](04-architecture.md) |
+| 2026-10-25 | App shell with a side nav (like the TecHaust admin) replaces Draft 3's top bar | Lead (accepted with the Phase 2 docs) | [05 §5–6](05-design-system.md) |
+| 2026-10-25 | PluginWay's light dot is `#007b80` (its `#009699` fails 3:1 on `stone-200`) | Lead (accepted with the Phase 2 docs) | [05 §2.3](05-design-system.md) |
+| 2026-10-25 | Near-miss twin rule: slug edit distance ≤ 2 or a `-N` suffix, plus the same title | Lead (accepted with the Phase 2 docs) | [03 CAT-03](03-prd.md) |
+| 2026-10-25 | ZIP limits: 2 GB per upload, 300 MB per nested ZIP, 500 MB per entry, ratio 100:1 over 10 MB, 20 000 entries, depth 3 | Lead (accepted with the Phase 2 docs) | [03 INS-01](03-prd.md), [06 §4](06-security.md) |
+| 2026-10-25 | Nightly snapshot at 02:00 local time with catch-up on wake; 30-day snapshot retention (the 15-minute sync interval was already in the approved plan) | Lead (accepted with the Phase 2 docs) | [03 SYNC-01, SYNC-03](03-prd.md) |
+| 2026-10-25 | Request spacing 0.15 s per store; pause a store after 10 failures in a row | Lead (accepted with the Phase 2 docs) | [03 APL-12](03-prd.md) |
+| 2026-10-25 | Start with Windows on; notifications on | Lead (accepted with the Phase 2 docs) | [03 SYS-04, SYS-05](03-prd.md) |
+| 2026-10-25 | Default port 47615, fallback up to 47624 | Lead (accepted with the Phase 2 docs) | [03 SET-06](03-prd.md) |
+| 2026-10-25 | Logs as JSON lines, rotated daily, kept 30 days; daily database backups, 7 kept | Lead (accepted with the Phase 2 docs) | [03 LOG-01, BAK-01](03-prd.md) |
+| 2026-10-25 | Speed targets (UI < 1 s, inspect 75 MB < 10 s, search < 200 ms) on this PC | Lead (accepted with the Phase 2 docs) | [03 NFR-3](03-prd.md) |
+| 2026-10-25 | ≥ 90 % line coverage on `inspect/`, `match/`, `apply/`, `secure/` | Lead (accepted with the Phase 2 docs) | [07 §1](07-testing.md) |
+| 2026-10-25 | 2-thread inspection pool; 64 KB tail read for range reads | Lead (accepted with the Phase 2 docs) | [04 §6–7](04-architecture.md) |
+| 2026-10-25 | scrypt N = 2^17, r = 8, p = 1, maxmem 256 MiB for backup encryption | Lead (accepted with the Phase 2 docs) | [06 §7](06-security.md) |
+| 2026-10-25 | M1 split into M1a and M1b; total about 24 build days (was 21) | Lead (accepted with the Phase 2 docs) | [08](08-roadmap.md) |
+| 2026-10-25 | **Safe delete:** an S3 object is deleted only if a fresh read of every store (active and paused, any product status including trash) finds no download pointing at it; objects ShelfSync didn't upload are never deleted automatically (offered in Cleanup); an `object_ref` table records every reference | Lead (accepted with the Phase 2 docs), from the re-review (H1) | [03 APL-07](03-prd.md), [04 §4, §6](04-architecture.md), [06 §5](06-security.md), [ADR 0003](adr/0003-catalog-linked-by-slug.md) |
+| 2026-10-25 | Rollback and Restore to date check (`head_object`) that every target file still exists; a missing one blocks the job and offers Set file manually | Lead (accepted with the Phase 2 docs), from the re-review (M6) | [03 APL-08, APL-14](03-prd.md) |
+| 2026-10-25 | **Single-use sign-in ticket:** the install token never goes in a URL; the launcher trades it for a 60-second, single-use ticket that the page exchanges for the session cookie. Amends the token → cookie row above | Lead (accepted with the Phase 2 docs), from the re-review (M3) | [06 §2](06-security.md), [04 §5, §8](04-architecture.md), [ADR 0005](adr/0005-localhost-only.md), CLAUDE.md |
+| 2026-10-25 | Windows-only parts sit behind small interfaces with fakes for Linux CI; a **Windows checks** test layer runs on this PC before each milestone exit and on release tags; Windows-only packages carry `sys_platform` markers. Complements the Linux-runner row above | Lead (accepted with the Phase 2 docs), from the re-review (M5) | [04 §2](04-architecture.md), [07 §1](07-testing.md) |
+| 2026-10-25 | Warn 14 days before the GitHub update token expires, from the `github-authentication-token-expiration` header | Lead (accepted with the Phase 2 docs) | [03 SYS-06](03-prd.md), [06 §5](06-security.md), [04-A V26](04-architecture-appendix/A-stack-verification.md) |
+| 2026-10-25 | New uploads are refused below 2 GB free on the data drive | Lead (accepted with the Phase 2 docs) | [03 ERR-04](03-prd.md) |
+| 2026-10-25 | The signed release manifest lists the SHA-256 of `Setup.exe`; the install runbook checks it before a first install | Lead (accepted with the Phase 2 docs) | [06 §6](06-security.md) |
+| 2026-10-25 | Key derivation uses the standard library's `hashlib.scrypt` (it has `maxmem`; cryptography's Scrypt doesn't) | Lead (accepted with the Phase 2 docs) | [04 §2](04-architecture.md), [06 §7](06-security.md) |
+| 2026-10-25 | Tier A also covers the M1a security base, the M1b updater signature check and M2's Credential Manager and backup crypto | Lead (accepted with the Phase 2 docs), from the re-review (M4) | [12 §2](12-models-and-usage.md) |
+| 2026-10-25 | The model guard treats an agent call with no type as general-purpose, which is banned (the Agent tool's own description says a missing type starts a general-purpose agent) | Lead (accepted with the Phase 2 docs) | `tools/model-guard.mjs`, [12 §6](12-models-and-usage.md) |
+| 2026-10-25 | `.claude/settings.json` denies reads of OmniSync's `config.env`, any `CREDENTIALS` folder and `.env` files | Owner | `.claude/settings.json` |
+| 2026-10-25 | The owner's Amazon S3 Storage extension licence allows activating it on the LocalWP test site | Owner | [07 §5](07-testing.md) |
+| 2026-10-25 | An over-limit ZIP fails with the limit named (no Apply anyway), since it can't be inspected safely | Lead (accepted with the Phase 2 docs), from the re-check (N5) | [03 INS-01](03-prd.md), [04 §6](04-architecture.md) |
+| 2026-10-25 | Retention runs one pass after the job queue drains, with one fresh read of every store (variations included) for all candidates; a failed read means no deletes | Lead (accepted with the Phase 2 docs), from the re-check (N3, N6) | [03 APL-07](03-prd.md), [04 §6](04-architecture.md) |
+| 2026-10-25 | The ticket route is the only one exempt from the Origin and `X-ShelfSync` checks: it refuses any request with an `Origin` and requires the install token | Lead (accepted with the Phase 2 docs), from the re-check (N2) | [06 §2](06-security.md), [04 §5](04-architecture.md) |
+| 2026-10-25 | `platform/`'s Credential Manager and Defender adapters are Tier A and get `security-review`; the Defender output parser is a pure, CI-tested function in `inspect/` | Lead (accepted with the Phase 2 docs), from the re-check (N4) | [12 §2](12-models-and-usage.md), [04 §3](04-architecture.md), [06](06-security.md) |
+| 2026-10-25 | A ZIP with a Defender detection can **only be discarded** (no approve, no Apply anyway); a file removed or locked by real-time protection before the scan counts as a detection | Owner (detection discard-only); Lead (accepted with the Phase 2 docs) for the real-time rule | [03 INS-06, MAT-08, UI-REV](03-prd.md), [04 §6](04-architecture.md), [06 §4](06-security.md) |
+| 2026-10-25 | Retention runs as a job holding the single writer slot and skips files a queued rollback, restore or Set file manually will use | Lead (accepted with the Phase 2 docs), from the second re-check | [04 §6](04-architecture.md) |
+| 2026-10-25 | A download "points at" an S3 object when its file field contains the key in any form; an unparseable link counts as a reference | Lead (accepted with the Phase 2 docs), from the second re-check | [03 APL-07](03-prd.md), [04 §4](04-architecture.md) |
+| 2026-10-25 | Smart App Control is **Off** on this PC | Owner | [04-A V18](04-architecture-appendix/A-stack-verification.md) |
+| 2026-10-25 | "Kept" files = each slot's current file plus its most recently replaced one, so the file a rollback moved away from stays for rolling forward | Lead (accepted with the Phase 2 docs), from the final re-check (M2) | [03 APL-07](03-prd.md), [ADR 0003](adr/0003-catalog-linked-by-slug.md) |
+| 2026-10-25 | Before inspecting, a missing ZIP or one still locked after 5 s of retries is held as a detection (discard only) | Lead (accepted with the Phase 2 docs), from the final re-check (M1, L1) | [03 INS-06](03-prd.md), [04 §6](04-architecture.md) |
+| 2026-10-25 | **Phase 2 approved** (docs 01–13, appendices, ADRs 0001–0008, runbooks, agents, skills, tools), including plan Draft 4; every "Lead (proposed)" row in this file is accepted with it. Phase 3 starts next session | Owner | [08](08-roadmap.md) |
+| 2026-10-26 | Tools not used by ShelfSync are turned off **for this project only** in `.claude/settings.json` (plugins, MCP tool denies, skill overrides; list in [09 §2](09-tooling.md)); account plugins stay installed so security-guidance keeps working | Owner | [09 §2, §5](09-tooling.md) |
+| 2026-10-26 | Account moved to a **Team** plan (premium seat). Usage check is 5-hour only: under 80 % up to two agents, at 80 % or more nothing new starts until the reset; the weekly pace and 85 % rule are dropped because Team shows no weekly limit for Opus, Sonnet or Haiku | Owner | [12 §5](12-models-and-usage.md) |
+| 2026-10-26 | **P3.0:** the built-in browser works inside an agent over `http://localhost` (open, read, screenshots the agent can see, mobile size, dark/light all passed), but its page tools refuse `file://` pages. Design pages are served locally through a `.claude/launch.json` entry (127.0.0.1 only), so the designer and reviewer take their own screenshots | Lead (proposed) | [12 §4](12-models-and-usage.md), `.claude/launch.json` |
+| 2026-10-26 | **Logo (P3.1): concept 2, S-cut**, chosen over Shelves (reads as an E at 16 px) and One to many (reads as a bar chart). P3.2 makes verdigris clearly the smaller part (an accent) and keeps it from reading as a 5 | Owner | [runs/p3.1-logo-concepts.md](runs/p3.1-logo-concepts.md), [05 §1.2](05-design-system.md) |
+| 2026-10-26 | The "ShelfSync" wordmark carries the 45° cut on the **f crossbar** (the family detail, as TecHaust's T bar) | Owner | [05 §1.2](05-design-system.md) (updated after P3.2) |
+| 2026-10-26 | The 45° cut always runs **"/"**, the same as TecHaust's mark | Owner | [05 §1.2](05-design-system.md) (updated after P3.2) |
+| 2026-10-26 | For **P3.2 only**, the wordmark may be outlined with the HarfBuzz copy already installed in `techaust_platform` (only read there; nothing installed or changed). P3.3 picks ShelfSync's own dev libraries with the owner's yes | Owner | [runs/p3.2-logo-refine.md](runs/p3.2-logo-refine.md) |
+| 2026-10-26 | S-cut colour split **A, "cut piece"**: verdigris only on the piece the channel cuts off (10.6 % of the mark) | Owner | [14](14-brand-audit.md), [05 §1.2](05-design-system.md) |
+| 2026-10-26 | At **16 px only**, the symbol's horizontals are 2 px against 3 px stems (an exception to TecHaust's equal-stroke rule below 40 px), so the turned ends stay open | Owner | [14 §2.3](14-brand-audit.md) |
+| 2026-10-26 | The primary lockup's minimum width is **119 px** (was 96 px), so the symbol inside stays at 16 px or more | Owner | [05 §1.3](05-design-system.md) |
+| 2026-10-26 | The accent stays **verdigris-700 at every size**; at 16 px on light it is felt more than seen (2.57:1), and the shape doesn't depend on it | Owner | [14 §2.6](14-brand-audit.md) |
+| 2026-10-26 | **P3.2 approved:** the refined S-cut logo is final (reviewer APPROVE on round 2; scores in 14). 05 §1.2–1.4 updated to match | Owner | [14](14-brand-audit.md), [05 §1.2–1.4](05-design-system.md) |
+| 2026-10-26 | P3.3 brand pipeline may install, dev-only and exactly pinned with a lockfile: harfbuzzjs 1.6.2, fontverter 2.0.0, @fontsource-variable/archivo 5.3.0, @fontsource/ibm-plex-mono 5.3.0, vitest 4.1.11. No sharp: PNG and ICO are written by ShelfSync code with Node's zlib | Owner | [05 §1.4](05-design-system.md), runs/p3.3-brand-pipeline.md |
+| 2026-10-26 | The 16 px frame of `shelfsync.ico` and `favicon.ico` uses the symbol fitted at **14 px with a 1 px ink rim**, so it keeps its edge on white; an exception to the 16 px symbol minimum for that ICO frame only | Owner | [05 §1.3–1.4](05-design-system.md) |
+| 2026-10-26 | Two installer-only endorsed lockups approved: **stacked** (NSIS side panel) and **compact** (NSIS header), both keeping "BY TECHAUST" at 12 px | Owner | [05 §1.3](05-design-system.md) |
+| 2026-10-26 | Tray badges: **paused** = two bars in the info colour, **needs attention** = a dot in the warning colour, cut out of the mark's lower-right corner; the shapes differ, so status never relies on colour alone | Owner | [05 §1.4](05-design-system.md) |
+| 2026-10-26 | The brand pipeline's vitest pin moves to **4.1.12** (fixes 2 moderate `npm audit` advisories in 4.1.11; dev-only) | Owner | `brand/package.json` |
+| 2026-10-26 | P3.3 approved: the brand pipeline in `brand/` and its full asset set are final | Owner | runs/p3.3-brand-pipeline.md, [14 §3a](14-brand-audit.md) |
+| 2026-10-26 | P3.4 mockup icons come from **lucide-static** (ISC, $0), added dev-only to `brand/` with an exact pin and lockfile hash; only the icons used are copied into the mockup folder | Owner | runs/p3.4-mockups.md |
+| 2026-10-26 | lucide-static pinned at **1.55.0** (released 2026-10-10, the newest version at least two weeks old; no dependencies) | Lead (proposed) | `brand/package.json` |
+| 2026-10-26 | P3.4 sample data is realistic but made up, labelled "Sample data" on every screen; nothing reads the live stores | Owner | [05 §8](05-design-system.md) |
+| 2026-10-26 | P3.4 runs in two parts: **A** = shell, Dashboard, Upload, Review (shown to the owner first); **B** = Catalog, Product, Cleanup, Activity, Settings, wizard, help panel, states; one review covers both | Owner | runs/p3.4-mockups.md |
+| 2026-10-26 | The mockup is a clickable shell: working side nav, light/dark switch, a per-screen loading/empty/error switch, Review's shortcuts move the selection; nothing is saved | Owner | runs/p3.4-mockups.md |
+| 2026-10-26 | P3.4 part A's look approved; part B starts | Owner | runs/p3.4-mockups.md |
+| 2026-10-26 | `brand/tokens.json` stays an unchanged Patina copy. ShelfSync's additions (app-bar tokens, the fixed in-app type sizes, code at 14 px per 05) go in a ShelfSync token layer at M1; the mockup maps them to palette tokens until then | Lead (proposed) | [05 §2.2](05-design-system.md) |
+| 2026-10-26 | Discarding a trust-ramp "would apply" item counts as a disagreement and resets the ramp to 0 / 50 (APL-13) | Lead (proposed) | [03 APL-13](03-prd.md) |
+| 2026-10-26 | Apply anyway has no single-key shortcut; it always opens the ConfirmDialog | Lead (proposed) | [05 §5](05-design-system.md) |
+| 2026-10-26 | The chart's two series rely on legend, direct label, tooltip and table as the second cue; no hatch texture | Lead (proposed) | [05 §5](05-design-system.md) Chart14d |
+| 2026-10-26 | Times show the Windows zone's long name (e.g. "India Standard Time"), not a GMT offset | Lead (proposed) | CLAUDE.md conventions |
+| 2026-10-26 | The mockup bar's title is "Mockup controls" (fits one line); the bar is visually separate from the app | Lead (proposed) | runs/p3.4-mockups.md |
+| 2026-10-26 | When the brake trips, the status strip shows "Auto-apply paused" with the reason in a tooltip | Lead (proposed) | [05 §5](05-design-system.md) StatusStrip |
+| 2026-10-26 | The wizard's Teach step says it makes about 2,400 small S3 read requests (a tiny AWS charge), in line with the $0 rule's flag-every-cost policy | Lead (proposed) | [02 §11](02-plan.md) |
+| 2026-10-26 | "Reset access token" also ends every open session; the owner signs in again from the tray icon or the Start menu | Owner | [06 §2](06-security.md) |
+| 2026-10-26 | Storage "Test" writes a tiny object under a `shelfsync-test/` prefix with the read/write key, reads it back with the read-only key, then deletes it (about 4 requests per click, a tiny AWS charge) | Owner | [06 §5](06-security.md), SET-02 |
+| 2026-10-26 | "Roll back app" keeps the data when the database layout is unchanged; if the update migrated it, the rollback restores the pre-update backup (SYS-07) after a warning that changes made since the update are lost | Owner | [04 §8](04-architecture.md), SYS-06 |
+| 2026-10-26 | ERR-06's second line becomes "Open ShelfSync from the tray icon. The old address now reaches the other program." | Lead (proposed) | [13 §3](13-content.md) |
+| 2026-10-26 | Roll back app's dialog says the newer version can be installed again from Settings › Updates; when the backup was restored, the changes lost then can't be brought back | Lead (proposed) | [13 §2](13-content.md), SYS-06 |
+| 2026-10-26 | In the wizard, a store's keys are saved (to Credential Manager) when the owner leaves that step, and come back masked as "Saved" with Replace | Lead (proposed) | [06 §3](06-security.md), UI-WIZ |
+| 2026-10-26 | Headings focused by navigation (tabindex -1) show no focus ring; every interactive control keeps the 2 px ring | Lead (proposed) | [05 §7](05-design-system.md) |
+| 2026-10-26 | P3.4 approved: the mockups of every screen, the wizard, the help panel and all states are final. Their wording is the source for screen text until M1 moves it into the app ([13 §6](13-content.md)) | Owner (approval); Lead (proposed) for the wording source | runs/p3.4-mockups.md |
+| 2026-10-26 | The mockup artifact on a phone shows the 1280 px desktop layout shrunk to the screen width, with a note that ShelfSync is a desktop app; the app itself keeps no phone layout (05 §6) | Owner | `screenshots/capture/build_artifact.py` |
+| 2026-10-26 | P3.5 approved: the 16 screenshots and 13 extras at 2×, and the mockup artifact with its phone view | Owner | runs/p3.5-screenshots.md |
+| 2026-10-26 | P3.6: the old plan link is in the owner's previous Claude organization, which this session can't reach, so the plan is published at a **new link**, https://claude.ai/artifact/9CYLJk6kRPncuJ3Lmunn5f, in the Team organization. The old link is left as it is; 08's "link unchanged" exit is replaced by "new link recorded in 02" | Owner | [02](02-plan.md), [08](08-roadmap.md) |
+| 2026-10-26 | **Phase 3 approved** (brand and screens, P3.0–P3.6). Look and feel scored 9 in 02's scorecard. Next: M1a | Owner | [02 §12](02-plan.md), [08](08-roadmap.md) |
+| 2026-10-26 | GitHub Free has no branch protection or rulesets on private repos (docs.github.com, checked 2026-10-26), so `shelf_sync` stays **private** on the `techaust` account and `main` is guarded by a tracked local pre-push hook (refuses pushes to `main` and force-pushes) plus CI on every PR; GitHub itself doesn't enforce it. GitHub Pro (about US$4 a month) is the optional paid route. The one exception is the first bootstrap push of the initial commit, with the owner's yes | Owner | [CLAUDE.md](../CLAUDE.md) git workflow |
+| 2026-10-26 | M1a packages are approved as **one list, one yes**: the lead shows the exact M1a subset of [09 §7](09-tooling.md) with versions (newest release at least 14 days old, checked in Context7), exact pins with hashes, before anything is installed | Owner | [04 §2](04-architecture.md) |
+| 2026-10-26 | Playwright + axe screen tests run **in CI only**; no test browser is downloaded to this PC | Owner | [07 §1](07-testing.md) |
+| 2026-10-26 | `brand/draft/` is committed as is in the first commit (the P3.2 audit cites it) | Owner | `brand/draft/` |

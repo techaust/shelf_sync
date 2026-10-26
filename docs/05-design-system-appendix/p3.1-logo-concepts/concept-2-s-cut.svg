@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="ShelfSync concept: S-cut">
+  <title>ShelfSync concept 2: S-cut (P3.1, not final)</title>
+  <!-- Patina colours from techaust_platform packages/ui/tokens/tokens.json (read-only); brand/tokens.json replaces them at P3.3. -->
+  <style>
+    svg { --ink-900: #14231F; /* token palette.ink-900 (brand ink) */ --verdigris-700: #1E6B5C; /* token palette.verdigris-700 (brand verdigris) */ }
+    .base { fill: var(--ink-900); }
+    .accent { fill: var(--verdigris-700); }
+  </style>
+  <!-- 100-unit grid. Vertical stroke 19, horizontal 17.5, channel 19 square to the 45° cut (26.87 across). -->
+  <path class="base" d="M0 0H100V17.5H19V39.75H45.31L27.81 57.25H0Z"/>
+  <path class="accent" d="M72.18 39.75H100V100H0V82.5H81V57.25H54.68Z"/>
+</svg>

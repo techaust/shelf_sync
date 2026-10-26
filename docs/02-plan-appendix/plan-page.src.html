@@ -1,0 +1,242 @@
+<title>ShelfSync Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one reading column (about 72ch) under a quiet ink masthead; tables and the flow chart scroll inside their own boxes. */
+/*@@TOKENS@@*/
+/*@@FONTS@@*/
+html { background: var(--color-bg); }
+body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-sans); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 var(--space-16); }
+.wrap { max-width: 46rem; margin: 0 auto; }
+.mast { margin: 0 calc(-1 * max(16px, env(safe-area-inset-left, 0px))) var(--space-10); background: var(--color-ink-900); color: var(--color-mist);
+  padding: var(--space-8) max(16px, env(safe-area-inset-right, 0px)) var(--space-10) max(16px, env(safe-area-inset-left, 0px)); }
+.mast .wrap { display: grid; gap: var(--space-4); }
+.mast img { height: 40px; width: auto; }
+.mast h1 { font-family: var(--font-display); font-stretch: 116%; font-weight: 620; font-size: clamp(1.75rem, 5vw, 2.5rem); line-height: 1.1; margin: 0; text-wrap: balance; color: var(--color-white); }
+.mast p { margin: 0; max-width: 60ch; }
+.meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: 14px; color: var(--color-verdigris-200); }
+.meta span { font-variant-numeric: tabular-nums; }
+.logo-dark { display: none; }
+h2 { font-family: var(--font-display); font-stretch: 112%; font-weight: 620; font-size: 1.5rem; line-height: 1.25; margin: var(--space-12) 0 var(--space-3); text-wrap: balance; }
+h3 { font-size: 1.05rem; margin: var(--space-6) 0 var(--space-2); }
+p, ul, ol { margin: 0 0 var(--space-3); }
+ul, ol { padding-left: 1.25rem; }
+li + li { margin-top: var(--space-1); }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; overflow-wrap: anywhere; }
+a { color: var(--color-link); text-underline-offset: 2px; }
+a:hover { color: var(--color-link-hover); }
+a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 2px; }
+strong { font-weight: 640; }
+.lede { font-size: 1.125rem; border-left: 3px solid var(--color-accent-decor); padding: var(--space-1) 0 var(--space-1) var(--space-4); margin-bottom: var(--space-6); }
+.table { overflow-x: auto; margin: var(--space-4) 0 var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 13px; letter-spacing: 0.02em; color: var(--color-text-muted); font-weight: 600; background: var(--color-surface-alt); }
+.band { display: inline-block; padding: 0 var(--space-2); border-radius: var(--radius-full); border: 1px solid currentColor; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.b-certain { color: var(--color-success); } .b-likely { color: var(--color-info); } .b-unsure { color: var(--color-warning); } .b-none { color: var(--color-text-muted); }
+.flow { overflow-x: auto; margin: var(--space-4) 0 var(--space-6); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.callout { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-alt); padding: var(--space-4) var(--space-5); margin: var(--space-4) 0; }
+.links { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.score { font-weight: 640; }
+footer { margin-top: var(--space-16); padding-top: var(--space-4); border-top: 1px solid var(--color-border); font-size: 14px; color: var(--color-text-muted); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo-light { display: none; } :root:not([data-theme="light"]) .logo-dark { display: block; } }
+:root[data-theme="dark"] .logo-light { display: none; } :root[data-theme="dark"] .logo-dark { display: block; }
+/* The masthead is ink in both themes, so it always uses the dark logo. */
+.mast .logo-light { display: none !important; } .mast .logo-dark { display: block !important; }
+</style>
+
+<header class="mast">
+  <div class="wrap">
+    <img class="logo-light" src="@@LOGO_COLOR@@" alt="ShelfSync by TecHaust">
+    <img class="logo-dark" src="@@LOGO_DARK@@" alt="ShelfSync by TecHaust">
+    <h1>The ShelfSync plan</h1>
+    <p>A browser app on the owner's own PC that takes a vendor ZIP, works out which product it belongs to, and updates every WooCommerce store from one S3 file. No AI, no silent guesses, nothing to pay for.</p>
+    <div class="meta"><span>Draft 4, approved 25 Oct 2026</span><span>Republished 26 Oct 2026 with the ShelfSync look</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+<p class="lede">The one exception to "nothing to pay for" is under one US cent of AWS request charges, in §11. The screens are in the <a href="https://claude.ai/artifact/Gzzm2Mztikj8xqL49UoiRj">clickable mockup</a>.</p>
+
+<h2 id="what">1. What ShelfSync is</h2>
+<ul>
+  <li>A <strong>localhost-only</strong> browser app for <strong>one user on Windows</strong>.</li>
+  <li>The owner drops vendor ZIPs (WordPress themes and plugins) into the page. ShelfSync identifies the product, scans the ZIP with Windows Defender, uploads one file to S3, and updates the download on every WooCommerce store (today GPLFamily and PluginWay).</li>
+  <li><strong>No AI is needed to run it.</strong> A desktop icon starts it, a tray icon keeps it running, and one <code>Setup.exe</code> (NSIS) installs it.</li>
+  <li>Folder and private GitHub repo: <code>shelf_sync</code> (the repo is created at M1a, after the owner's yes). Product name: <strong>ShelfSync</strong>, "ShelfSync by TecHaust".</li>
+</ul>
+
+<h2 id="catalog">2. The catalog and linked twins</h2>
+<p>A <strong>catalog item</strong> is one real product, for example "JupiterX – Website Builder". It holds:</p>
+<ul>
+  <li><strong>Store links:</strong> the product ID on each store (GPLFamily 1294, PluginWay 1373).</li>
+  <li><strong>Download slots</strong> (§3), each keeping its WooCommerce download ID on every store.</li>
+  <li><strong>A canonical slug.</strong> It starts as the product's shared URL slug (<code>jupiterx-website-builder-for-wordpress-woocommerce</code>), and the owner can shorten it (<code>jupiterx</code>). Every S3 file is named <code>&lt;slug&gt;-&lt;version&gt;.zip</code>, so a bad old attachment can never decide a file name again. If that name already exists with different content, the new file gets <code>-r2</code>, <code>-r3</code>, …; an existing object is <strong>never overwritten</strong>, so rollback always works.</li>
+  <li><strong>Fingerprints:</strong> what a matching ZIP looks like inside: type, folder slug, <code>Theme Name</code> / <code>Plugin Name</code>, text domain, author, Theme/Plugin URI.</li>
+  <li><strong>History:</strong> every version applied, with MD5, S3 object, who approved it (owner or auto-rule) and when, plus the previous file kept for rollback.</li>
+</ul>
+<h3>Building it on first run (read-only)</h3>
+<ol>
+  <li><strong>Same product URL slug</strong> on every store links twins: 2,395 of 2,398 today.</li>
+  <li><strong>Near-identical slug plus the same title</strong> is offered as a one-click suggestion, never linked silently (the other 3).</li>
+</ol>
+<p>SKU isn't used (no product has one). Anything that doesn't link cleanly goes to <strong>Cleanup</strong>: a twin missing on one store, duplicate products, an attached file that doesn't fit, stale metadata such as <code>latest_version_js-composer-theme</code>.</p>
+<h3>Staying in step</h3>
+<ul>
+  <li>Every 15 minutes, and again just before any change, ShelfSync fetches only products changed since the last check (<code>modified_after</code>, sent as GMT with <code>dates_are_gmt=true</code>; WooCommerce 5.8+).</li>
+  <li><code>modified_after</code> never returns deleted or trashed products, so the <strong>nightly snapshot also lists every product ID</strong> (including trash) and compares: a missing or trashed product shows in Cleanup.</li>
+  <li>A new product, a deleted product, or a download changed by hand shows in Cleanup as "changed outside ShelfSync", with one-click <strong>accept</strong> or <strong>restore</strong>.</li>
+  <li><strong>Paused stores</strong> are skipped by updates. Their products show "out of step" until the store is resumed and caught up. A <strong>new store</strong> starts with every product unlinked until its linking run, so updates are held until then.</li>
+</ul>
+
+<h2 id="slots">3. Products with several files</h2>
+<p>Only <strong>2 products per store</strong> have more than one download today, so the rule can be strict.</p>
+<ul>
+  <li>Every product has a <strong>main slot</strong> (button <code>Download</code>) and may have <strong>extra slots</strong>, each with its own name, canonical slug and fingerprint.</li>
+  <li>A ZIP whose <strong>main item</strong> matches an extra slot's fingerprint updates that slot.</li>
+  <li>A ZIP that carries items for <strong>its own product's</strong> extra slots can fill them, but only where the slot's fingerprint was confirmed before (ticked rows in the change plan).</li>
+  <li>Bundled items <strong>never touch a different product</strong>.</li>
+  <li>A new extra slot is named from the item's header ("Jupiter X Core") and can be renamed.</li>
+</ul>
+
+<h2 id="matching">4. Matching without AI</h2>
+<p>"Smart" means fixed rules, scores and reasons on screen, plus memory of every decision.</p>
+<h3>Step 1: inspect the ZIP and find the main item</h3>
+<ul>
+  <li>Unpack nested ZIPs within the safety limits.</li>
+  <li>Find installables: themes (<code>style.css</code> with <code>Theme Name</code>) and plugins (a <code>.php</code> file <strong>at the root of a plugin folder</strong> with <code>Plugin Name</code> in its first 8 KB, WordPress's own rule).</li>
+  <li>Recognise vendor packages. The <strong>main item is the top-level theme or plugin</strong>. Items under <code>plugins/</code>, <code>includes/plugins/</code>, <code>inc/plugins/</code> or a TGM folder (editable list) are bundled. A child theme (<code>Template:</code>) is never chosen over its parent.</li>
+  <li><strong>Version:</strong> from the main item's header. A readme <code>Stable tag</code>, <code>package.json</code> or the filename are cross-checks. A <strong>disagreement</strong> is two numeric versions that differ; <code>trunk</code>, a missing tag, or a readme tag older than the header is not. A disagreement sends the ZIP to Review with both shown.</li>
+  <li><strong>Version comparison</strong> follows WordPress/PHP <code>version_compare</code> rules.</li>
+  <li><strong>Version family jump:</strong> the first number goes down, or goes up by more than 1 (7.9 → 4.62, 2.x → 5.x). 3.9 → 4.0 is normal.</li>
+</ul>
+<h3>Step 2: score the candidates</h3>
+<div class="table"><table>
+  <thead><tr><th scope="col">Signal</th><th scope="col">Effect</th></tr></thead>
+  <tbody>
+    <tr><td>Confirmed fingerprint for this slot (folder slug + header name + author)</td><td><strong>certain</strong></td></tr>
+    <tr><td>The owner approved this exact filename for this slot before</td><td><strong>certain</strong></td></tr>
+    <tr><td>Type differs (theme ZIP vs plugin product)</td><td><strong>ruled out</strong></td></tr>
+    <tr><td>Edition word differs (editable list: <code>pro</code>, <code>premium</code>, <code>plus</code>, <code>ultimate</code>, <code>extended</code>, <code>addon</code>/<code>add-on</code>, <code>lite</code>, <code>free</code>, <code>core</code>, <code>child</code>)</td><td><strong>never auto</strong> and a penalty, never ruled out ("WPForms Pro" ZIPs often contain a plugin named just "WPForms")</td></tr>
+    <tr><td>Header name ≈ product title (word match; vendor prefixes and edition words removed)</td><td>strong +</td></tr>
+    <tr><td>Folder slug ≈ product URL slug</td><td>strong +</td></tr>
+    <tr><td>Author / URI matches what this product had before</td><td>+</td></tr>
+    <tr><td>Version continues the product's history</td><td>+</td></tr>
+    <tr><td>Version family jump</td><td>−, and <strong>never auto</strong></td></tr>
+  </tbody>
+</table></div>
+<p>Weights and band cut-offs are <strong>set from the calibration run</strong> (§5) and ship with every version.</p>
+<h3>Step 3: decide by band</h3>
+<div class="table"><table>
+  <thead><tr><th scope="col">Band</th><th scope="col">When</th><th scope="col">What happens</th></tr></thead>
+  <tbody>
+    <tr><td><span class="band b-certain">Certain</span></td><td>Confirmed fingerprint or approved filename, linked on every active store, version goes up, no guard raised</td><td>Applied automatically, once the trust ramp is passed</td></tr>
+    <tr><td><span class="band b-likely">Likely</span></td><td>One clear winner, not confirmed before</td><td>Review with the winner pre-selected; approving saves the fingerprint</td></tr>
+    <tr><td><span class="band b-unsure">Unsure</span></td><td>Several close candidates</td><td>Review with the top 3 and their reasons</td></tr>
+    <tr><td><span class="band b-none">No match</span></td><td>Nothing plausible</td><td>Review with search, or paste the product URL</td></tr>
+  </tbody>
+</table></div>
+<div class="callout"><strong>Always held for review, even when certain:</strong> a downgrade; the same version with different content; a version disagreement; a version family jump; not linked on every active store; the slot's current file fails the attachment check; changed outside ShelfSync since the last check; <strong>a Windows Defender detection, or a scan that couldn't run</strong>.</div>
+<p><strong>Learning and unlearning:</strong> each fingerprint shows its source ("confirmed by you on 25 Oct", "learned from current file"); one click removes a wrong one, and its past matches are listed.</p>
+
+<h2 id="proving">5. Proving the matcher before it goes live</h2>
+<p>The S3 bucket is a ready-made test set (2,398 objects, 12.5 GiB):</p>
+<ol>
+  <li><strong>Calibration (M4, on this PC, with the owner's go-ahead):</strong> every file goes through the matcher <strong>cold</strong> (no learned fingerprints) with its filename hidden. The expected answer is the product it's attached to. Files the attachment check flags are set aside, and the owner reviews that exclusion list. <strong>The bar: 0 wrong products in Certain</strong>, and every known bad case correct.</li>
+  <li><strong>What that proves:</strong> 0 wrong in about 2,400 files means the true error rate in Certain is below about 0.13 % (95 % confidence), <strong>on today's files</strong>. New vendor versions can behave differently, which is why the trust ramp exists.</li>
+  <li><strong>Teach from current files (first run, on by default, can be skipped):</strong> each product's current file is inspected and its fingerprint saved as "learned from current file", only where the attachment check passes. This recovers what OmniSync's 42 hand-written overrides and aliases did, from the stores' own data.</li>
+</ol>
+<p>Both read only what they need from each ZIP (HTTP range reads). Calibration uses a <strong>read-only S3 key</strong>.</p>
+
+<h2 id="applying">6. Applying changes safely</h2>
+<div class="flow"><pre class="mermaid">
+flowchart LR
+  A[ZIP dropped in browser] --> B[Inspect + Defender scan]
+  B --> C[Score candidates]
+  C -->|certain| E[Change plan]
+  C -->|anything else| D[Review queue]
+  D -->|owner approves| E
+  E --> F[Upload to S3, verify MD5 + size]
+  F --> G[Re-read product: unchanged since plan?]
+  G -->|changed| D
+  G -->|unchanged| H[Update store, same download ID]
+  H --> I[Read back: new file in slot?]
+  I -->|every store OK| J[Keep previous file; older ones become delete candidates]
+  J -.->|after the queue drains| R[Retention pass: one fresh read of every store; delete only what nothing uses]
+  I -->|a store failed| K[Partial: retry that store, delete nothing]
+</pre></div>
+<ul>
+  <li><strong>Change plan first:</strong> the S3 file and each store's slot from current to new, shown before anything is touched.</li>
+  <li><strong>Edit check:</strong> the product is re-read right before writing; if it changed after the plan, the job goes back to Review.</li>
+  <li><strong>Customers keep their downloads:</strong> the file is replaced inside the <strong>same WooCommerce download ID</strong>; other slots are untouched.</li>
+  <li><strong>Read-back check</strong> after each store update.</li>
+  <li><strong>Partial is visible:</strong> a failed store shows <strong>partial</strong> with Retry; nothing is deleted.</li>
+  <li><strong>Safe delete:</strong> an older file is deleted only after a fresh read of every store, <strong>paused ones included</strong> (and products in trash), finds nothing still pointing at it, variation downloads included. Files ShelfSync didn't upload are never deleted automatically; they're offered in Cleanup.</li>
+  <li><strong>Rollback:</strong> the previous file stays in S3; one click points every store back at it, after checking the file is still there.</li>
+  <li><strong>Metadata:</strong> <code>latest_version</code> set per product; stale <code>latest_version_&lt;old-slug&gt;</code> keys removed, or emptied if the REST API can't remove them (checked at M5).</li>
+  <li><strong>Crash-safe:</strong> each step is recorded in SQLite before and after it runs; after a restart, finished steps are skipped.</li>
+  <li><strong>Brake:</strong> auto-apply pauses and alerts after 3 failures in a row, or after more auto-applies in 10 minutes than the limit (default 30). A batch of 50 Certain ZIPs therefore pauses at 31 <strong>on purpose</strong>; one click continues. "Pause everything" is always on screen.</li>
+  <li><strong>Nightly snapshot</strong> (02:00 local time; run on wake if the PC was off or asleep) of every product's slots and version fields; "Restore this product to date X" works even for outside changes.</li>
+  <li><strong>Gentle on the stores:</strong> requests spaced (default 0.15 s); 429, 5xx and Cloudflare 520–527 retried with backoff; a store that keeps failing is paused.</li>
+</ul>
+
+<h2 id="screens">7. Screens and daily use</h2>
+<p>Eight screens (<strong>Dashboard, Upload, Review, Catalog, Product detail, Cleanup, Activity, Settings</strong>), plus the first-run wizard, the tray menu and notifications. See them in the <a href="https://claude.ai/artifact/Gzzm2Mztikj8xqL49UoiRj">clickable mockup</a> (sample data).</p>
+<ul>
+  <li>Every match has <strong>"Why?"</strong>: the signals and points in plain words.</li>
+  <li><strong>Keyboard-first Review:</strong> <code>A</code> approve, <code>1</code>–<code>3</code> pick, <code>U</code> paste URL, <code>D</code> discard, <code>J</code>/<code>K</code> next/previous.</li>
+  <li><strong>Windows notifications</strong> when Review needs the owner or a job goes partial; clicking one opens that screen.</li>
+  <li><strong>First-run wizard:</strong> stores → storage → test → build catalog → Cleanup → teach from current files.</li>
+</ul>
+
+<h2 id="look">8. Look and feel</h2>
+<p>ShelfSync is a <strong>TecHaust product</strong>: TecHaust's Patina tokens (ink, verdigris, stone); Archivo + IBM Plex Mono; the diagonal-cut device; and the new <strong>S-cut</strong> ShelfSync logo, the "S" split by one 45° channel, with verdigris only on the cut piece. Store colours appear only as small identifiers (shape + dot + code). This page uses the same look.</p>
+
+<h2 id="build">9. Settings, security, build, install</h2>
+<ul>
+  <li><strong>Settings:</strong> Stores, Storage, Rules, Updates, Backup, App.</li>
+  <li><strong>Security:</strong> <code>127.0.0.1</code> only, a per-install token that never appears in a URL (a single-use ticket is exchanged for a strict session cookie), <code>Host</code>/<code>Origin</code> checks, secrets in Windows Credential Manager, passphrase-encrypted backups, least-privilege keys, a Defender scan of every ZIP, signed updates.</li>
+  <li><strong>Built with:</strong> Python 3.12 + FastAPI + SQLite + an in-process job worker; React + TypeScript (Vite); server-sent events for live progress.</li>
+  <li><strong>Install:</strong> one per-user <code>Setup.exe</code> built with <strong>NSIS</strong> (free, zlib licence), with the official Python runtime embedded. No admin prompt.</li>
+  <li><strong>The warnings money would remove:</strong> <code>Setup.exe</code> isn't code-signed, so Windows SmartScreen warns <strong>each time a newly downloaded copy is opened</strong> ("More info → Run anyway"). In-app updates show no warning. If <strong>Smart App Control</strong> were on, Windows could block the installer; it's <strong>Off</strong> on this PC and is re-checked on a clean account at M1b. A paid code-signing certificate would remove both. <strong>Optional, not used.</strong></li>
+  <li><strong>Updates in the app:</strong> download, verify the signature made with the owner's offline key, install beside the current version, switch, and switch back automatically if the health check fails.</li>
+</ul>
+
+<h2 id="time">10. Milestones and time</h2>
+<p>Phase 3 (brand and screens), then M1–M7, <strong>about 24 build days</strong>. <strong>Nothing writes to the live stores before M6.</strong></p>
+
+<h2 id="cost">11. Running cost</h2>
+<div class="table"><table>
+  <thead><tr><th scope="col">Item</th><th scope="col">Cost</th></tr></thead>
+  <tbody>
+    <tr><td>Python, FastAPI, React, SQLite, NSIS, LocalWP, moto, Playwright, Windows Defender</td><td>$0</td></tr>
+    <tr><td>Private GitHub repo, Actions (2,000 min/month; Windows runners count 2×, so only release builds use them), Releases, Dependabot</td><td>$0</td></tr>
+    <tr><td>Code-signing certificate</td><td>not used (optional; would remove the SmartScreen and Smart App Control warnings)</td></tr>
+    <tr><td>AWS for calibration and teaching</td><td>$0 for data (inside the free 100 GB/month); <strong>under one US cent</strong> in request charges, possibly covered by the free tier</td></tr>
+    <tr><td>Day-to-day S3 and WooCommerce use</td><td>same as today</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="scores">12. Scorecard</h2>
+<p>A 10 means <strong>no known gap in the design</strong>; a lower score names what's still open. The real proof is each milestone's exit test.</p>
+<div class="table"><table>
+  <thead><tr><th scope="col">Aspect</th><th scope="col">Now</th><th scope="col">Still open</th></tr></thead>
+  <tbody>
+    <tr><td>Diagnosis</td><td class="score">9.5</td><td>How the bucket's 2,398 objects map to the downloads (M4 prep)</td></tr>
+    <tr><td>Catalog and linking</td><td class="score">9.5</td><td>Linking and the near-miss suggestions are proven by the M3 catalog build</td></tr>
+    <tr><td>Safety when applying</td><td class="score">9.5</td><td>Meta removal and keeping the download ID, proven on the test stack (M3, M5)</td></tr>
+    <tr><td>Usable without AI</td><td class="score">10</td><td>—</td></tr>
+    <tr><td>Look and feel</td><td class="score">9</td><td>Seen in the real Windows tray, File Explorer and installer at high DPI (M1); axe and a screen reader on the real screens (M1a onward)</td></tr>
+    <tr><td>Matching logic</td><td class="score">9.5</td><td>Cut-offs come from calibration (M4)</td></tr>
+    <tr><td>Security</td><td class="score">9.5</td><td>Real-time protection on this PC (M1a); the M5 security review of the apply code</td></tr>
+    <tr><td>Install and updates</td><td class="score">9.5</td><td>AppUserModelID via NSIS and the clean-account install (M1b)</td></tr>
+    <tr><td>Testing</td><td class="score">9.5</td><td>Keeping the download ID (M3); the S3 extension and moto's coverage (M2)</td></tr>
+    <tr><td>Scope and time</td><td class="score">9.5</td><td>M1 is the riskiest estimate; M6's length depends on how many ZIPs are processed</td></tr>
+    <tr><td>Multi-file products</td><td class="score">9.5</td><td>How the bucket's objects map to the extra downloads (M4 prep)</td></tr>
+    <tr><td>Starting clean</td><td class="score">10</td><td>—</td></tr>
+  </tbody>
+</table></div>
+
+<footer>ShelfSync by TecHaust. The source of this page is <span class="mono">docs/02-plan.md</span> (Draft 4) in the <span class="mono">shelf_sync</span> project.</footer>
+</main>

@@ -1,0 +1,14 @@
+# Keep LF everywhere, so agents' worktrees match CI byte for byte
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.zip binary
+*.exe binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.gif binary
+*.pdf binary

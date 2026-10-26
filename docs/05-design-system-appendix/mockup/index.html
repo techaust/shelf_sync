@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en-GB" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShelfSync mockup (P3.4, sample data)</title>
+<link rel="icon" href="logo/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="tone-dark.css">
+<link rel="stylesheet" href="css/app.css?v=36">
+<link rel="stylesheet" href="css/app-b.css?v=36">
+<script src="js/theme-init.js?v=36"></script>
+<script src="js/data.js?v=36" defer></script>
+<script src="js/data-b.js?v=36" defer></script>
+<script src="js/app.js?v=36" defer></script>
+<script src="js/overlays.js?v=36" defer></script>
+<script src="js/screens-b.js?v=36" defer></script>
+</head>
+<body>
+
+<!-- Mockup controls: not part of ShelfSync. Dashed outline + flask icon mark everything that belongs to the mockup. -->
+<div class="mock-bar" role="region" aria-label="Mockup controls, not part of the app">
+  <p class="mock-bar__title"><svg class="i" aria-hidden="true"><use href="icons/sprite.svg#flask-conical"/></svg>Mockup controls</p>
+  <fieldset class="mock-group">
+    <legend>State</legend>
+    <div class="seg" id="ctl-state">
+      <label><input type="radio" name="state" value="normal" checked><span>Normal</span></label>
+      <label><input type="radio" name="state" value="loading"><span>Loading</span></label>
+      <label><input type="radio" name="state" value="empty"><span>Empty</span></label>
+      <label><input type="radio" name="state" value="error"><span>Error</span></label>
+    </div>
+  </fieldset>
+  <fieldset class="mock-group">
+    <legend>Theme</legend>
+    <div class="seg" id="ctl-theme">
+      <label><input type="radio" name="theme" value="system" checked><span>System</span></label>
+      <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+      <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+    </div>
+  </fieldset>
+  <fieldset class="mock-group">
+    <legend>Trust ramp</legend>
+    <div class="seg" id="ctl-ramp">
+      <label><input type="radio" name="ramp" value="ramp" checked><span>37 / 50</span></label>
+      <label><input type="radio" name="ramp" value="done"><span>Finished</span></label>
+    </div>
+  </fieldset>
+  <label class="mock-check"><input type="checkbox" id="ctl-disk">Low disk</label>
+  <label class="mock-check"><input type="checkbox" id="ctl-brake">Brake</label>
+  <label class="mock-check">Teaching <select class="mock-select" id="ctl-teach"><option value="off">Off</option><option value="running">Running</option><option value="done">Done</option></select></label>
+  <a class="mock-link" href="#/wizard?step=1">First-run wizard</a>
+</div>
+
+<div class="app-shell" id="shell">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="app-bar tone-dark">
+    <a class="app-bar__logo-link" href="#/dashboard" aria-label="ShelfSync, go to Dashboard">
+      <img class="app-bar__logo" src="logo/logo-primary-dark.svg" alt="" width="159" height="24">
+    </a>
+    <div class="app-bar__health" id="health" role="group" aria-label="Connections"></div>
+    <div class="app-bar__end">
+      <button class="btn icon-btn" type="button" id="help-btn" aria-label="Help" title="Help"><span class="help-glyph" aria-hidden="true">?</span></button>
+      <button class="btn pause-button" type="button" id="pause-btn" aria-pressed="false"></button>
+    </div>
+  </header>
+
+  <nav class="side-nav" aria-label="Main">
+    <ul id="nav"></ul>
+    <div class="side-nav__foot">
+      <p class="side-nav__meta" id="nav-meta"></p>
+      <button class="btn is-ghost collapse-btn" type="button" id="collapse-btn" aria-expanded="true">
+        <svg class="i" aria-hidden="true"><use href="icons/sprite.svg#panel-left-close"/></svg><span class="collapse-btn__label">Collapse menu</span>
+      </button>
+    </div>
+  </nav>
+
+  <div class="app-main">
+    <div class="status-strip" id="strip" role="group" aria-label="Status"></div>
+    <div class="disk-banner" id="disk-banner" role="alert" hidden>
+      <svg class="i" aria-hidden="true"><use href="icons/sprite.svg#hard-drive"/></svg>
+      <p><strong>Only 1.4 GB free on drive C.</strong> New uploads are paused until there's at least 2 GB.</p>
+    </div>
+    <main id="main" tabindex="-1"></main>
+  </div>
+</div>
+
+<div class="toast-region" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

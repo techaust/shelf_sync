@@ -1,0 +1,22 @@
+#!/bin/sh
+# ShelfSync guard (docs/11-decisions.md, 2026-10-26): GitHub Free can't protect
+# main on a private repo, so this hook refuses pushes to main and force-pushes.
+# Bootstrap exception: SHELFSYNC_BOOTSTRAP=1 for the very first push only.
+zero=0000000000000000000000000000000000000000
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    if [ "$SHELFSYNC_BOOTSTRAP" = "1" ] && [ "$remote_sha" = "$zero" ]; then
+      continue
+    fi
+    echo "pre-push: refused. main changes only through a PR merged on GitHub." >&2
+    exit 1
+  fi
+  if [ "$local_sha" = "$zero" ]; then
+    continue
+  fi
+  if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "pre-push: refused. Force-pushes are not allowed ($remote_ref)." >&2
+    exit 1
+  fi
+done
+exit 0

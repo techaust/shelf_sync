@@ -1,0 +1,73 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working in this folder. **It holds rules only, never status or history.**
+
+## Project
+**ShelfSync** ("ShelfSync by TecHaust"): a localhost-only Windows app for one user that takes vendor ZIPs (WordPress themes and plugins), identifies the product, scans it with Windows Defender, uploads one file to S3, and updates the download on every WooCommerce store (today **GPLFamily** and **PluginWay**). It replaces **OmniSync**. No AI is needed to run it. Folder and GitHub repo: **`shelf_sync`**.
+
+The owner starts each day with **"start the day"** and ends it with **"end the day"** (skills in `.claude/skills/`). Each step of a task (brief, review triage, integration) gets its own conversation, opened with **"continue"** and closed with a handover in its run file.
+
+## The record (read at the start, update at the end)
+- **`docs/10-status.md`:** where things stand. **Replace** it at the end of each session; never append.
+- **`docs/11-decisions.md`:** one row per decision. **Never ask the owner again about a question decided there.**
+- **`docs/runs/<task>.md`:** one per task given to an agent ([docs/runs/README.md](docs/runs/README.md)).
+- **`CHANGELOG.md`** (from M1a): one line per merged PR, newest first.
+- **Memory notes:** Claude Code's project memory (`~/.claude/projects/<this folder>/memory/`, index `MEMORY.md`) holds the owner's preferences and project facts that aren't in these docs. Update it when they change.
+
+## Read first
+- Plan: `docs/02-plan.md`. Build order and gates: `docs/08-roadmap.md`. Tools: `docs/09-tooling.md`. **Models and effort: `docs/12-models-and-usage.md`.**
+- Requirements: `docs/03-prd.md` (IDs like `MAT-05` are used in tests and commits).
+- Architecture `04` (with `04-architecture-appendix/A-stack-verification.md`: never state a library or platform behaviour as fact unless it's verified there), design `05`, security `06`, testing `07`, content `13`, ADRs `docs/adr/`. Background: `docs/01-audit.md`.
+
+## Hard rules (the owner's)
+1. **Never guess.** If information is missing or a decision is the owner's, stop and ask with AskUserQuestion: up to 4 questions per batch, the recommended option first and marked "(Recommended)". **Interview the owner before drafting anything big.**
+2. **Approval gates:** each phase and milestone ends with a short summary and waits for "approved" ([08](docs/08-roadmap.md)). For anything touching more than one file, present a numbered plan first unless already approved.
+3. **Live systems:** ask before anything that writes to the live stores, the S3 bucket or GitHub (repo creation, pushes, settings, releases). Nothing writes to the live stores before M6. Read-only checks of the live stores or bucket also need the owner's go-ahead.
+4. **OmniSync is read-only reference:** `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync`. Never modify it, never run its pipeline, ship none of its code, and never open its `config.env`. The one exception: `tools/research/*.py` import `omnisync.config` read-only (with `python -B`) to borrow store settings ([runbook](docs/runbooks/research-scripts.md)).
+5. **`techaust_platform` is read-only reference** (`D:\BUSINESS\1. PARENT PROJECT\TECHAUST TECHNOLOGIES\WEBSITE\techaust_platform`): read its tokens and docs, never change it. Never read any `CREDENTIALS` folder.
+6. **$0 only:** no paid tools, services or certificates. If money would remove a limitation, say so plainly as **optional**. Flag even tiny costs (like AWS request charges).
+7. **Secrets:** never hardcode, commit, log or ask for them in chat. For a secret the owner must enter, give a small PowerShell script with hidden input that stores it, and ask for its result line only. Anything pasted in chat counts as exposed and is rotated.
+8. **Tools are used automatically:** before each task, load every skill and tool in its row of `docs/09-tooling.md` §3, without being asked, and say which were loaded. **Never install a plugin, MCP server or package without the owner's yes.** Tools this project doesn't use are turned off for it in `.claude/settings.json` (09 §2); never turn one back on without the owner's yes.
+9. **Ratings are 100 % genuine**, with reasons. Report honestly what ran, what passed and what wasn't verified.
+10. **Screenshots** use the built-in browser pane, never headless Chrome or the Playwright MCP browser (owner's choice; Playwright MCP is blocked in settings). Full-page 2× shots go through the in-pane capture helper and its 127.0.0.1-only receiver (`docs/05-design-system-appendix/screenshots/README.md`).
+11. **Models and effort** follow `docs/12-models-and-usage.md`: only Opus, Sonnet and Haiku 5.5, never Fable, effort low to high. The lead runs on **Opus 5.5 at medium**, and asks the owner to switch to **high** only for the five key steps in docs/12 §3, then back. If the model or effort is wrong for the step, say so in one line and wait.
+12. **Never change Windows security settings** (Smart App Control, Defender, SmartScreen); the owner decides those.
+13. Keep the record, this file and the memory notes current so work can resume across sessions.
+
+## Working with the owner
+- The owner isn't a shell user: click-by-click steps, one command per code block, full paths.
+- Take routine engineering decisions yourself, state them, and record them in `docs/11-decisions.md` (who: Lead; "Lead (proposed)" until the owner has reviewed them).
+
+## How work is split
+`docs/12-models-and-usage.md` is the full plan. In short:
+- **Tiers:** A (anything that can write to a store or S3, auto-apply logic, security, the ZIP reader, the updater), B (sync, catalog, jobs, tray, installer), C (screens from existing parts, docs).
+- **Order inside a task:** `builder` (Sonnet) → Tier A: `analyst` early check (Opus high) → `designer` (Opus high) → `reviewer` (Opus high) → fixes → re-check.
+- **Helpers:** `code-finder`, `test-runner`, `doc-clerk` (Haiku). Never the built-in Explore, Plan or general-purpose agents (the hook refuses them; the read-only helpers that review skills start are the observed exception, see `docs/12-models-and-usage.md` §3).
+- **Usage check:** read the 5-hour window once a day ([12 §5](docs/12-models-and-usage.md)); at 80 % or more nothing new starts until it resets. It limits how much runs at once, never the model or effort.
+- **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform).
+
+## Git workflow (from M1a, when the repo exists)
+- `main` is guarded, not protected (GitHub Free has no protection on private repos; [11](docs/11-decisions.md) 2026-10-26): a tracked pre-push hook refuses pushes to `main` and force-pushes; every change goes through a PR that CI must pass, merged with a linear history.
+- Work on a branch → push → PR → merge on green. **Every push and every PR merge needs the owner's yes until the owner says otherwise.**
+- Agents work in their own git worktrees and never push; the lead integrates.
+- Commit identity (repo-local): `TecHaust Technologies <admin@techaust.com>`. Conventional commits citing PRD IDs, e.g. `feat(match): edition-word penalty [MAT-05]`.
+
+## Stack (summary; full list `docs/09-tooling.md` §7, pins in `docs/04-architecture.md` §2 at M1)
+Python 3.12 (embedded, signed) · FastAPI + uvicorn · SQLite (`sqlite3`, WAL, numbered SQL migrations) · httpx · boto3 · keyring · cryptography · pystray · windows-toasts · React + TypeScript + Vite · Tailwind v4 from `brand/tokens.json` · Radix UI · Lucide · Archivo + IBM Plex Mono (self-hosted) · pytest, hypothesis, respx, moto · Playwright + axe · ruff, mypy, Biome · uv (locks) · NSIS · GitHub Actions.
+
+## Commands
+The app code starts at M1a; its commands are added here then. Until then:
+- `node tools/model-audit.mjs [YYYY-MM-DD]`: every run since that date (default today), with models, effort and skills; it flags anything outside the plan.
+- Brand (in `brand/`, through `bash tools/heavy.sh --log <name> …`): `npm run build` rebuilds every logo, icon and image; `npm test` (vitest) also fails on any hand edit.
+- Plan page: `python -I docs/02-plan-appendix/build_plan_page.py <out.html>`, then publish to https://claude.ai/artifact/9CYLJk6kRPncuJ3Lmunn5f. **Republish it after every change to 02.**
+- Mockup artifact: `python -I docs/05-design-system-appendix/screenshots/capture/build_artifact.py docs/05-design-system-appendix/mockup <out.html>`, then publish to https://claude.ai/artifact/Gzzm2Mztikj8xqL49UoiRj. It's a desktop layout that shrinks to fit on phones.
+
+## Conventions
+- **Docs:** Markdown in `docs/`; HTML mockups, images and the small scripts that build them only in `docs/NN-name-appendix/` folders.
+- **Screen wording:** [13](docs/13-content.md); until M1 moves it into the app, the approved mockup holds the full screen text (13 §6).
+- **Phones:** the app is desktop-only (05 §6), but any page published for the owner must read well on a phone.
+- **Time:** store UTC (ISO 8601); show Windows local time with the zone name; schedules in local time.
+- **Design:** tokens only, never hand-typed colours; store colours only as identifiers ([05](docs/05-design-system.md)); wording from [13](docs/13-content.md).
+- **Security:** deny by default; no secrets in logs, URLs (except the single-use, 60-second `#t=` sign-in ticket; the install token itself never goes in a URL) or the browser.
+- **Supply chain:** exact pins with hashes (uv, `package-lock.json`); GitHub Actions pinned by commit SHA; new packages only with the owner's yes.
+- File names, slugs and hashes are shown in IBM Plex Mono; versions, counts and times use tabular numbers.
