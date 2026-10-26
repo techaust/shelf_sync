@@ -38,16 +38,27 @@ const NON_TEXT = 3; // WCAG 1.4.11, focus rings, control borders, icons that car
 
 // The app bar is ink in both themes (05 section 2.2). Its colours are read from the generated ShelfSync token layer
 // the page actually uses (--color-appbar-* in generated/shelfsync-tokens.css: the :root block for light, the
-// [data-theme="dark"] block for dark), not restated here, so a change to that mapping is checked too. Its
-// contents use the dark semantic values (.tone-dark).
-function block(selector: string): string {
-  const start = shelfsyncTokens.indexOf(`${selector} {`);
+// [data-theme="dark"] block for dark, and the system-dark @media block, which must agree with it), not restated
+// here, so a change to that mapping is checked too. Its contents use the dark semantic values (.tone-dark).
+function block(selector: string, from = 0): string {
+  const start = shelfsyncTokens.indexOf(`${selector} {`, from);
   if (start < 0) throw new Error(`no ${selector} block in shelfsync-tokens.css`);
   return shelfsyncTokens.slice(start, shelfsyncTokens.indexOf("}", start));
 }
-function appBarToken(name: "bg" | "fg" | "muted", theme: Theme): string {
+type AppBarName = "bg" | "fg" | "muted";
+type DarkSource = "attribute" | "media";
+const APP_BAR_NAMES: readonly AppBarName[] = ["bg", "fg", "muted"];
+/** The dark override block: the [data-theme="dark"] one, or the one inside @media (prefers-color-scheme: dark). */
+function darkBlock(source: DarkSource): string {
+  if (source === "attribute") return block(':root[data-theme="dark"]');
+  const media = shelfsyncTokens.indexOf("@media (prefers-color-scheme: dark)");
+  if (media < 0) throw new Error("no system-dark @media block in shelfsync-tokens.css");
+  return block(':root:not([data-theme="light"])', media);
+}
+/** A token's palette colour: from the dark block when it overrides the token, otherwise from :root. */
+function appBarToken(name: AppBarName, theme: Theme, source: DarkSource = "attribute"): string {
   const pattern = new RegExp(`--color-appbar-${name}:\\s*var\\(--color-([a-z0-9-]+)\\)`);
-  const found = pattern.exec(theme === "dark" ? block(':root[data-theme="dark"]') : "") ?? pattern.exec(block(":root"));
+  const found = pattern.exec(theme === "dark" ? darkBlock(source) : "") ?? pattern.exec(block(":root"));
   if (!found?.[1]) throw new Error(`--color-appbar-${name} isn't a palette token`);
   return color(found[1]);
 }
@@ -62,8 +73,10 @@ describe("the app-bar mapping read from the generated tokens", () => {
     expect(APP_BAR.dark.bg).toBe(color("ink-750"));
     expect(APP_BAR.light.fg).toBe(color("mist"));
     expect(APP_BAR.light.muted).toBe(color("ink-300"));
-    const media = shelfsyncTokens.slice(shelfsyncTokens.indexOf("@media (prefers-color-scheme: dark)"));
-    expect(media.slice(0, media.indexOf("}"))).toContain("--color-appbar-bg: var(--color-ink-750)");
+  });
+
+  it.each(APP_BAR_NAMES)("the system-dark @media block gives the same %s as the dark attribute block", (name) => {
+    expect(appBarToken(name, "dark", "media")).toBe(APP_BAR.dark[name]);
   });
 });
 

@@ -4,7 +4,8 @@
 // every file in it is read too (Node's zlib only; no package). Traces are off (playwright.config.ts), so there is
 // no trace archive to open.
 //
-//   node e2e/check-output.mjs            (from frontend/)
+//   node e2e/check-output.mjs               (from frontend/)
+//   node e2e/check-output.mjs --self-check  (checks the patterns on built-in samples; reads no folder)
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -18,8 +19,31 @@ const PATTERNS = [
   new RegExp(`#t=${VALUE}`), // a sign-in address
   new RegExp(`%23t%3D${VALUE}`, "i"), // the same, URL-encoded
   new RegExp(`bearer\\s+${VALUE}`, "i"), // a Bearer value: a recorded Authorization header, or anywhere else
-  /"ticket"\s*:\s*"[A-Za-z0-9_-]{16,}"/, // a ticket in a recorded JSON body
+  // A ticket in a recorded JSON body, also when that JSON sits escaped inside another JSON string (\"ticket\":\"…\"),
+  // as Playwright's report data holds request bodies.
+  /\\*"ticket\\*"\s*:\s*\\*"[A-Za-z0-9_-]{16,}/,
 ];
+
+if (process.argv.includes("--self-check")) {
+  const sample = "Qx3_vB9-kLmN0pRsTuVwXyZ01234567890abcdEFGHij";
+  const cases = [
+    [`http://127.0.0.1:47615/#t=${sample}`, true],
+    [`http%3A%2F%2F127.0.0.1%2F%23t%3D${sample}`, true],
+    [`Authorization: Bearer ${sample}`, true],
+    [`{"ticket": "${sample}"}`, true],
+    [`{"body":"{\\"ticket\\":\\"${sample}\\"}"}`, true], // the escaped form
+    [`{"body":"{\\\\\\"ticket\\\\\\":\\\\\\"${sample}\\\\\\"}"}`, true], // escaped twice
+    ['expect(body).toEqual({ ticket: TICKET }); // "ticket": "<redacted>"', false],
+    ["http://127.0.0.1:47615/#/review", false],
+  ];
+  const wrong = cases.filter(([text, bad]) => PATTERNS.some((pattern) => pattern.test(text)) !== bad);
+  if (wrong.length > 0) {
+    process.stderr.write(`Self-check failed on:\n${wrong.map(([text]) => text).join("\n")}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`Self-check: ${cases.length} samples, all as expected.\n`);
+  process.exit(0);
+}
 
 function* files(folder) {
   let names = [];

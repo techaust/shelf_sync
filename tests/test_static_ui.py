@@ -92,19 +92,6 @@ def test_api_answers_keep_no_store(harness: Harness) -> None:
     assert harness.client().get("/api/session/status").headers["cache-control"] == "no-store"
 
 
-def test_every_test_names_its_ui_folder() -> None:
-    """UI-SHELL: create_app defaults to the real frontend/dist, so a test that forgot ui_dir would depend on whether
-    the UI was built on this PC. Every call in tests/ passes it."""
-    tests = Path(__file__).resolve().parent
-    calls = 0
-    for source in tests.glob("*.py"):
-        for line in source.read_text(encoding="utf-8").splitlines():
-            if "create_app(" in line and "import" not in line and "def " not in line:
-                calls += 1
-                assert "ui_dir=" in line, f"{source.name}: {line.strip()}"
-    assert calls >= 4
-
-
 @pytest.mark.parametrize("path", ["/", "/assets/index-abc123.js"])
 def test_ui_files_still_need_the_right_host(harness: Harness, path: str) -> None:
     """SYS-03: DNS rebinding can't read the page either."""

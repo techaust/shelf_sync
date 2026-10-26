@@ -85,13 +85,15 @@ def create_app(
     port: int,
     install_token: InstallToken,
     clock: Callable[[], float] = time.monotonic,
-    ui_dir: Path | None = UI_DIR,
+    *,
+    ui_dir: Path | None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
     `install_token` is the one token holder: start-up builds it before binding the port (so the secret store is read
     once and a failure holds no port) and the app never touches the store itself. `clock` times the 60-second
-    tickets (tests pass their own). `ui_dir` holds the built UI; None serves the API only (most tests).
+    tickets (tests pass their own). `ui_dir` (required, so no caller gets the real frontend/dist by accident) holds the
+    built UI; None serves the API only (most tests).
     """
     # No interactive docs and no public schema route (docs_url, redoc_url, openapi_url all None). The schema is
     # still available in code through app.openapi(), for openapi-typescript in M1a.3. debug stays off, so an

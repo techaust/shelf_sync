@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from shelfsync import messages
-from shelfsync.api.app import create_app
+from shelfsync.api.app import UI_DIR, create_app
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError, migrate
 from shelfsync.db.settings import DEFAULTS, get_setting
@@ -141,7 +141,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, install_token), sock)
+        serve(create_app(port, install_token, ui_dir=UI_DIR), sock)
     finally:
         sock.close()
     return EXIT_OK

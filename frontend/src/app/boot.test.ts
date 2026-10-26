@@ -9,7 +9,12 @@ import { type BootWindow, boot } from "./boot";
 
 const TICKET = "Qx3_vB9-kLmN0pRsTuVwXyZ01234567890abcdEFGHij";
 
-function fakeWindow(hash: string) {
+type Answer = (method: string, path: string) => Response | Promise<Response>;
+const always204: Answer = () => new Response(null, { status: 204 });
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+function fakeWindow(hash: string, answer: Answer = always204) {
   const log: string[] = [];
   const listeners: { type: string; capture: boolean; listener: () => void }[] = [];
   const location = { hash, pathname: "/", search: "" };
@@ -29,7 +34,7 @@ function fakeWindow(hash: string) {
   };
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     log.push(`fetch ${init?.method ?? "GET"} ${String(input)} hash=${location.hash}`);
-    return new Response(null, { status: 204 });
+    return answer(init?.method ?? "GET", String(input));
   });
   const fire = (type: string) => {
     for (const entry of listeners.filter((item) => item.type === type)) entry.listener();
@@ -88,6 +93,62 @@ describe("boot (main.tsx's start-up)", () => {
     expect(seen).toEqual(["checking", "signed_in"]);
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ ticket: TICKET }); // in the body only
     expect(fetchMock).toHaveBeenCalledTimes(2); // the start-up check and this sign-in, nothing more
+  });
+
+  it.each([
+    [204, "signed_in"],
+    [401, "signed_out"],
+  ] as const)(
+    "a used ticket in an open tab falls back to the session check (cookie answers %i: %s)",
+    async (status, kind) => {
+      let statusChecks = 0;
+      const { win, log, location, fetchMock, fire } = fakeWindow("#/review", (method) => {
+        if (method === "POST") return json(401, { error: "bad_ticket" }); // the ticket is used up
+        statusChecks += 1;
+        if (statusChecks === 1) return new Response(null, { status: 204 }); // start-up: signed in
+        return status === 204 ? new Response(null, { status }) : json(status, { error: "signed_out" });
+      });
+      const { session, started } = boot(win, fetchMock);
+      await started;
+      await settle();
+      const seen: SessionState["kind"][] = [];
+      session.subscribe(() => seen.push(session.get().kind));
+      log.length = 0;
+
+      location.hash = `#t=${TICKET}`;
+      fire("popstate");
+      fire("hashchange");
+      await settle();
+
+      expect(log).toEqual([
+        "replaceState /#/",
+        "fetch POST /api/session hash=#/",
+        "fetch GET /api/session/status hash=#/",
+      ]);
+      expect(seen).toEqual(["checking", kind]); // never "signed_out" on the way when the cookie is good
+    },
+  );
+
+  it("a late start-up answer never overwrites a newer sign-in (the request counter)", async () => {
+    let answerStartUp: (response: Response) => void = () => undefined;
+    const { win, location, fetchMock, fire } = fakeWindow("#/review", (method) =>
+      method === "GET"
+        ? new Promise<Response>((resolve) => {
+            answerStartUp = resolve; // the start-up check hangs until the end of the test
+          })
+        : new Response(null, { status: 204 }),
+    );
+    const { session, started } = boot(win, fetchMock);
+
+    location.hash = `#t=${TICKET}`;
+    fire("popstate");
+    await settle();
+    expect(session.get()).toEqual({ kind: "signed_in" }); // the newer sign-in
+
+    answerStartUp(json(401, { error: "signed_out" })); // the older check answers last
+    expect(await started).toEqual({ kind: "signed_out" });
+    await settle();
+    expect(session.get()).toEqual({ kind: "signed_in" }); // and is dropped
   });
 
   it("a screen address change (#/catalog) is left to the router", async () => {

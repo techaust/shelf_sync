@@ -194,4 +194,13 @@ describe("the session store", () => {
     expect(session.get()).toEqual({ kind: "signed_out" });
     expect(seen).toEqual(["signed_out"]);
   });
+
+  it("only the newest begin() applies its result: an older one answering late is dropped", () => {
+    const session = createSessionStore();
+    const older = session.begin();
+    const newer = session.begin();
+    newer({ kind: "signed_in" });
+    older({ kind: "signed_out" });
+    expect(session.get()).toEqual({ kind: "signed_in" });
+  });
 });

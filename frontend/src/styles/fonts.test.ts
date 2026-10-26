@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import fonts from "./fonts.css?raw";
 
 const faces = [...fonts.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
-const field = (face: string, name: string) => new RegExp(`${name}:s*([^;]+);`).exec(face)?.[1]?.trim() ?? "";
+const field = (face: string, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(face)?.[1]?.trim() ?? "";
 
 describe("bundled fonts", () => {
   it.each([

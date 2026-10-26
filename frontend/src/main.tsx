@@ -9,13 +9,13 @@ import { boot } from "./app/boot";
 
 // 2. Sign-in (SYS-03): the ticket leaves the address, then the one request; the #t= listeners go on before the
 //    router exists. The order is in boot.ts and tested there.
-const { api, session, started } = boot(window);
+const { api, session } = boot(window);
 
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <App api={api} session={session} started={started} queryClient={makeQueryClient()} />
+      <App api={api} session={session} queryClient={makeQueryClient()} />
     </StrictMode>,
   );
 }

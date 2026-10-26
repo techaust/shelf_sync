@@ -95,15 +95,30 @@ function fromError(error: unknown, canRetry: boolean): SessionState {
   return { kind: "refused", status: 0 };
 }
 
-/** A tiny store the client's 401 handler and the React tree share (useSyncExternalStore). */
+/**
+ * A tiny store the client's 401 handler and the React tree share (useSyncExternalStore).
+ *
+ * Every sign-in or session check takes a numbered slot with `begin()` and reports through the setter it returns.
+ * Only the newest slot's result is applied, so an older request that answers late (a slow start-up check, a retry,
+ * a second #t= in an open tab) never overwrites a newer one.
+ */
 export function createSessionStore(initial: SessionState = { kind: "checking" }) {
   let state = initial;
+  let latest = 0;
   const listeners = new Set<() => void>();
+  function set(next: SessionState): void {
+    state = next;
+    for (const listener of listeners) listener();
+  }
   return {
     get: (): SessionState => state,
-    set(next: SessionState): void {
-      state = next;
-      for (const listener of listeners) listener();
+    set,
+    begin(): (result: SessionState) => void {
+      latest += 1;
+      const slot = latest;
+      return (result) => {
+        if (slot === latest) set(result);
+      };
     },
     subscribe(listener: () => void): () => void {
       listeners.add(listener);

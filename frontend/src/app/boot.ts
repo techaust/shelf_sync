@@ -2,6 +2,7 @@
 // of main.tsx so the real order is what the tests check (boot.test.ts), with a fake window.
 import { type ApiClient, createApiClient } from "../api/client";
 import {
+  checkSession,
   createSessionStore,
   type HistoryLike,
   hasTicketFragment,
@@ -37,18 +38,26 @@ export function boot(win: BootWindow, fetchImpl?: typeof fetch): Booted {
   });
 
   // 3. Sign in with the ticket (one POST), or ask whether the existing session is still good. The ticket never
-  //    reaches React's props or state.
+  //    reaches React's props or state. The result is applied here, through the store's request counter, so a
+  //    late answer never overwrites a newer sign-in or a retry.
+  const applyStarted = session.begin();
   const started = startSession(api, ticket);
+  started.then(applyStarted);
 
   // 4. A sign-in address opened in this same tab (#t= arrives without a page load, signed in or not). The browser
   //    fires popstate, then hashchange. These listeners are on the window in the capture phase and are added before
   //    the hash router exists, so they run before the router's own popstate listener: the ticket is out of the
   //    address before the router reads it, and the router only ever sees "#/".
+  //    A ticket refused here (used up, expired) doesn't sign the tab out by itself: the tab may already hold a good
+  //    session cookie, so the session check decides (one GET), as on a refresh.
   const onAddressChange = () => {
     if (!hasTicketFragment(win.location)) return;
     const next = takeTicket(win.location, win.history);
+    const apply = session.begin();
     session.set({ kind: "checking" });
-    startSession(api, next).then(session.set);
+    startSession(api, next)
+      .then((result) => (next !== null && result.kind === "signed_out" ? checkSession(api) : result))
+      .then(apply);
   };
   win.addEventListener("popstate", onAddressChange, { capture: true });
   win.addEventListener("hashchange", onAddressChange, { capture: true });
