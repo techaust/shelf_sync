@@ -23,17 +23,17 @@
 - The server binds to **`127.0.0.1` only**, never `0.0.0.0`.
 - **Install token:** 32 random bytes made on first run, kept in Credential Manager. "Reset access token" in Settings makes a new one and ends every open session, so each tab signs in again through the tray icon or the Start menu (owner, 2026-10-26).
 - **Getting a session (single-use ticket):** the launcher (and a toast click) sends the install token straight to `POST /api/session/ticket` and gets back a **ticket**: random, single-use, valid for 60 s. It opens `http://127.0.0.1:<port>/#t=<ticket>`. The install token itself never appears in a URL, so it never reaches browser history, history sync or the browser's command line. The page sends the ticket once to `POST /api/session`, removes it from the address bar, and gets back a **session cookie** (`HttpOnly`, `SameSite=Strict`, `Path=/`, browser-session lifetime). That cookie works for every call, including `GET /api/events` (SSE) and the CSV downloads, which can't send custom headers (04-A V22). A second launch or a new tab gets a fresh ticket, so it's always signed in. A used, expired or unknown ticket is refused.
-- **Which requests need it:** every `/api` route except `GET /api/health`. The static UI files (HTML, JS, CSS, fonts) are served without it; they hold no data.
+- **Which requests need it:** every `/api` route except `GET /api/health` and the two sign-in routes, `POST /api/session/ticket` and `POST /api/session` (each with its own checks, below; the full table is in [runs/m1a.2-security.md](runs/m1a.2-security.md) item 11). The static UI files (HTML, JS, CSS, fonts) are served without it; they hold no data.
 - **Host and Origin checks:** requests whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` are refused; state-changing requests whose `Origin` is missing or different are refused. This blocks web pages the owner visits and DNS-rebinding tricks.
 - **The one exception, `POST /api/session/ticket`:** it's called by the launcher (a Python program, not a browser), so it carries no `Origin` and no `X-ShelfSync`. It's exempt from those two checks **only when no `Origin` header is present**, refuses any request that carries one (so no web page can use it), and requires the install token in an `Authorization` header. The Host check still applies.
-- **CSRF:** besides `SameSite=Strict` and the Origin check, state-changing calls must carry `X-ShelfSync: 1`. Browsers can't add that header cross-site without CORS, and ShelfSync sends no CORS headers.
+- **CSRF:** besides `SameSite=Strict` and the Origin check, state-changing calls must carry `X-ShelfSync: 1`. Browsers can't add that header to a cross-origin request without CORS, and ShelfSync sends no CORS headers. `SameSite` doesn't separate ports (another server on `127.0.0.1` is the same site), so against other local servers the Origin and `X-ShelfSync` checks are what protect ShelfSync (04-A V32).
 - **Headers:** a strict Content Security Policy (`default-src 'self'`, no inline scripts, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 - **No login screen** ([ADR 0005](adr/0005-localhost-only.md)). Another standard Windows user on this PC could reach the port but has no token, and can't read the owner's Credential Manager or `%LOCALAPPDATA%`. An administrator account can read anything (§10).
 
 ## 3. Secrets
 - In **Windows Credential Manager** (keyring), one entry per secret; never in SQLite, settings, `runtime.json` or logs.
 - The UI shows them **masked** (`ck_••••a91f`) and can only **replace** them (write-only endpoint); a secret never travels back to the browser.
-- **Log redaction:** a logging filter masks anything shaped like `ck_…`, `cs_…`, AWS keys, GitHub tokens, the install token and the session cookie. A test sends known secrets through every log path and fails if any appears.
+- **Log redaction:** one `redact` step, applied to every final log line (tracebacks included), every HTTP error body and every other output path, masks anything shaped like `ck_…`, `cs_…`, AWS keys, GitHub tokens, the install token and the session cookie. A test sends known secrets through every log path and fails if any appears.
 - Errors from the stores and AWS are stripped of signatures and auth headers before they're shown or logged.
 
 ## 4. Safe ZIP handling and the malware scan
@@ -78,7 +78,7 @@ Vendor ZIPs are untrusted input.
 - CI on every PR, with explicit failure rules:
   - `pip-audit`: **any** finding fails, unless it's listed with a reason in a reviewed ignore file
   - `npm audit --omit=dev --audit-level=high`
-  - `bandit -r backend -lll` (high severity) plus `-ll` reported
+  - `bandit -r backend`: **any** finding fails; a `# nosec` needs its reason next to it
 - The embedded Python package comes from python.org with its SHA-256 pinned in the build script, and its executables' signatures are checked.
 - No telemetry; outbound hosts are the stores, the S3 endpoint and GitHub only (NFR-5).
 
@@ -96,6 +96,7 @@ Vendor ZIPs are untrusted input.
 - **Malware running as the owner** can read every Credential Manager entry the owner can. Credential Manager protects secrets at rest and from other standard users, not from malware already on the PC. Keeping Windows and Defender up to date is the defence.
 - **An administrator** on this PC can read everything.
 - **Other local servers:** browsers scope cookies by host, not port, so another server the owner opens on `127.0.0.1` would receive the session cookie. If that server is the owner's own program, the risk is low: it could already read the install token from Credential Manager. If **another Windows user** on this PC runs it, that user could replay the owner's session cookie (§2: other users can reach local ports). On this single-user PC that's unlikely, and it's the main reason to move to a dedicated host name (`shelfsync.localhost`) later, checked in 04-A first.
+- **Port squatting while ShelfSync is closed:** another program (for example another Windows user's) could listen on ShelfSync's port and answer like ShelfSync, so the launcher would send it the install token. From M1a.4 the launcher first asks Windows which process owns the listening socket and sends the token only to ShelfSync running as the same Windows user (04-A V33). Until that check is verified, this risk stays open.
 - **A hand-downloaded `Setup.exe`** from a taken-over GitHub account would not be caught by the app's update check (§6); the published hash check in the install runbook is the defence, and it relies on the owner running it.
 - **Unknown or new malware** in a vendor ZIP passes a Defender scan. The trust ramp and Review keep a person in the loop, but the code itself isn't audited.
 - **The public repo** (during development, owner's choice, [11](11-decisions.md)): the code, the security design, the store names and their WooCommerce/WordPress versions are readable by anyone. No defence here relies on being hidden, and no secret or store address is ever committed (checked before the first push). Running the tests from a fork can't reach secrets: CI uses none and runs on `pull_request` with read-only permissions.
