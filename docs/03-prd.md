@@ -16,7 +16,7 @@ Recorded in [11-decisions.md](11-decisions.md).
 
 | # | Decision |
 |---|---|
-| D-1 | Product name **ShelfSync**; folder and private GitHub repo **`shelf_sync`** |
+| D-1 | Product name **ShelfSync**; folder and GitHub repo **`shelf_sync`** (public during development, [11](11-decisions.md)) |
 | D-2 | Single user, this PC only, Windows only; no login screen |
 | D-3 | ZIPs come in by drag-and-drop in the browser |
 | D-4 | Any number of stores, one S3-compatible bucket |

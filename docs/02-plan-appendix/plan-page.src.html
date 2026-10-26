@@ -64,7 +64,7 @@ footer { margin-top: var(--space-16); padding-top: var(--space-4); border-top: 1
   <li>A <strong>localhost-only</strong> browser app for <strong>one user on Windows</strong>.</li>
   <li>The owner drops vendor ZIPs (WordPress themes and plugins) into the page. ShelfSync identifies the product, scans the ZIP with Windows Defender, uploads one file to S3, and updates the download on every WooCommerce store (today GPLFamily and PluginWay).</li>
   <li><strong>No AI is needed to run it.</strong> A desktop icon starts it, a tray icon keeps it running, and one <code>Setup.exe</code> (NSIS) installs it.</li>
-  <li>Folder and private GitHub repo: <code>shelf_sync</code> (the repo is created at M1a, after the owner's yes). Product name: <strong>ShelfSync</strong>, "ShelfSync by TecHaust".</li>
+  <li>Folder and GitHub repo: <code>shelf_sync</code> (github.com/techaust/shelf_sync, created 2026-10-26; public during development). Product name: <strong>ShelfSync</strong>, "ShelfSync by TecHaust".</li>
 </ul>
 
 <h2 id="catalog">2. The catalog and linked twins</h2>
@@ -211,7 +211,7 @@ flowchart LR
   <thead><tr><th scope="col">Item</th><th scope="col">Cost</th></tr></thead>
   <tbody>
     <tr><td>Python, FastAPI, React, SQLite, NSIS, LocalWP, moto, Playwright, Windows Defender</td><td>$0</td></tr>
-    <tr><td>Private GitHub repo, Actions (2,000 min/month; Windows runners count 2×, so only release builds use them), Releases, Dependabot</td><td>$0</td></tr>
+    <tr><td>GitHub repo (public during development: Actions on standard runners free and unlimited, branch protection free; if made private again: 2,000 min/month, Windows runners count 2×, no branch protection), Releases, Dependabot</td><td>$0</td></tr>
     <tr><td>Code-signing certificate</td><td>not used (optional; would remove the SmartScreen and Smart App Control warnings)</td></tr>
     <tr><td>AWS for calibration and teaching</td><td>$0 for data (inside the free 100 GB/month); <strong>under one US cent</strong> in request charges, possibly covered by the free tier</td></tr>
     <tr><td>Day-to-day S3 and WooCommerce use</td><td>same as today</td></tr>

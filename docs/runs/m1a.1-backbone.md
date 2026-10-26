@@ -1,6 +1,6 @@
-Status: open
+Status: merged (PR #2)
 Tier: B
-Usage: _(filled in by the lead from `node tools/model-audit.mjs` after each agent run)_
+Usage: `builder claude-sonnet-5-5/medium` (build + fix round 1; no skill: none in 09 §3 fits, it used Context7 for 9 libraries; the audit's 'no skill loaded' flag is expected); `reviewer claude-opus-5-5/high [code-review, security-review]` (review); `reviewer claude-opus-5-5/medium [code-review]` (re-check); each review's skill started a read-only general-purpose helper at high (12 §3 exception); 5-h 4 → 20 % for the whole task (per-run readings not taken)
 
 # M1a.1: Backbone
 
@@ -215,4 +215,4 @@ _(lead, 2026-10-26)_
 - Follow-ups: M1b, logs pruned by age (#10). M1a.2 brief, every output through `redact` (#11). M1a.4 brief, the re-check list above plus `runtime.json` (#12).
 
 ## 6. Handover
-_(lead, 2026-10-26)_ Built, reviewed (APPROVE), fixed, re-checked (APPROVE). Next: the owner's yes to push `feat/m1a.1-backbone` and open the PR; CI's first run; merge on green with the owner's yes; add the CHANGELOG line.
+_(lead, 2026-10-26)_ **Merged** as PR #2 (rebase) after CI passed on Linux: 56 passed, 2 Windows-only skipped, 96 % coverage. PR #3 then added the CHANGELOG, the app commands and CI on `ubuntu-24.04`. The first CI run failed to start on the private repo (account billing block); the owner made the repo public and `main` is now protected on GitHub. Carry-overs: the re-check list in §4 and `runtime.json` → M1a.4 brief; every output through `redact` → M1a.2 brief; logs pruned by age → M1b. Next task: M1a.2 (analyst draft, then the lead's final brief at high) and M1a.3 (designer).

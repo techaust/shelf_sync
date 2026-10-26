@@ -46,7 +46,8 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 - **Usage check:** read the 5-hour window once a day ([12 §5](docs/12-models-and-usage.md)); at 80 % or more nothing new starts until it resets. It limits how much runs at once, never the model or effort.
 - **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform).
 
-## Git workflow (from M1a, when the repo exists)
+## Git workflow
+Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public during development**, owner's choice, [11](docs/11-decisions.md)). Anything committed is public: never commit secrets or store addresses.
 - `main` is protected on GitHub while the repo is public (PR required, CI must pass, linear history, no force-push; [11](docs/11-decisions.md) 2026-10-26), and a tracked pre-push hook also refuses pushes to `main` and force-pushes.
 - Work on a branch → push → PR → merge on green. **Every push and every PR merge needs the owner's yes until the owner says otherwise.**
 - Agents work in their own git worktrees and never push; the lead integrates.

@@ -15,7 +15,7 @@
 | Free disk | C: 77.5 GB, D: 256.5 GB | ~5 GB for the test stack and the calibration cache | OK |
 | Python | 3.12.10 | 3.12 | OK |
 | Node / npm | 24.19.0 / 11.17.0 | For the UI and the hook scripts | OK |
-| git / GitHub CLI | 2.55.0 / 2.101.0, signed in as `techaust` | — | Repo creation waits for the owner's yes (M1a) |
+| git / GitHub CLI | 2.55.0 / 2.101.0, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; every push, merge and settings change needs the owner's yes |
 | NSIS | not installed | Release builds (CI); locally only for M1b testing | Installed at M1b with the owner's yes |
 | LocalWP | not checked | Test stack (M2) | Installed at M2 with the owner's yes |
 | moto | not installed | Test stack (M2) | A pip package in the dev dependencies |
