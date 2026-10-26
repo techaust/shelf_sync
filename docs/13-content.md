@@ -39,6 +39,7 @@
 | ERR-05 | "Resumed after a restart: <file> continues from <step>." |
 | ERR-06 | "Port 47615 is in use, so ShelfSync started on <port>." / "Ports 47615–47624 are all in use. Close the program using them, then start ShelfSync again." |
 | Start-up | "ShelfSync couldn't start. The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log" / "ShelfSync couldn't update its database, so it didn't start. The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log" (a notification; the log holds the technical detail) |
+| Signed out | A tab without a valid sign-in: "This tab isn't signed in. Open ShelfSync from the tray icon or the Start menu." |
 | Scan | "Held: threat found (<name>). This ZIP wasn't uploaded and can only be discarded." / "Held: Windows Defender removed or locked this ZIP before it could be checked. It wasn't uploaded and can only be discarded." / "Held: not scanned. Windows Defender couldn't check this ZIP (<reason>). Apply anyway" |
 | ERR-07 | Review: "Nothing waiting. ZIPs that need a decision appear here." · Cleanup: "No issues. ShelfSync checks your stores every <sync interval>." · Activity: "No changes yet. Every change ShelfSync makes appears here." · No stores: "Add your first store to start." |
 

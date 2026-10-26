@@ -58,6 +58,7 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | | uvicorn | 0.54.0 | 2026-09-25 | BSD-3-Clause |
 | | pystray | 0.19.5 | 2023-09-17 | LGPL-3.0 (own use; kept as a separate, replaceable package) |
 | | Pillow | 12.3.0 | 2026-07-01 | MIT-CMU |
+| | keyring | 25.7.0 | 2025-11-16 | MIT; `sys_platform == "win32"`; added for M1a.2 (owner, 2026-10-27) with its Windows-only dependencies jaraco-classes 3.4.0, jaraco-context 6.1.2, jaraco-functools 4.6.0, more-itertools 11.1.0 (MIT) and pywin32-ctypes 0.2.3 (BSD-3-Clause) |
 | | windows-toasts | 1.3.1 | 2025-05-06 | Apache-2.0; `sys_platform == "win32"` marker in ShelfSync's own list, since its metadata has none (V29) |
 | Python, dev | httpx | 0.28.1 | 2024-12-06 | BSD-3-Clause (FastAPI's test client; run time from M2) |
 | | pytest | 9.1.1 | 2026-06-19 | MIT |

@@ -25,7 +25,7 @@
 | UI unit | Vitest | Formatting, keyboard shortcuts, SSE reducers | Every commit | M1a |
 | UI end-to-end | Playwright + @axe-core/playwright | Upload, Review by keyboard, approve, rollback, settings; axe in light and dark on every screen that exists at that milestone | Every commit (CI) | **M1a** (the shell), growing with each milestone |
 
-Coverage (pytest-cov): **≥ 90 %** of lines in `inspect/`, `match/`, `apply/` and `secure/`, enforced in CI. The Windows adapters live in `platform/` and are measured by the Windows checks, not by CI, so the CI number never counts code it can't run.
+Coverage (pytest-cov): **≥ 90 %** of lines and branches together in `inspect/`, `match/`, `apply/` and `secure/`, enforced in CI. The Windows adapters live in `platform/` and are measured by the Windows checks, not by CI, so the CI number never counts code it can't run.
 
 ## 2. Known bad cases (permanent tests)
 Each case in [01 §3](01-audit.md) has a fixture ZIP built from its **header files only** (no vendor code is committed), plus a test of the right outcome: Business Lounge bundle, Elementor vs Elementor Pro, Jupiter X / js-composer-theme, Creote downgrade, GutenKit repeated downgrades, and UDesign (folder `u-design` vs product `udesign`: the theme header decides, the filename alone never makes it Certain, and the previous file is kept).
