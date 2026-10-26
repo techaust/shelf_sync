@@ -237,6 +237,28 @@ _(designer, Opus 5.5 medium, 2026-10-27; commits `9e0fc65`, `e5891fe` on `feat/m
 
 **For the lead:** `npx playwright test --list` writes `frontend/playwright-report/index.html`; the `.gitignore` lines proposed above cover it (I deleted the one it made).
 
+### Fix round 2
+_(designer, Opus 5.5, 2026-10-27; commit `83085b0` on `feat/m1a.3-app-shell`, from `d93eae2`; not pushed)_
+
+**Skills and tools:** `frontend-design` loaded first; nothing visual changed this round, so it changed nothing. `dataviz` not loaded (no chart). No Context7 lookup needed. No browser (none needed; no Playwright browser downloaded).
+
+**One line per item** (what changed; the test that proves it):
+1. `boot.ts`: a `#t=` sign-in in an open tab that comes back `signed_out` (a used or expired ticket, 401 `bad_ticket`) now asks `GET /api/session/status` once, so the cookie decides. Proved by `boot.test.ts` "a used ticket in an open tab falls back to the session check" (two cases: cookie 204 gives `checking → signed_in`, never `signed_out` on the way; cookie 401 gives `signed_out`; log is replaceState, POST, GET); both fail with the fallback removed.
+2. Request counter: `createSessionStore().begin()` hands out a numbered setter and only the newest applies. `boot()` applies the start-up result through it (App's `started` effect and prop are gone; `main.tsx` updated), the in-tab sign-in uses it, and App's "Try again" uses it. Proved by `boot.test.ts` "a late start-up answer never overwrites a newer sign-in (the request counter)" (fails with the counter replaced by a plain set) and `session.test.ts` "only the newest begin() applies its result".
+3. `check-output.mjs`: the JSON pattern is now `/\\*"ticket\\*"\s*:\s*\\*"[A-Za-z0-9_-]{16,}/`, so `\"ticket\":\"…\"` (and a doubly escaped body) is caught. There was no self-check in the script, so I added `node e2e/check-output.mjs --self-check` (8 samples: address, URL-encoded address, Bearer, plain JSON, escaped JSON, doubly escaped JSON, and two clean lines); exit 0. A scratch run confirmed the old pattern misses the escaped form and the new one catches it.
+4. `fonts.test.ts`: the field regex is `${name}:\\s*([^;]+);`. Proved by `fonts.test.ts` (passes on the real `fonts.css`).
+5. `contrast.test.ts`: `appBarToken(name, "dark", "media")` reads the `:root:not([data-theme="light"])` block inside `@media (prefers-color-scheme: dark)` (falling back to `:root`), and a new `it.each` checks bg, fg and muted from it equal the `[data-theme="dark"]` values (it replaces the old bg-only `toContain`).
+6. `create_app(port, install_token, clock=…, *, ui_dir)`: `ui_dir` is a required keyword (no default); `server.py` passes `ui_dir=UI_DIR`; `e2e/server.py`, `scripts/export_openapi.py` and every test already passed it. `test_every_test_names_its_ui_folder` (the line scan) is removed: a call without `ui_dir` is now a `TypeError` and a mypy error. Proved by `uv run mypy` and `uv run pytest` (`test_startup_security.py` goes through `server.py`).
+
+**Commands and results** (through `tools/heavy.sh`; logs `frontend/.logs/m1a3-fr2-front.log`, `.logs/m1a3-fr2-back.log`):
+- In `frontend/`: `npx biome ci .`: 48 files, no findings (after `biome check --write` reformatted two files). `npx tsc --noEmit`: no errors. `npx vitest run`: **8 files, 261 passed**. `npm run build`: passes (tokens in step).
+- `uv run ruff check`: passed. `uv run ruff format --check`: 56 files formatted. `uv run mypy`: no issues in 26 files. `uv run pytest`: **465 passed, 2 skipped, 9 deselected** (one fewer than round 1: the removed line scan; the one warning is Starlette's existing httpx deprecation).
+- `node e2e/check-output.mjs --self-check`: 8 samples, all as expected.
+
+**Not verified:** the Playwright suite (CI only, as before); no browser pass this round (no visible change). CI doesn't run `--self-check` yet; adding it to `checks.yml` beside the existing step is the lead's call.
+
+**Not this round:** finding 7 (the duplicated dark rules), for a later token task.
+
 ## 5. Review
 **Review** _(reviewer, Opus 5.5 high, `code-review` + `security-review` by hand on `872dea4..3d6007e`, visual review in the built-in browser, 2026-10-27)_ **SEND BACK** for one high (expected APPROVE once fixed). No high-confidence vulnerability; static mount, sign-in, CSP, tokens, landmarks and the CI job checked sound; geometry matches the mockup (app bar 56, nav 248, items 44). Ran: `npm ci`, Biome, tsc, Vitest 223, build, `schema:check`, `npm audit` 0, `pytest` 450 passed. Not run: Playwright and axe (CI only). Note: `frontend-design` was not actually loaded by the reviewer; the visual review used 05 and the mockup directly.
 
