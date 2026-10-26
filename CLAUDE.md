@@ -56,7 +56,12 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 Python 3.12 (embedded, signed) · FastAPI + uvicorn · SQLite (`sqlite3`, WAL, numbered SQL migrations) · httpx · boto3 · keyring · cryptography · pystray · windows-toasts · React + TypeScript + Vite · Tailwind v4 from `brand/tokens.json` · Radix UI · Lucide · Archivo + IBM Plex Mono (self-hosted) · pytest, hypothesis, respx, moto · Playwright + axe · ruff, mypy, Biome · uv (locks) · NSIS · GitHub Actions.
 
 ## Commands
-The app code starts at M1a; its commands are added here then. Until then:
+App (from the repo root; heavy ones through `bash tools/heavy.sh --log <name> …`):
+- `uv sync --locked`: install the locked Python packages.
+- `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest`, `uv run bandit -r backend`, `uv run pip-audit`: the same checks CI runs.
+- `PYTHONPATH=backend uv run python -m shelfsync`: start the server by hand (development only; the launcher comes in M1a.4).
+
+Other tools:
 - `node tools/model-audit.mjs [YYYY-MM-DD]`: every run since that date (default today), with models, effort and skills; it flags anything outside the plan.
 - Brand (in `brand/`, through `bash tools/heavy.sh --log <name> …`): `npm run build` rebuilds every logo, icon and image; `npm test` (vitest) also fails on any hand edit.
 - Plan page: `python -I docs/02-plan-appendix/build_plan_page.py <out.html>`, then publish to https://claude.ai/artifact/9CYLJk6kRPncuJ3Lmunn5f. **Republish it after every change to 02.**
