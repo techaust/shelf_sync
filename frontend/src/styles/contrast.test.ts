@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import tokens from "../../../brand/tokens.json";
 import shelfsyncTokens from "./generated/shelfsync-tokens.css?raw";
+import { STORE_PALETTE } from "./storePalette";
 
 type Theme = "light" | "dark";
 type Semantic = keyof typeof tokens.semantic;
@@ -144,12 +145,10 @@ describe.each<Theme>(["light", "dark"])("%s theme", (theme) => {
   });
 });
 
-// 05 section 2.3: the store identifier dots, with the surfaces each can sit on. Store colours are store data (the
-// backend's store table from M2), not tokens; these are the two stores' approved values.
-const STORES = [
-  { code: "GF", light: "#4d4d99", dark: "#a3a3e6" },
-  { code: "PW", light: "#007b80", dark: "#3cc8cb" },
-];
+// 05 section 2.3: the store identifier dots, with the surfaces each can sit on. Store colours are store data (a key the
+// backend's store table holds), not tokens; every pair in STORE_PALETTE (the record over the schema's colour keys) is
+// checked, so a colour added to the palette is tested without anyone remembering to add it here.
+const STORES = Object.entries(STORE_PALETTE).map(([code, pair]) => ({ code, ...pair }));
 const LIGHT_SURFACES = ["white", "stone-50", "stone-100", "stone-200", "verdigris-100"];
 // The dark surfaces, plus the app bar's two inks (the health chips sit on it in both themes).
 const DARK_SURFACES = ["ink-950", "ink-900", "ink-800", "ink-750", "ink-700", "verdigris-900"];

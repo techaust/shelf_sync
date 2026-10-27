@@ -12,13 +12,13 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [update-and-rollback.md](update-and-rollback.md) | Install an update in the app; "Roll back app"; what an automatic switch-back looks like |
 | [uninstall.md](uninstall.md) | Uninstall, keep or remove the data, and check nothing is left |
 | [troubleshooting.md](troubleshooting.md) | "ShelfSync won't open", port in use, the tray icon missing, reading the logs (grows) |
+| [keys-and-policies.md](keys-and-policies.md) | Make the Shop Manager key for each store and the two AWS keys with their policies; record the bucket's versioning and encryption |
+| [key-rotation.md](key-rotation.md) | Replace a WooCommerce key, an AWS key, the GitHub token, the install token; what to do if the signing key is seen or lost |
 
 Added when their milestone is built ([08](../08-roadmap.md)):
 
 | Runbook | Milestone | What it covers |
 |---|---|---|
-| `key-rotation.md` | M2 | Rotating the WooCommerce keys, both S3 keys, the GitHub token and the install token; what to do if the signing key is lost |
-| `keys-and-policies.md` | M2 | Creating the Shop Manager key and the two IAM policies |
 | `test-stack.md` | M2 | Starting and resetting the LocalWP + moto test stack |
 | `restore-database.md` | M2 | Restoring the database from a daily backup |
 | `calibration.md` | M4 | Running the calibration and reading its report |

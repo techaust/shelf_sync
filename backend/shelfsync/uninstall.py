@@ -28,6 +28,7 @@ import argparse
 import contextlib
 import os
 import re
+import sqlite3
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -41,6 +42,7 @@ from shelfsync.platform.secrets import (
     SecretStoreError,
 )
 from shelfsync.platform.sockets import OwnerLookupError
+from shelfsync.secure.credentials import entry_names
 from shelfsync.tray.instance import InstanceLock, WindowsInstanceLock, default_instance_lock
 
 EXIT_OK = 0
@@ -83,6 +85,33 @@ def remove_secrets(store: SecretStore, names: Sequence[str] = OWNED_SECRET_NAMES
         except SecretStoreError:
             failed.append(name)
     return failed
+
+
+class StoreListUnreadable(Exception):
+    """The database is there but the list of stores couldn't be read from it."""
+
+
+def store_secret_names(database: Path) -> list[str]:
+    """The Credential Manager entry names of every store the database ever held, removed ones too (`store-<id>-key`
+    and `store-<id>-secret`). The database is opened read-only. No database, or one from before stores existed, has
+    none; a database that can't be read raises `StoreListUnreadable`."""
+    if not database.is_file():
+        return []
+    try:
+        connection = sqlite3.connect(f"{database.absolute().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error, ValueError:
+        raise StoreListUnreadable from None
+    try:
+        ids = [row[0] for row in connection.execute("SELECT id FROM store")]
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error):
+            return []
+        raise StoreListUnreadable from None
+    except sqlite3.Error:
+        raise StoreListUnreadable from None
+    finally:
+        connection.close()
+    return [name for store_id in ids if isinstance(store_id, int) for name in entry_names(store_id)]
 
 
 def remove_data_folder(root: Path, lock: InstanceLock | None = None, keep: str | None = None) -> list[str]:
@@ -177,10 +206,18 @@ def remove_data(
             try:
                 secret_store = store if store is not None else KeyringSecretStore(SERVICE_NAME)
                 failed_secrets = remove_secrets(secret_store)
+                try:
+                    failed_secrets += remove_secrets(secret_store, store_secret_names(paths.database))
+                except StoreListUnreadable:
+                    # Which stores there were can't be known, so their entries may be left: the same exit as an entry
+                    # that couldn't be removed.
+                    _say("Couldn't read the list of stores, so their Credential Manager entries may be left.")
+                    failed_secrets.append("store entries")
             except SecretStoreError:
                 failed_secrets = list(OWNED_SECRET_NAMES)
             for name in failed_secrets:
-                _say(f"Couldn't remove the Credential Manager entry {name}.")
+                if name != "store entries":
+                    _say(f"Couldn't remove the Credential Manager entry {name}.")
             data_left = False
             if link:
                 _say(f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone.")

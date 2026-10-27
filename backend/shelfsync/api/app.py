@@ -18,12 +18,14 @@ from shelfsync.api.app_settings import AppSettingsService, make_app_settings_rou
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
+from shelfsync.api.stores import make_stores_router
 from shelfsync.api.updates import make_updates_router
 from shelfsync.paths import source_ui_dir
 from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
 from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
 from shelfsync.secure.token import InstallToken
+from shelfsync.store_service import StoreService
 from shelfsync.update.service import UpdateService
 
 _log = logging.getLogger("shelfsync.api")
@@ -95,6 +97,7 @@ def create_app(
     ui_dir: Path | None,
     updates: UpdateService | None = None,
     app_settings: AppSettingsService | None = None,
+    stores: StoreService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -104,7 +107,9 @@ def create_app(
     built UI; None serves the API only (most tests). `updates` is the update service (M1b.2); the default is the
     "development, updates off" service, which makes no network call. The app starts it when the server starts and
     stops it when the server stops (the lifespan below). `app_settings` is the Settings > App service (SET-06); the
-    default keeps the settings in memory, with no log handler and no real Run key.
+    default keeps the settings in memory, with no log handler and no real Run key. `stores` is the stores service
+    (M2.1); the default runs on an in-memory database and secret store, so no test touches a file or Credential Manager
+    by accident.
     """
     service = updates if updates is not None else UpdateService.development()
 
@@ -149,6 +154,7 @@ def create_app(
     app.include_router(
         make_app_settings_router(app_settings if app_settings is not None else AppSettingsService.development(port))
     )
+    app.include_router(make_stores_router(stores if stores is not None else StoreService.in_memory()))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

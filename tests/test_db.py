@@ -29,10 +29,10 @@ def test_connection_pragmas(connection: sqlite3.Connection) -> None:
     assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == BUSY_TIMEOUT_MS
 
 
-def test_fresh_database_gets_0001_only(connection: sqlite3.Connection) -> None:
-    assert migrate(connection) == [1]
-    assert applied_versions(connection) == {1}
-    assert tables(connection) == {"schema_migration", "setting"}
+def test_fresh_database_gets_every_migration(connection: sqlite3.Connection) -> None:
+    assert migrate(connection) == [1, 2]
+    assert applied_versions(connection) == {1, 2}
+    assert tables(connection) == {"schema_migration", "setting", "store", "sqlite_sequence"}
     applied_at = connection.execute("SELECT applied_at FROM schema_migration").fetchone()[0]
     assert applied_at.endswith("Z")
 
@@ -40,7 +40,7 @@ def test_fresh_database_gets_0001_only(connection: sqlite3.Connection) -> None:
 def test_second_run_applies_nothing(connection: sqlite3.Connection) -> None:
     migrate(connection)
     assert migrate(connection) == []
-    assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 1
+    assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 2
 
 
 def test_broken_migration_rolls_back_and_leaves_versions_unchanged(

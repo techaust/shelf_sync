@@ -16,8 +16,18 @@ SERVICE_NAME = "ShelfSync"  # the Credential Manager service name; each secret i
 INSTALL_TOKEN_ENTRY = "install-token"  # nosec B105
 # Every Credential Manager entry ShelfSync owns, under SERVICE_NAME. The uninstaller's "Remove my data" removes exactly
 # these (`shelfsync.uninstall`), so a new secret (the GitHub token of the updater, M2's keys) is added here and nowhere
-# else; deleting one that was never stored is not an error.
-OWNED_SECRET_NAMES: tuple[str, ...] = (INSTALL_TOKEN_ENTRY, "github-token")
+# else; deleting one that was never stored is not an error. The per-store entries (`store-<id>-key` and
+# `store-<id>-secret`) aren't fixed names: "Remove my data" adds them from the database
+# (`uninstall.store_secret_names`).
+OWNED_SECRET_NAMES: tuple[str, ...] = (
+    INSTALL_TOKEN_ENTRY,
+    "github-token",
+    # the S3 keys (M2.3): one read-and-write pair for daily use, one read-only pair
+    "s3-rw-key-id",
+    "s3-rw-secret",
+    "s3-ro-key-id",
+    "s3-ro-secret",
+)
 
 
 class SecretStoreError(Exception):

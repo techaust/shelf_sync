@@ -86,9 +86,11 @@ class Rig:
 
     @property
     def env(self) -> SwitchEnv:
+        # the simulated running release is at schema 1, whatever migrations this source tree has gone on to add
         return SwitchEnv(
             self.links, self.procs, self.uninstall, self.lock, self.health,
             clock=self.clock, sleep=self.clock.sleep, now=self.now, image_of=lambda pid: None,
+            own_schema=lambda: 1,
         )  # fmt: skip
 
     def plan(self, mode: str, from_version: str, to_version: str, restore: bool = False) -> SwitchPlan:

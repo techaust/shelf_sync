@@ -12,6 +12,8 @@ export interface StoreIdentifier {
 }
 
 export type ConnectionState = "connected" | "unreachable" | "refused";
+/** What `GET /api/stores` reports for a store that has not been tested since it was added or its keys changed. */
+export type StoreConnectionState = ConnectionState | "unknown";
 
 export interface StoreHealth extends StoreIdentifier {
   state: ConnectionState;

@@ -122,6 +122,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Stores */
+        get: operations["list_stores_api_stores_get"];
+        put?: never;
+        /** Create Store */
+        post: operations["create_store_api_stores_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stores/{store_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Store */
+        delete: operations["delete_store_api_stores__store_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Store */
+        patch: operations["update_store_api_stores__store_id__patch"];
+        trace?: never;
+    };
+    "/api/stores/{store_id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Keys */
+        put: operations["put_keys_api_stores__store_id__keys_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stores/{store_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Store */
+        post: operations["test_store_api_stores__store_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/updates": {
         parameters: {
             query?: never;
@@ -270,13 +340,46 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** CreateStoreRequest */
+        CreateStoreRequest: {
+            /** Code */
+            code: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "indigo" | "teal";
+            /** Consumer Key */
+            consumer_key: string;
+            /** Consumer Secret */
+            consumer_secret: string;
+            /**
+             * Main Button
+             * @default Download
+             */
+            main_button: string;
+            /** Name */
+            name: string;
+            /**
+             * Shape
+             * @enum {string}
+             */
+            shape: "circle" | "square" | "triangle" | "diamond";
+            /**
+             * Spacing Ms
+             * @default 150
+             */
+            spacing_ms: number;
+            /** Url */
+            url: string;
+        };
         /** ErrorResponse */
         ErrorResponse: {
             /**
              * Error
              * @enum {string}
              */
-            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required";
+            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable";
         };
         /** GithubTokenRequest */
         GithubTokenRequest: {
@@ -295,12 +398,48 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthModel */
+        HealthModel: {
+            /** Downloadable Count */
+            downloadable_count: number | null;
+            /** Http Status */
+            http_status: number | null;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "unknown" | "connected" | "unreachable" | "refused";
+            /** Tested At */
+            tested_at: string | null;
+            /** Wc Version */
+            wc_version: string | null;
+            /** Wp Version */
+            wp_version: string | null;
+        };
         /** HealthResponse */
         HealthResponse: {
             /** App */
             app: string;
             /** Version */
             version: string;
+        };
+        /** KeysModel */
+        KeysModel: {
+            /** Consumer Key */
+            consumer_key: string | null;
+            /** Consumer Secret */
+            consumer_secret: string | null;
+        };
+        /** KeysRequest */
+        KeysRequest: {
+            /** Consumer Key */
+            consumer_key: string;
+            /** Consumer Secret */
+            consumer_secret: string;
         };
         /** LastCheckModel */
         LastCheckModel: {
@@ -348,6 +487,71 @@ export interface components {
             /** Ticket */
             ticket: string;
         };
+        /** StoreModel */
+        StoreModel: {
+            /** Code */
+            code: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "indigo" | "teal";
+            health: components["schemas"]["HealthModel"];
+            /** Id */
+            id: number;
+            keys: components["schemas"]["KeysModel"];
+            /** Main Button */
+            main_button: string;
+            /** Name */
+            name: string;
+            /**
+             * Shape
+             * @enum {string}
+             */
+            shape: "circle" | "square" | "triangle" | "diamond";
+            /** Spacing Ms */
+            spacing_ms: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "paused";
+            /** Url */
+            url: string;
+        };
+        /** StoreTestResponse */
+        StoreTestResponse: {
+            /** Detail */
+            detail: string | null;
+            /** Downloadable Count */
+            downloadable_count: number | null;
+            /** Http Status */
+            http_status: number | null;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "unknown" | "connected" | "unreachable" | "refused";
+            /** Tested At */
+            tested_at: string;
+            /** Warning */
+            warning: string | null;
+            /** Wc Version */
+            wc_version: string | null;
+            /** Wp Version */
+            wp_version: string | null;
+        };
+        /** StoresResponse */
+        StoresResponse: {
+            /** Stores */
+            stores: components["schemas"]["StoreModel"][];
+        };
         /** TicketResponse */
         TicketResponse: {
             /** Expires In */
@@ -363,6 +567,32 @@ export interface components {
             notice: boolean;
             /** Set */
             set: boolean;
+        };
+        /**
+         * UpdateStoreRequest
+         * @description Any subset of the fields. A field that is present must have a value (null is refused).
+         */
+        UpdateStoreRequest: {
+            /** Code */
+            code?: string | null;
+            /** Color */
+            color?: ("indigo" | "teal") | null;
+            /** Consumer Key */
+            consumer_key?: string | null;
+            /** Consumer Secret */
+            consumer_secret?: string | null;
+            /** Main Button */
+            main_button?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Shape */
+            shape?: ("circle" | "square" | "triangle" | "diamond") | null;
+            /** Spacing Ms */
+            spacing_ms?: number | null;
+            /** State */
+            state?: ("active" | "paused") | null;
+            /** Url */
+            url?: string | null;
         };
         /** UpdatesResponse */
         UpdatesResponse: {
@@ -660,6 +890,322 @@ export interface operations {
             };
             /** @description Unprocessable Content */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_stores_api_stores_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresResponse"];
+                };
+            };
+        };
+    };
+    create_store_api_stores_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoreModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_store_api_stores__store_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_store_api_stores__store_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoreModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_keys_api_stores__store_id__keys_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeysRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    test_store_api_stores__store_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoreTestResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -120,6 +120,8 @@ Store colours never style the app. Each store is shown as a **shape + colour dot
 
 Non-text marks need 3:1 (WCAG 1.4.11); every pair above passes on every surface.
 
+**Stored as palette keys** (M2.1, [11](11-decisions.md) 2026-10-28): a store's colour is a key, `indigo` (GF's pair) or `teal` (PW's pair), never a hex value. The pairs live in `frontend/src/styles/storePalette.ts`, the one file allowed hex values, and `contrast.test.ts` checks every pair there on every surface. A later store gets a new pair the designer proposes and the owner approves; adding it needs a migration (the database checks the key).
+
 Where it's used: store badges (neutral surface + dot + code), the per-store step chips in Upload, the tick per store in tables, the column header in Catalog. The code text always uses `--color-text`.
 
 ### 2.4 Bands and job states (always icon + label + colour)
