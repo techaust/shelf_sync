@@ -27,14 +27,13 @@ class ExitGuard:
         """Start the countdown. The file object is kept alive for as long as the guard exists."""
         if self._file is None:
             self._file = self._path.open("wb")
-        self._schedule(seconds)
+        self._schedule(self._file, seconds)
 
     def rearm(self, seconds: float) -> None:
         """Replace the countdown by a new one (only if it was armed)."""
         if self._file is not None:
-            self._schedule(seconds)
+            self._schedule(self._file, seconds)
 
-    def _schedule(self, seconds: float) -> None:
-        assert self._file is not None
-        faulthandler.dump_traceback_later(seconds, repeat=False, file=self._file, exit=True)
+    def _schedule(self, file: BinaryIO, seconds: float) -> None:
+        faulthandler.dump_traceback_later(seconds, repeat=False, file=file, exit=True)
         self.armed = True

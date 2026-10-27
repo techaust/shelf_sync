@@ -84,7 +84,52 @@ The exact field cause is unproven. Two real defects are confirmed by reading the
 _(Tier B: none.)_
 
 ## 3. Builder report
-_(builder)_
+_(builder, Sonnet 5.5, 2026-10-27; branch `fix/m1a.5-quit-build` cut from `e4e9ac5`)_
+
+**Skills.** No 09 §3 skill fits a builder on this task: `code-review` and `security-review` are the reviewer's; `run` was not needed (the hand check below is a driver script, not a skill use). Context7 was loaded and used for pystray (`/moses-palmer/pystray`).
+
+**What Context7 and the source confirmed.**
+- Context7 (pystray): `Icon.stop()` "has no effect if the icon is not running", calls the backend `_stop()`, then joins the setup thread (5 s timeout); `run_detached` on Windows just spawns `run()` in a thread. Nothing in it says `stop()` waits for the loop to end.
+- Installed pystray 0.19.5 source (`_win32.py`, `_base.py`): `_stop()` is a bare `PostMessage(hwnd, WM_STOP)` (`_win32.py:133`); `_on_stop` calls `PostQuitMessage` on the loop thread; `_on_notify` runs the default item (`self()`) and menu items (`descriptors[index-1](self)`) synchronously on the loop thread; `Icon.stop()` sets `_running = False` itself (`_base.py:259`), so the old `not icon._running` check proved nothing; `visible = False` calls `_hide()` (NIM_DELETE) on whichever thread sets it. Handlers live in `icon._message_handlers` (used by the nested-loop test).
+- Python `faulthandler.dump_traceback_later(timeout, repeat, file, exit)`: `exit=True` calls `_exit(1)` (confirmed from the function's docstring in this interpreter; and by the subprocess test).
+
+**Files changed** (all on `fix/m1a.5-quit-build`):
+- `backend/shelfsync/tray/tray.py`: Open and View logs run in `tray-action-open` / `tray-action-view-logs` daemon threads (inside `_guarded`); Quit inline. `stop()` clears `_icon` under the lock, joins the loop 2 s, and if still alive `_force_stop`: WARNING, `icon._stop()`, `icon.visible = False`, 1 s join; INFO "Tray stopped in N.N s" on the clean path. `refresh()` rebuilds the menu only when the paused flag changed. Docstring updated.
+- `backend/shelfsync/tray/exit_guard.py` (new): `ExitGuard.arm/rearm`, `STALL_FILE_NAME`; stdlib `faulthandler` only.
+- `backend/shelfsync/tray/launcher.py`: `exit_guard` injected into `TrayServe` and `main`; stage 1 (45 s) armed in the `finally` before `tray.stop()`; INFO "Stopping (Quit: yes/no)"; WARNING if the uvicorn thread is still alive after its join; INFO "Threads at exit: name (daemon=…)"; stage 2 (`rearm(5)`) in `main()` after `run_application` if armed; `add_quit_guard` docstring note; module docstring.
+- `backend/shelfsync/launcher.py`: `real_exit_guard()` and `__main__` builds the only real guard (no data folder: no guard).
+- `backend/shelfsync/server.py`: `_report_stalled_exit` before `empty_tmp` (WARNING with the file, capped at 64 KB, decoded with `errors="replace"`, empty file ignored).
+- Tests: `tests/test_tray.py` (FakeIcon gained `_stop`, `reposts`, `loop_never_ends`; two existing tests now wait for the action threads; the weak `not icon._running` check at the old line 517 now checks `not tray._loop.is_alive()`), `tests/test_tray_quit.py` (new), `tests/test_exit_guard.py` (new).
+- This file (§3).
+
+**Commands and results** (worktree, through `bash tools/heavy.sh --log m1a.5-<name>` where heavy):
+- `uv sync --locked`: ok.
+- `uv run pytest` (default selection): **686 passed, 7 skipped, 32 deselected** (the 1 warning is starlette's httpx deprecation, not ours). Log `.logs/m1a.5-pytest.log`.
+- `uv run mypy`: Success, no issues in 38 source files.
+- `uv run ruff check` and `uv run ruff format --check`: pass (80 files formatted).
+- `uv run bandit -q -r backend`: first run failed on B101 (`assert` in `exit_guard.py`); fixed by passing the file object instead; re-run exit 0.
+- pip-audit as CI runs it (`uv export --locked --no-emit-project …`, then `pip-audit --require-hashes --disable-pip`): "No known vulnerabilities found".
+- `uv run pytest -m windows --no-cov`: **31 passed, 1 skipped** (the V31 Defender check), run inside the Claude app's package; includes `test_real_stop_while_an_action_is_blocked_still_ends_the_loop`, `test_real_nested_loop_that_eats_wm_quit_cannot_keep_the_icon`, `test_real_hide_from_another_thread_removes_the_icon` (it passes: hiding the icon from a non-loop thread works with pystray 0.19.5; this is the 04-A row), and `test_exit_guard_under_pythonw_writes_the_file`.
+- CI: not run on GitHub yet.
+
+**Hand check** (the real launcher under `pythonw`, throwaway data folder in `.logs/handcheck-data`, removed afterwards; no browser tab, in-memory secrets). I could not click the tray menu, so a driver script (`scratchpad\handcheck.py`, not in the repo) runs the real `main()` with real pystray, real uvicorn and the real armed `ExitGuard`, and calls `request_quit` from a timer after 8 s. Result: the process ended by itself, **exit code 0, 11.1 s** after start; the log shows "Stopping (Quit: yes)", "Tray stopped in 0.0 s", uvicorn's shutdown lines, then "Threads at exit: MainThread (daemon=False)"; `runtime.json` removed; `shutdown-stall.txt` was left **empty** (0 bytes), as designed.
+
+**Decisions inside the brief.**
+- New tray tests live in `tests/test_tray_quit.py` (importing the fakes from `test_tray.py`) rather than growing that 690-line file; the exit-guard and next-start tests are in `tests/test_exit_guard.py`.
+- The "nested loop eats WM_QUIT" test swaps `icon._message_handlers[WM_STOP]` for a no-op (a swallowed stop), because a real nested loop on pystray's thread can't be started without patching pystray; it restores the handler and re-posts so the loop thread ends.
+- `real_exit_guard()` returns `None` if the data folder can't be resolved (start-up reports that itself). The guard's file is opened at `arm()`, not at construction, so building it creates nothing.
+- The "worst bounded path" 45 s is as the brief says; I didn't re-derive 34 s.
+- The "Threads at exit" line shows `MainThread (daemon=False)` only after a normal Quit, as expected.
+
+**Not verified.**
+- An actual tray click on Quit, View logs and Open (driver replaced the click); the original field stall was not reproduced, so the fix for D1 is checked only by the injected failures (never-ending loop, swallowed stop).
+- `-m windows` ran inside the Claude app's package; the lead repeats it outside with the owner.
+- The `faulthandler` watchdog under a real stall of the whole launcher (only the child-process model of it, with atexit blocking, and the Windows `pythonw` variant).
+- The old `Tray.stop()` semantic "stop returns while `_icon` is already None" for a second call: a second `stop()` does nothing and logs nothing; not separately tested.
+
+**Open questions / suggestions for the lead.**
+- 11 rows as in the brief (exit code 1 also means a stalled exit; the raw dump in `tmp\` is the one un-redacted output while it sits there). Also add a 04-A row: pystray 0.19.5 `icon.visible = False` from a non-loop thread removes the icon (windows test above), and `icon._stop()` is a private API to re-check on every pystray upgrade.
+- 06 §3 should name `tmp\shutdown-stall.txt` as a kept output that is read back through `redact`.
 
 ## 4. Designer report
 _(no screens)_
