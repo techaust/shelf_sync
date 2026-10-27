@@ -91,3 +91,86 @@ jobs:
       - name: Run the brand tests
         run: npm test
         working-directory: brand
+
+  ui:
+    name: UI checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Get the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Python: the schema export and the real backend that Playwright drives (frontend/e2e/server.py).
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+
+      - name: Install the locked Python packages
+        run: uv sync --locked
+        working-directory: .
+
+      - name: Install Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.19.0"
+
+      - name: Install the locked UI packages
+        run: npm ci
+
+      - name: Lint and format (Biome)
+        run: npx biome ci .
+
+      - name: Self-check of the Playwright output scanner
+        run: node e2e/check-output.mjs --self-check
+
+      - name: Check types (tsc)
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Run the unit tests (Vitest)
+        run: npx vitest run
+
+      - name: Build (tokens in step with brand/, then Vite)
+        run: npm run build
+
+      - name: Check the API types are current (openapi-typescript)
+        run: npm run schema:check
+
+      # The test browser is installed here only, never on the owner's PC (docs/11).
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # A throwaway install token for this run only, masked in the log; the check below looks for it in the output.
+      - name: Make a throwaway test token
+        run: |
+          token="$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')"
+          echo "::add-mask::${token}"
+          echo "SHELFSYNC_E2E_TOKEN=${token}" >> "$GITHUB_ENV"
+
+      - name: Playwright + axe against the backend serving the build (WCAG 2.2 A and AA, light and dark, forced colours, reduced motion, CSP, keyboard)
+        run: npx playwright test
+
+      # The repository is public: the output is uploaded only when it holds no ticket, token or Authorization value.
+      - name: Check the Playwright output holds no sign-in material
+        id: clean-output
+        if: failure()
+        run: node e2e/check-output.mjs
+
+      - name: Keep the Playwright report when it fails
+        if: failure() && steps.clean-output.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+
+      - name: Check the run-time packages for known vulnerabilities (npm audit)
+        run: npm audit --omit=dev --audit-level=high

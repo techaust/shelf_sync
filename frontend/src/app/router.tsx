@@ -1,0 +1,27 @@
+import { createHashRouter } from "react-router";
+import { AppShell } from "../components/AppShell";
+import { Activity, Catalog, Cleanup, Dashboard, NotFound, Review, Settings, Upload } from "../screens/screens";
+
+/**
+ * Hash routing (#/review), not history routing: the backend serves frontend/dist as plain files with no
+ * catch-all, so a refresh on any screen asks for "/" and nothing under /api can ever be answered with the page.
+ * The sign-in fragment (#t=…) is taken out of the address by main.tsx before this router is created.
+ */
+export function createAppRouter() {
+  return createHashRouter([
+    {
+      path: "/",
+      Component: AppShell,
+      children: [
+        { index: true, Component: Dashboard },
+        { path: "upload", Component: Upload },
+        { path: "review", Component: Review },
+        { path: "catalog", Component: Catalog },
+        { path: "cleanup", Component: Cleanup },
+        { path: "activity", Component: Activity },
+        { path: "settings", Component: Settings },
+        { path: "*", Component: NotFound },
+      ],
+    },
+  ]);
+}

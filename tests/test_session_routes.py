@@ -252,6 +252,51 @@ def test_a_ticket_only_works_for_the_session_it_made(harness: Harness) -> None:
     assert second.get("/api/nope").status_code == 404
 
 
+# ---- GET /api/session/status --------------------------------------------------------------------------------------
+
+
+def test_status_is_204_with_a_valid_session_and_has_no_body(harness: Harness) -> None:
+    """SYS-03: the page asks "am I signed in?" on a refresh or in a second tab; reaching the route is the answer."""
+    response = harness.signed_in_client().get("/api/session/status")
+    assert response.status_code == 204
+    assert response.content == b""
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers  # it only reads the session, never renews or changes it
+
+
+def test_status_without_a_cookie_is_401_signed_out(harness: Harness) -> None:
+    """SYS-03: a normal session-protected route (not exempt), so the guard answers before it runs."""
+    response = harness.client().get("/api/session/status")
+    assert response.status_code == 401
+    assert response.json() == {"error": "signed_out"}
+
+
+def test_status_with_a_stale_or_made_up_cookie_is_401(harness: Harness) -> None:
+    """SYS-03: a cookie ended by a token reset, or one never issued, is signed out."""
+    client = harness.signed_in_client()
+    stale = {"Cookie": f"shelfsync_session={client.cookies.get('shelfsync_session')}"}
+    assert client.post("/api/session/reset-token", headers=WRITE_HEADERS).status_code == 204
+    assert harness.client().get("/api/session/status", headers=stale).status_code == 401
+    made_up = {"Cookie": "shelfsync_session=" + "A" * 43}
+    assert harness.client().get("/api/session/status", headers=made_up).status_code == 401
+
+
+def test_status_is_not_in_the_exemption_table() -> None:
+    """SYS-03: the route is protected like every other; the method-blind exemption on /api/session isn't widened."""
+    from shelfsync.api.session import SESSION_STATUS_PATH
+    from shelfsync.secure.middleware import SESSION_EXEMPT_PATHS
+
+    assert SESSION_STATUS_PATH == "/api/session/status"
+    assert SESSION_STATUS_PATH not in SESSION_EXEMPT_PATHS
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+def test_status_takes_get_only(harness: Harness, method: str) -> None:
+    """SYS-03: a write to it is the route's 405 (with a session and the CSRF headers), never a sign-in or a change."""
+    response = harness.signed_in_client().request(method, "/api/session/status", headers=WRITE_HEADERS)
+    assert response.status_code == 405
+
+
 # ---- POST /api/session/reset-token --------------------------------------------------------------------------------
 
 

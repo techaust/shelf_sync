@@ -1,0 +1,742 @@
+/* ShelfSync UI styles. Every colour, size, radius, shadow, duration and font is a token: the brand's
+   (generated/tokens.css, copied from brand/ by scripts/sync-tokens.mjs) or the ShelfSync layer
+   (generated/shelfsync-tokens.css). Nothing here types a colour. The shell follows the approved P3.4 mockup
+   (docs/05-design-system-appendix/mockup/css/app.css), rebuilt as React components. */
+
+@import "tailwindcss";
+@import "./generated/theme.css";
+/* Unlayered, after Tailwind: these win over Tailwind's theme layer, and hold the dark values. */
+@import "./generated/tokens.css";
+@import "./generated/shelfsync-tokens.css";
+@import "./fonts.css";
+
+@layer base {
+  html {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a {
+    color: var(--color-link);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+  a:hover {
+    color: var(--color-link-hover);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-selection);
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  /* ---------- shared ---------- */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-size: var(--app-text-code);
+    line-height: var(--app-text-code--line-height);
+    font-variant-numeric: tabular-nums;
+  }
+  .icon {
+    width: var(--space-4);
+    height: var(--space-4);
+    flex: none;
+  }
+  .icon-lg {
+    width: var(--space-6);
+    height: var(--space-6);
+    stroke-width: 1.75;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: var(--target-min);
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border-control);
+    background: var(--color-surface);
+    color: var(--color-btn-secondary-fg);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    white-space: nowrap;
+    text-decoration: none;
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+  .btn:hover {
+    border-color: var(--color-text);
+    background: var(--color-surface-alt);
+    color: var(--color-btn-secondary-fg);
+  }
+  .btn.is-primary {
+    background: var(--color-btn-primary-bg);
+    border-color: var(--color-btn-primary-bg);
+    color: var(--color-btn-primary-fg);
+  }
+  .btn.is-primary:hover {
+    background: var(--color-btn-primary-hover);
+    border-color: var(--color-btn-primary-hover);
+  }
+  .btn.is-ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+  .btn.is-ghost:hover {
+    background: var(--color-surface-alt);
+    border-color: transparent;
+  }
+  .btn.is-icon {
+    width: var(--target-min);
+    padding: 0;
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-1);
+    min-width: 0;
+  }
+  /* Dark rules, in the same two forms as tokens.css: the media query while no override is set (data-theme absent,
+     "Same as Windows"), and the Dark override. So a Windows switch restyles every screen live, signed out too. */
+  :root[data-theme="dark"] .card {
+    border-color: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .card {
+      border-color: transparent;
+    }
+  }
+
+  /* tooltips (Radix): drawn on the page's own surfaces, outside the app bar's dark tone */
+  .tip {
+    z-index: 40;
+    max-width: 22rem;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+    box-shadow: var(--shadow-2);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-weight: 400;
+  }
+
+  /* ---------- AppShell ---------- */
+  .app-shell {
+    --nav-w: var(--app-sidenav);
+    display: grid;
+    grid-template-columns: var(--nav-w) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    min-height: 100vh;
+  }
+  .app-shell[data-collapsed="true"] {
+    --nav-w: var(--app-sidenav-collapsed);
+  }
+  .app-shell.is-bare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: var(--space-2);
+    z-index: 50;
+    background: var(--color-surface);
+    color: var(--color-text);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  .skip-link:focus {
+    left: var(--space-2);
+  }
+
+  /* app bar: ink in both themes (05 section 2.2); its contents use the .tone-dark token scope */
+  .app-bar {
+    grid-column: 1 / -1;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    height: var(--app-bar-height);
+    padding: 0 var(--space-4) 0 var(--space-5);
+    background: var(--color-appbar-bg);
+    color: var(--color-appbar-fg);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .app-bar__logo-link {
+    display: inline-flex;
+    flex: none;
+    padding: var(--space-1);
+    margin-left: calc(-1 * var(--space-1));
+    border-radius: var(--radius-sm);
+  }
+  .app-bar__logo {
+    display: block;
+    height: var(--space-6);
+    width: auto;
+  }
+  .app-bar__health {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    margin-left: var(--space-6);
+  }
+  .app-bar__end {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+  }
+  .app-bar .btn {
+    background: transparent;
+    color: var(--color-appbar-fg);
+    border-color: var(--color-border-control);
+  }
+  .app-bar .btn:hover {
+    background: var(--color-surface-raised);
+    border-color: var(--color-appbar-fg);
+  }
+  .app-bar .btn[aria-expanded="true"] {
+    background: var(--color-surface-raised);
+  }
+  /* "Pause everything" before M5: visible, focusable for its tooltip, and plainly not available */
+  .app-bar .btn[aria-disabled="true"] {
+    cursor: not-allowed;
+    color: var(--color-appbar-muted);
+    border-style: dashed;
+  }
+  .app-bar .btn[aria-disabled="true"]:hover {
+    background: transparent;
+    border-color: var(--color-border-control);
+  }
+
+  /* store and S3 health (HealthChip) */
+  .health-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--space-8);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .health-chip .icon {
+    color: var(--color-success);
+  }
+  .health-chip__lat {
+    color: var(--color-appbar-muted);
+  }
+  .health-chip.is-down {
+    border-color: var(--color-danger);
+  }
+  .health-chip.is-down .icon {
+    color: var(--color-danger);
+  }
+  .health-chip.is-down .health-chip__lat {
+    color: var(--color-danger);
+    font-weight: 500;
+  }
+  /* nothing connected yet: a quiet read-out, not a control */
+  .health-chip.is-none {
+    border-style: dashed;
+    color: var(--color-appbar-muted);
+  }
+  .health-chip.is-none .icon {
+    color: var(--color-appbar-muted);
+  }
+
+  /* store identifier: shape + dot + code (05 section 2.3); the dot colours come from the store's data */
+  .store-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-weight: 600;
+    font-size: var(--text-sm);
+    color: var(--color-text);
+    letter-spacing: 0.02em;
+  }
+  .store-dot {
+    width: 0.625rem;
+    height: 0.625rem;
+    flex: none;
+    background: var(--dot-light);
+  }
+  .store-dot.is-circle {
+    border-radius: 50%;
+  }
+  .store-dot.is-square {
+    border-radius: 1px;
+  }
+  .store-dot.is-triangle {
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  }
+  .store-dot.is-diamond {
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  }
+  :root[data-theme="dark"] .store-dot,
+  .tone-dark .store-dot {
+    background: var(--dot-dark);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .store-dot {
+      background: var(--dot-dark);
+    }
+  }
+
+  /* theme menu (Radix DropdownMenu, non-modal) */
+  .menu {
+    z-index: 40;
+    min-width: 13rem;
+    padding: var(--space-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+    box-shadow: var(--shadow-2);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  .menu__label {
+    padding: var(--space-2) var(--space-3) var(--space-1);
+    color: var(--color-text-muted);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+    font-weight: 600;
+  }
+  .menu__item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) var(--space-4);
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--target-min);
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+  }
+  .menu__item .icon {
+    color: var(--color-text-muted);
+  }
+  /* An outline, not a box-shadow: forced colours drop shadows and backgrounds, but keep (and recolour) outlines */
+  .menu__item[data-highlighted] {
+    background: var(--color-surface-alt);
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .menu__item[data-state="checked"] {
+    font-weight: 600;
+  }
+  .menu__item[data-state="checked"] .icon {
+    color: var(--color-text-accent);
+  }
+  .menu__check {
+    display: inline-flex;
+    color: var(--color-text-accent);
+  }
+
+  /* side nav */
+  .side-nav {
+    position: sticky;
+    top: var(--app-bar-height);
+    align-self: start;
+    height: calc(100vh - var(--app-bar-height));
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
+    padding: var(--space-4) var(--space-3);
+    overflow: hidden auto;
+  }
+  .side-nav ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-1);
+  }
+  .nav-item {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--target-min);
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    text-decoration: none;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+  .nav-item .icon {
+    color: var(--color-text-muted);
+  }
+  .nav-item:hover {
+    background: var(--color-surface-alt);
+    color: var(--color-text);
+  }
+  /* the active-nav indicator: the one place the diagonal cut appears in the shell (05 section 4) */
+  .nav-item[aria-current="page"] {
+    font-weight: 650;
+  }
+  .nav-item[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--color-selection);
+    border-radius: var(--radius-md) 0 var(--radius-md) var(--radius-md);
+    clip-path: polygon(0 0, calc(100% - var(--app-cut)) 0, 100% var(--app-cut), 100% 100%, 0 100%);
+  }
+  .nav-item[aria-current="page"]:hover {
+    background: transparent;
+  }
+  .nav-item[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: var(--space-2);
+    bottom: var(--space-2);
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--color-text-accent);
+  }
+  .nav-item[aria-current="page"] .icon {
+    color: var(--color-text-accent);
+  }
+  .nav-item__label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-count {
+    min-width: var(--space-6);
+    height: var(--space-5);
+    padding: 0 0.375rem;
+    border-radius: var(--radius-full);
+    background: var(--color-fill-subtle);
+    border: 1px solid var(--color-border);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    line-height: 1.125rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .side-nav__sep {
+    height: 1px;
+    background: var(--color-border);
+    margin: var(--space-3);
+  }
+  .side-nav__foot {
+    margin-top: auto;
+    padding-top: var(--space-4);
+    display: grid;
+    gap: var(--space-2);
+  }
+  .collapse-btn {
+    justify-content: flex-start;
+    width: 100%;
+    padding: 0 var(--space-3);
+    gap: var(--space-3);
+    font-weight: 500;
+    text-align: start;
+  }
+  [data-collapsed="true"] .side-nav {
+    padding-left: var(--space-2);
+    padding-right: var(--space-2);
+  }
+  [data-collapsed="true"] .nav-item {
+    justify-content: center;
+    padding: 0;
+  }
+  /* collapsed: the label stays for screen readers (and shows as a tooltip); only its box goes */
+  [data-collapsed="true"] .nav-item__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  [data-collapsed="true"] .nav-count {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: var(--space-5);
+    padding: 0 var(--space-1);
+  }
+  [data-collapsed="true"] .collapse-btn {
+    justify-content: center;
+    padding: 0;
+  }
+  [data-collapsed="true"] .side-nav__sep {
+    margin-left: var(--space-2);
+    margin-right: var(--space-2);
+  }
+
+  /* status strip (05 section 5: one line of text-sm) */
+  .app-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-6);
+    min-height: var(--space-10);
+    padding: var(--space-2) var(--space-8);
+    background: var(--color-surface-alt);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .status-strip__item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .status-strip__item strong {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+  button.status-strip__item {
+    min-height: var(--space-8);
+    margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2));
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: help;
+  }
+  button.status-strip__item:hover {
+    background: var(--color-fill-subtle);
+  }
+  .ramp-meter {
+    position: relative;
+    width: 4rem;
+    height: 0.375rem;
+    border-radius: var(--radius-full);
+    background: var(--color-border);
+    overflow: hidden;
+  }
+  .ramp-meter > span {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--ramp, 0%);
+    background: var(--color-text-accent);
+    border-radius: inherit;
+  }
+
+  /* page */
+  .page {
+    width: 100%;
+    max-width: 90rem;
+    padding: var(--space-8) var(--space-8) var(--space-16);
+  }
+  .page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-6);
+    margin-bottom: var(--space-8);
+  }
+  .page-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-stretch: var(--font-display--stretch);
+    font-size: var(--app-text-title);
+    line-height: var(--app-text-title--line-height);
+    font-weight: var(--app-text-title--font-weight);
+    letter-spacing: -0.015em;
+  }
+  .page-title:focus {
+    outline: none;
+  }
+  .page-title:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 4px;
+    border-radius: var(--radius-sm);
+  }
+  .page-sub {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  main:focus {
+    outline: none;
+  }
+
+  /* empty state (05 section 6: what will appear here + the next action) */
+  .empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-3);
+    padding: var(--space-16) var(--space-8);
+    text-align: center;
+  }
+  .empty__icon {
+    color: var(--color-text-muted);
+  }
+  .empty__text {
+    margin: 0;
+    max-width: 64ch;
+    color: var(--color-text);
+    text-wrap: balance;
+  }
+  .empty__sub {
+    margin: 0;
+    max-width: 64ch;
+    text-wrap: balance;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .empty .btn {
+    margin-top: var(--space-1);
+  }
+
+  /* signed out and other states before the shell (a centred panel under a bare app bar) */
+  .gate {
+    display: grid;
+    place-items: start center;
+    padding: var(--space-24) var(--space-6) var(--space-16);
+  }
+  .gate__panel {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-3);
+    width: min(36rem, 100%);
+    padding: var(--space-8);
+  }
+  .gate__icon {
+    display: grid;
+    place-items: center;
+    width: var(--space-12);
+    height: var(--space-12);
+    margin-bottom: var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-alt);
+    color: var(--color-text-accent);
+  }
+  .gate__title {
+    margin: 0;
+    font-size: var(--text-h4);
+    line-height: var(--text-h4--line-height);
+    font-weight: var(--text-h4--font-weight);
+  }
+  .gate__title:focus {
+    outline: none;
+  }
+  .gate__text {
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+  .gate__panel .btn {
+    margin-top: var(--space-2);
+  }
+}
+
+/* 1024-1279 px: the nav collapses to icons (05 section 6); content and strip tighten */
+@media (max-width: 79.99rem) {
+  .page,
+  .status-strip {
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+  }
+  .status-strip {
+    gap: var(--space-1) var(--space-5);
+  }
+}
+@media (max-width: 71.99rem) {
+  .ramp-meter,
+  .health-chip__lat {
+    display: none;
+  }
+}
+
+/* Reduced motion (05 section 4): tokens.css already sets every duration token to 0 ms. This unlayered rule also
+   beats every layered rule (components, utilities), so nothing moves, whatever it was given. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .nav-item[aria-current="page"] {
+    outline: 2px solid CanvasText;
+  }
+  /* the theme menu's highlighted item: the system highlight colours, so it reads like any Windows menu */
+  .menu__item[data-highlighted] {
+    outline: 2px solid Highlight;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .menu__item[data-highlighted] .icon,
+  .menu__item[data-highlighted] .menu__check {
+    color: HighlightText;
+  }
+  .store-dot {
+    forced-color-adjust: none;
+  }
+  /* the quiet "nothing connected" chip keeps its muted app-bar colour otherwise (axe: 2.28:1 on Canvas) */
+  .health-chip.is-none,
+  .health-chip.is-none .icon {
+    color: CanvasText;
+  }
+}

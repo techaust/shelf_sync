@@ -1,0 +1,225 @@
+/* Design tokens as CSS custom properties. Generated from brand/tokens.json by `npm run build` in brand/. Do not edit. */
+
+:root {
+  color-scheme: light;
+  --color-ink-950: #0d1613;
+  --color-ink-900: #14231f;
+  --color-ink-800: #15211d;
+  --color-ink-750: #111c18;
+  --color-ink-700: #1b2924;
+  --color-ink-600: #26352f;
+  --color-ink-500: #61796f;
+  --color-ink-400: #485752;
+  --color-ink-300: #9db0a8;
+  --color-verdigris-900: #1f4a40;
+  --color-verdigris-800: #175548;
+  --color-verdigris-700: #1e6b5c;
+  --color-verdigris-500: #2e8b77;
+  --color-verdigris-300: #6cc4ae;
+  --color-verdigris-200: #8ad4c1;
+  --color-verdigris-100: #d7ece5;
+  --color-stone-50: #f6f7f5;
+  --color-stone-100: #ecefeb;
+  --color-stone-200: #e1e6e2;
+  --color-stone-300: #d3dbd6;
+  --color-stone-500: #75867f;
+  --color-mist: #e4ebe7;
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-bg: #f6f7f5;
+  --color-surface: #ffffff;
+  --color-surface-alt: #ecefeb;
+  --color-surface-raised: #ffffff;
+  --color-fill-subtle: #e1e6e2;
+  --color-text: #14231f;
+  --color-text-muted: #485752;
+  --color-text-accent: #1e6b5c;
+  --color-link: #14231f;
+  --color-link-hover: #1e6b5c;
+  --color-border: #d3dbd6;
+  --color-border-control: #75867f;
+  --color-accent-decor: #2e8b77;
+  --color-btn-primary-bg: #1e6b5c;
+  --color-btn-primary-fg: #ffffff;
+  --color-btn-primary-hover: #175548;
+  --color-btn-secondary-fg: #14231f;
+  --color-focus: #1e6b5c;
+  --color-selection: #d7ece5;
+  --color-success: #44700e;
+  --color-warning: #8f5b00;
+  --color-danger: #b3261e;
+  --color-info: #2b5797;
+  --elevation-1: 0 1px 2px rgb(20 35 31 / 0.06), 0 1px 1px rgb(20 35 31 / 0.04);
+  --elevation-2: 0 8px 24px rgb(20 35 31 / 0.08), 0 2px 6px rgb(20 35 31 / 0.05);
+  --shadow-1: var(--elevation-1);
+  --shadow-2: var(--elevation-2);
+  --font-display: "Archivo", "Archivo Expanded Fallback", "Arial", "Helvetica", sans-serif;
+  --font-sans: "Archivo", "Archivo Fallback", "Arial", "Helvetica", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --font-display--stretch: 116%;
+  --font-sans--stretch: 100%;
+  --text-display-1: clamp(2.75rem, 2.0652rem + 3.0435vw, 4.5rem);
+  --text-display-1--line-height: 1.05;
+  --text-display-1--font-weight: 560;
+  --text-display-2: clamp(2.25rem, 1.7609rem + 2.1739vw, 3.5rem);
+  --text-display-2--line-height: 1.1;
+  --text-display-2--font-weight: 560;
+  --text-h2: clamp(1.75rem, 1.4565rem + 1.3043vw, 2.5rem);
+  --text-h2--line-height: 1.15;
+  --text-h2--font-weight: 560;
+  --text-h3: 1.5rem;
+  --text-h3--line-height: 1.25;
+  --text-h3--font-weight: 600;
+  --text-h4: 1.25rem;
+  --text-h4--line-height: 1.3;
+  --text-h4--font-weight: 600;
+  --text-lede: clamp(1.125rem, 1.0272rem + 0.4348vw, 1.375rem);
+  --text-lede--line-height: 1.5;
+  --text-lede--font-weight: 400;
+  --text-body-lg: 1.125rem;
+  --text-body-lg--line-height: 1.65;
+  --text-body-lg--font-weight: 400;
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body--font-weight: 400;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.45;
+  --text-sm--font-weight: 400;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--font-weight: 500;
+  --text-caption--letter-spacing: 0.08em;
+  --text-price-lg: clamp(1.75rem, 1.5543rem + 0.8696vw, 2.25rem);
+  --text-price-lg--line-height: 1.1;
+  --text-price-lg--font-weight: 600;
+  --text-code: 0.9375rem;
+  --text-code--line-height: 1.6;
+  --text-code--font-weight: 400;
+  --breakpoint-sm: 30rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+  --breakpoint-2xl: 96rem;
+  --container-page: 1200px;
+  --container-wide: 1360px;
+  --container-prose: 68ch;
+  --container-lede: 60ch;
+  --container-heading: 22ch;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --space-32: 8rem;
+  --section-y: 4rem;
+  --block-gap: 2rem;
+  --stack: 1rem;
+  --gutter: 1rem;
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --app-sidenav: 15.5rem;
+  --app-sidenav-collapsed: 4rem;
+  --target-min: 2.75rem;
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --section-y: 5rem;
+    --block-gap: 2.5rem;
+    --stack: 1rem;
+    --gutter: 1.5rem;
+  }
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --section-y: 7rem;
+    --block-gap: 3rem;
+    --stack: 1.25rem;
+    --gutter: 2rem;
+  }
+}
+
+/* Dark theme: follows the OS unless the page sets data-theme. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #0d1613;
+    --color-surface: #15211d;
+    --color-surface-alt: #111c18;
+    --color-surface-raised: #1b2924;
+    --color-fill-subtle: #111c18;
+    --color-text: #e4ebe7;
+    --color-text-muted: #9db0a8;
+    --color-text-accent: #6cc4ae;
+    --color-link: #e4ebe7;
+    --color-link-hover: #6cc4ae;
+    --color-border: #26352f;
+    --color-border-control: #61796f;
+    --color-accent-decor: #6cc4ae;
+    --color-btn-primary-bg: #6cc4ae;
+    --color-btn-primary-fg: #0d1613;
+    --color-btn-primary-hover: #8ad4c1;
+    --color-btn-secondary-fg: #e4ebe7;
+    --color-focus: #6cc4ae;
+    --color-selection: #1f4a40;
+    --color-success: #a9d46b;
+    --color-warning: #e9b44c;
+    --color-danger: #ff8a80;
+    --color-info: #8db4ff;
+    --elevation-1: 0 0 0 1px #26352F;
+    --elevation-2: 0 0 0 1px #26352F;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0d1613;
+  --color-surface: #15211d;
+  --color-surface-alt: #111c18;
+  --color-surface-raised: #1b2924;
+  --color-fill-subtle: #111c18;
+  --color-text: #e4ebe7;
+  --color-text-muted: #9db0a8;
+  --color-text-accent: #6cc4ae;
+  --color-link: #e4ebe7;
+  --color-link-hover: #6cc4ae;
+  --color-border: #26352f;
+  --color-border-control: #61796f;
+  --color-accent-decor: #6cc4ae;
+  --color-btn-primary-bg: #6cc4ae;
+  --color-btn-primary-fg: #0d1613;
+  --color-btn-primary-hover: #8ad4c1;
+  --color-btn-secondary-fg: #e4ebe7;
+  --color-focus: #6cc4ae;
+  --color-selection: #1f4a40;
+  --color-success: #a9d46b;
+  --color-warning: #e9b44c;
+  --color-danger: #ff8a80;
+  --color-info: #8db4ff;
+  --elevation-1: 0 0 0 1px #26352F;
+  --elevation-2: 0 0 0 1px #26352F;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}

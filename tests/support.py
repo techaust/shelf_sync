@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -118,8 +119,10 @@ def asgi_http(
     return RawResponse(start["status"], list(start["headers"]), payload)
 
 
-def make_harness(port: int = PORT, store: MemorySecretStore | None = None) -> Harness:
+def make_harness(port: int = PORT, store: MemorySecretStore | None = None, ui_dir: Path | None = None) -> Harness:
+    """API only by default (ui_dir=None), so the result never depends on whether frontend/dist was built on this
+    PC; the static-mount tests pass a folder of their own."""
     secret_store = store if store is not None else MemorySecretStore()
     clock = FakeClock()
-    app = create_app(port, InstallToken(secret_store), clock)
+    app = create_app(port, InstallToken(secret_store), clock, ui_dir=ui_dir)
     return Harness(app=app, store=secret_store, clock=clock, port=port)
