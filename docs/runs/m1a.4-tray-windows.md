@@ -243,6 +243,7 @@ _(lead, 2026-10-27)_
 - **Pillow 13.0.0** (owner, security exception, [11](../11-decisions.md)): `exclude-newer-package` gets `pillow = 2026-10-17`; only Pillow changed in the lock; the V29 pin test updated. pip-audit clean (as CI runs it, with hashes).
 - **Rebased onto `main`** after #7 (M1a.2, squashed) and #8 (M1a.3) with `--onto main 6dca164`. The two brief-only commits came out as already on `main` (#6); later conflicts in this file took the branch's text, and §1 matches `main`.
 - **M1a.3 + M1a.4 together:** `create_app()` now requires `ui_dir` (M1a.3). `server.py` already passes `UI_DIR`; two test helpers here (`test_launcher.py`, `test_second_launch.py`) didn't, giving 9 failures and 8 errors. Fixed with `ui_dir=None` like the other API-only tests. After that: 670 passed, Windows checks 27 passed, ruff, format, mypy, bandit and pip-audit clean.
+- **PR #9, first CI run:** Linux failed `test_the_command_is_the_quoted_pythonw_path_and_the_launcher_module`: `launcher_command` used `Path`, which on Linux doesn't split a backslash path, so the folder was lost. Now `PureWindowsPath` (the Run value is always a Windows path); same result on Windows. 670 passed, Windows checks 27 passed, mypy clean.
 - The installed launcher now serves the built UI from `frontend/dist/` when it exists (M1b moves `UI_DIR` to `paths.py`, already a carry-over).
 
 ## 7. Handover

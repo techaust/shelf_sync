@@ -8,7 +8,7 @@ Turning the setting off removes the value. It is written only by an installed co
 import logging
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Protocol
 
 _log = logging.getLogger("shelfsync.autostart")
@@ -114,7 +114,7 @@ def is_installed_copy(executable: str | None = None) -> bool:
 
 def launcher_command(executable: str | None = None) -> str:
     """`"<...>\\pythonw.exe" -m shelfsync.launcher`, the path quoted, from the running interpreter's own folder."""
-    folder = Path(executable or sys.executable).parent
+    folder = PureWindowsPath(executable or sys.executable).parent  # a Windows path on every platform (the Run value)
     return f'"{folder / "pythonw.exe"}" -m shelfsync.launcher'
 
 
