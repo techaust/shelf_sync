@@ -36,7 +36,13 @@ export interface DialogBehaviour {
 
 export function dialogBehaviour(
   dialog: DialogElement,
-  options: { onCancel: () => void; isBusy: () => boolean; fallback?: () => Focusable | null },
+  options: {
+    onCancel: () => void;
+    isBusy: () => boolean;
+    fallback?: () => Focusable | null;
+    /** Where the focus goes when the dialog opens again mid-send (the confirm button, busy). */
+    busyFocus?: () => Focusable | null;
+  },
 ): DialogBehaviour {
   let opener: Focusable | null = null;
   let wanted = false; // what React wants: open between open() and close()
@@ -49,6 +55,7 @@ export function dialogBehaviour(
     if (!wanted || dialog.open) return;
     if (options.isBusy()) {
       dialog.showModal(); // closed by the browser while the action is sent: it stays
+      options.busyFocus?.()?.focus(); // back on the busy confirm button (re-review low 7)
       return;
     }
     wanted = false;

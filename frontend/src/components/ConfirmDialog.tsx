@@ -52,6 +52,7 @@ export function ConfirmDialog({
       onCancel: () => latest.current.onCancel(),
       isBusy: () => latest.current.busy,
       fallback: () => document.querySelector<HTMLElement>("[data-nav-focus], h1"),
+      busyFocus: () => confirm.current,
     });
     behaviour.current = made;
     return () => {

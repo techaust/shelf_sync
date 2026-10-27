@@ -185,7 +185,8 @@ describe("describeUpdates: the states", () => {
     expect(tomorrow.notices[0]?.title).toContain("expires in 1 day, on");
     const past = view({ token: { set: true, expires_at: "2026-10-27T00:00:00Z", notice: true } });
     expect(past.notices[0]?.title).toBe(
-      "Your GitHub token expires on [2026-10-27T00:00:00Z]. Make a new one before then.",
+      // lead wording (re-review low 4)
+      "Your GitHub token expired on [2026-10-27T00:00:00Z]. Make a new one, or remove it to check without one.",
     );
   });
 

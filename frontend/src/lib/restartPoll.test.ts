@@ -90,6 +90,29 @@ describe("pollForRestart", () => {
     expect(stillSwitching).toHaveBeenCalledTimes(3);
   });
 
+  it("the target version answering with this tab's sign-in (the new tab signed in; shared cookie): running", async () => {
+    const health = healthOf(["gone", "0.3.0"]);
+    const stillSwitching = scripted<boolean>([false]);
+    const { onBack } = start({ health, session: scripted<SessionCheck>(["signed_in"]), stillSwitching });
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS * 2);
+    expect(onBack).toHaveBeenCalledWith("running");
+    expect(stillSwitching).not.toHaveBeenCalled();
+  });
+
+  it("mustSeeGone: the old copy, not busy, counts only after ShelfSync was seen gone once", async () => {
+    const health = healthOf(["0.2.0", "0.2.0", "gone", "0.2.0"]);
+    const { onBack } = start({
+      health,
+      session: scripted<SessionCheck>(["signed_in"]),
+      stillSwitching: scripted<boolean>([false]),
+      mustSeeGone: true,
+    });
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS * 3);
+    expect(onBack).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    expect(onBack).toHaveBeenCalledWith("reload");
+  });
+
   it("an unknown session answer, or a stranger on the port, counts as no answer", async () => {
     let calls = 0;
     const health = vi.fn(async () => {

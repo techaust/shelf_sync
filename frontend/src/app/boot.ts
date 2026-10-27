@@ -26,15 +26,23 @@ export interface Booted {
   started: Promise<SessionState>;
 }
 
-export function boot(win: BootWindow, fetchImpl?: typeof fetch): Booted {
+/**
+ * `claimSignedOut`: asked first on each 401 "signed_out"; true means it took it (while ShelfSync restarts after an
+ * Install or Roll back, the restart panel says a new tab opened, instead of the lock panel: switchStore).
+ */
+export function boot(win: BootWindow, fetchImpl?: typeof fetch, claimSignedOut?: () => boolean): Booted {
   // 1. The sign-in ticket leaves the address bar before the page makes any request.
   const ticket = takeTicket(win.location, win.history);
 
-  // 2. One API client and one session store for the tab; a 401 "signed_out" anywhere shows the signed-out state.
+  // 2. One API client and one session store for the tab; a 401 "signed_out" anywhere shows the signed-out state,
+  //    unless a restart claims it.
   const session = createSessionStore();
   const api = createApiClient({
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
-    onSignedOut: () => session.set({ kind: "signed_out" }),
+    onSignedOut: () => {
+      if (claimSignedOut?.()) return;
+      session.set({ kind: "signed_out" });
+    },
   });
 
   // 3. Sign in with the ticket (one POST), or ask whether the existing session is still good. The ticket never

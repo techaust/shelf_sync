@@ -4,8 +4,12 @@
 // ShelfSync answers, GET /api/session/status says which copy it is:
 // - 401: a new copy (any version, also a quick restart that brought the old version back) → "new_tab": this tab
 //   stops and says a new signed-in tab has opened;
-// - 204: the copy this tab signed in to is still running. Once it no longer reports a switch under way (the switch
-//   changed nothing), → "reload", and the page shows the result. While it does, the asking goes on.
+// - 204 with the target version: the new copy knows this tab (the new tab signed in, and the cookie is shared) →
+//   "running": the page says so, and this tab can be closed or kept (re-review low 1);
+// - 204 with the old version: the copy this tab signed in to is still running. Once it no longer reports a switch
+//   under way (the switch changed nothing), → "reload", and the page shows the result. With `mustSeeGone` (the
+//   request is still unanswered: the 3-minute fallback), the old copy counts only after it was seen gone once, since
+//   the switch may not have started yet (re-review low 2).
 // After `lateAfterMs` the page says so once (onLate, its own timer) and keeps asking. Timers come from `clock`, so the
 // tests use fake ones.
 
@@ -21,7 +25,7 @@ export interface Clock {
   clearTimeout(handle: unknown): void;
 }
 
-export type RestartOutcome = "reload" | "new_tab";
+export type RestartOutcome = "reload" | "new_tab" | "running";
 
 export interface RestartPollOptions {
   target: string;
@@ -32,6 +36,8 @@ export interface RestartPollOptions {
   stillSwitching: (signal: AbortSignal) => Promise<boolean>;
   onBack: (outcome: RestartOutcome) => void;
   onLate?: () => void;
+  /** Don't take the old copy's answer as "nothing changed" until ShelfSync was seen gone once. */
+  mustSeeGone?: boolean;
   clock?: Clock;
   everyMs?: number;
   lateAfterMs?: number;
@@ -53,6 +59,7 @@ export function pollForRestart(options: RestartPollOptions): () => void {
   const every = options.everyMs ?? POLL_EVERY_MS;
   const timeout = options.timeoutMs ?? ASK_TIMEOUT_MS;
   let stopped = false;
+  let seenGone = false;
   let next: unknown = null;
   const late = clock.setTimeout(() => {
     if (!stopped) options.onLate?.();
@@ -91,12 +98,14 @@ export function pollForRestart(options: RestartPollOptions): () => void {
       if (stopped) return;
       if (session === "signed_out") return finish("new_tab");
       if (session === "signed_in") {
-        if (answer.version === options.target) return finish("reload");
-        const switching = await ask(options.stillSwitching);
-        if (stopped) return;
-        if (switching === false) return finish("reload");
+        if (answer.version === options.target) return finish("running");
+        if (!options.mustSeeGone || seenGone) {
+          const switching = await ask(options.stillSwitching);
+          if (stopped) return;
+          if (switching === false) return finish("reload");
+        }
       }
-    }
+    } else seenGone = true;
     next = clock.setTimeout(tick, every);
   }
 

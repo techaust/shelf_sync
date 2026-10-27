@@ -60,11 +60,13 @@ export const U = {
   installTitle: (v: string) => `Install ShelfSync ${v}?`,
   preparing: (v: string) => `Checking the files of ${v} before it's installed.`,
   restartingTitle: "ShelfSync is restarting", // the brief's words (m1b.4 section 1)
-  restartingText: "When ShelfSync is back, it opens in a new tab.",
+  restartingText: "When ShelfSync is back, it opens in a new tab, or this one reloads.", // lead (re-review low 3)
   restartingLate: "ShelfSync hasn't answered yet. If it doesn't open by itself, open it from the Start menu.",
   // proposed (m1b.4 review item 1): a new copy answers, so this tab's sign-in is gone and the switcher opened a new one
   backTitle: "ShelfSync is back",
   backText: "It opened in a new tab, signed in. You can close this one.",
+  // lead (re-review low 1): the new version answers and already knows this tab (the new tab signed in)
+  backRunning: (v: string) => `ShelfSync ${v} is running. You can close this tab, or keep using it.`,
   // proposed (m1b.4): GET /api/updates got no answer, or a refusal
   loadFailed: "ShelfSync didn't answer, so the update status can't be shown.",
   loadRefused: (status: number) => `ShelfSync refused to show the update status (HTTP ${status}).`,
@@ -89,11 +91,13 @@ export const T = {
   savedDone: "Token saved.",
   removedDone: "Token removed.",
   refused: "That isn't a fine-grained GitHub token (it starts with github_pat_).",
-  /** 13 §3, with the mockup's "in N days" (review item 20); the date only. */
-  expires: (date: string, days: number | null) =>
-    days !== null && days >= 1
-      ? `Your GitHub token expires in ${days} ${days === 1 ? "day" : "days"}, on ${date}. Make a new one before then.`
-      : `Your GitHub token expires on ${date}. Make a new one before then.`,
+  /** 13 §3, with the mockup's "in N days" (review item 20); the date only. Expired (days ≤ 0): lead wording
+   *  (re-review low 4). */
+  expires: (date: string, days: number | null) => {
+    if (days === null) return `Your GitHub token expires on ${date}. Make a new one before then.`;
+    if (days <= 0) return `Your GitHub token expired on ${date}. Make a new one, or remove it to check without one.`;
+    return `Your GitHub token expires in ${days} ${days === 1 ? "day" : "days"}, on ${date}. Make a new one before then.`;
+  },
   expiresOn: (date: string) => `Expires on ${date}.`, // proposed (m1b.4): the saved token's expiry, when GitHub said
   // proposed (m1b.4; lead wording, review item 16: no answer is never stated as an outcome)
   saveFailed: "ShelfSync didn't answer, so the token may not have been saved. Reload this page to check.",

@@ -94,6 +94,14 @@ export function SecretField({
     event.preventDefault();
     const field = input.current;
     if (pending || locked || !field) return;
+    // the shape first: a refused value never shows the busy Save, even for a moment (re-review low 7)
+    const refused = check(field.value);
+    if (refused) {
+      setError(refused);
+      setDone("");
+      field.focus();
+      return;
+    }
     setPending("save");
     setError(null);
     setDone("");

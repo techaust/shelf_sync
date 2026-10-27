@@ -13,12 +13,13 @@ import {
   saveGithubToken,
   sessionCheck,
   UPDATES_PATH,
+  type Updates,
 } from "../../api/settings";
 import type { SettingsWriter } from "../../api/settingsWriter";
 import type { AppResult } from "./AppView";
 import { savedLine } from "./forms";
-import type { PollAnswers, SwitchLine } from "./switchStore";
-import { A, T, updatesActionError, updatesActionTone } from "./wording";
+import { actionLine, type PollAnswers, type SwitchLine } from "./switchStore";
+import { A, T, updatesActionError } from "./wording";
 
 /** What the restart poll asks, through the one API client. */
 export function pollAnswers(api: ApiClient): PollAnswers {
@@ -28,7 +29,8 @@ export function pollAnswers(api: ApiClient): PollAnswers {
     stillSwitching: async (signal) => {
       const response = await api.request("GET", UPDATES_PATH, undefined, signal);
       if (!response.ok) throw new Error("no status");
-      return ((await response.json()) as { busy?: unknown }).busy === true;
+      const body = (await response.json()) as Updates; // the schema's type (re-review low 6)
+      return body.busy === true;
     },
   };
 }
@@ -39,9 +41,7 @@ export async function checkNow(api: ApiClient): Promise<SwitchLine | null> {
     await checkForUpdates(api);
     return null;
   } catch (failure) {
-    const code = failure instanceof ApiError ? failure.code : null;
-    const status = failure instanceof ApiError ? failure.status : null;
-    return { tone: updatesActionTone(code), text: updatesActionError(code, status) };
+    return actionLine(failure);
   }
 }
 

@@ -16,6 +16,8 @@
   html {
     background: var(--color-bg);
     color: var(--color-text);
+    /* the scrollbar's room is kept even when a modal dialog hides it, so the page doesn't shift (re-review low 7) */
+    scrollbar-gutter: stable;
   }
   body {
     margin: 0;

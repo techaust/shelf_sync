@@ -37,7 +37,7 @@ export function UpdatesPage() {
   });
   const refresh = useCallback(() => queryClient.invalidateQueries({ queryKey: UPDATES_QUERY_KEY }), [queryClient]);
 
-  if (phase.kind === "restarting") return <Restarting late={phase.late} back={phase.back} />;
+  if (phase.kind === "restarting") return <Restarting version={phase.version} late={phase.late} back={phase.back} />;
   if (query.isPending) return <UpdatesLoading />;
   // The failure card only when there is nothing to show; a failed refresh keeps the last answer (review item 9)
   if (query.isError && !query.data) {

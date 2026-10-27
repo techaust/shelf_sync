@@ -13,7 +13,15 @@ import { Switch } from "../../components/Switch";
 import { AppView } from "./AppView";
 import { formFrom } from "./forms";
 import { SETTINGS_PAGES, Settings } from "./Settings";
-import { Restarting, RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
+import {
+  Restarting,
+  RestartScreen,
+  RollBackBody,
+  shellTakesOver,
+  UpdatesFailed,
+  UpdatesLoading,
+  UpdatesView,
+} from "./UpdatesView";
 import { type DateFormat, describeUpdates, type Phase } from "./updatesModel";
 import { A, LATER, T, U } from "./wording";
 
@@ -151,20 +159,42 @@ describe("Settings › Updates", () => {
   });
 
   it("restarting: the panel, the line and, when late, the Start menu line", () => {
-    const html = decode(renderToStaticMarkup(h(Restarting, { late: false, back: false })));
+    const html = decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: false, back: null })));
     expect(html).toContain("ShelfSync is restarting");
-    expect(html).toContain('<p class="muted num">When ShelfSync is back, it opens in a new tab.</p>');
+    expect(html).toContain(
+      '<p class="muted num">When ShelfSync is back, it opens in a new tab, or this one reloads.</p>',
+    );
     expect(html).toContain("progress is-indeterminate");
     expect(html).not.toContain(U.restartingLate);
-    expect(decode(renderToStaticMarkup(h(Restarting, { late: true, back: false })))).toContain(U.restartingLate);
+    expect(decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: true, back: null })))).toContain(
+      U.restartingLate,
+    );
   });
 
   it("back in a new tab: this one can be closed; the progress stops", () => {
-    const html = decode(renderToStaticMarkup(h(Restarting, { late: true, back: true })));
+    const html = decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: true, back: "new_tab" })));
     expect(html).toContain("ShelfSync is back");
     expect(html).toContain("It opened in a new tab, signed in. You can close this one.");
     expect(html).not.toContain("progress");
     expect(html).not.toContain(U.restartingLate);
+  });
+
+  it("the new version knows this tab: it is running, and this tab can be closed or kept (re-review low 1)", () => {
+    const html = decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: false, back: "running" })));
+    expect(html).toContain("ShelfSync is back");
+    expect(html).toContain("ShelfSync 0.3.0 is running. You can close this tab, or keep using it.");
+  });
+
+  it("the shell shows the restart panel wherever the owner is, except on Updates, and not once it runs", () => {
+    const restarting = { kind: "restarting" as const, version: "0.3.0", late: false };
+    expect(shellTakesOver({ ...restarting, back: null }, "/")).toBe(true);
+    expect(shellTakesOver({ ...restarting, back: "new_tab" }, "/settings/app")).toBe(true);
+    expect(shellTakesOver({ ...restarting, back: "new_tab" }, "/settings/updates")).toBe(false); // Updates shows it
+    expect(shellTakesOver({ ...restarting, back: "running" }, "/")).toBe(false);
+    expect(shellTakesOver({ kind: "idle" }, "/")).toBe(false);
+    const screen = decode(renderToStaticMarkup(h(RestartScreen, { phase: { ...restarting, back: "new_tab" } })));
+    expect(screen).toContain("It opened in a new tab, signed in. You can close this one.");
+    expect(screen).not.toContain("This tab isn't signed in.");
   });
 
   it("the roll back dialog body: the restart line, then 13 §6's words in tabular figures", () => {

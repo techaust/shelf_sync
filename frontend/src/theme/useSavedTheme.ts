@@ -9,6 +9,7 @@ import {
 } from "../api/settings";
 import { settingsWriter } from "../api/settingsWriter";
 import { useServices } from "../app/services";
+import { isRestarting, useSwitchPhase } from "../screens/settings/switchStore";
 import type { ThemePreference } from "./theme";
 import { type ThemeStore, themeStore, useTheme } from "./useTheme";
 
@@ -57,8 +58,10 @@ export function useSavedTheme(): { preference: ThemePreference; choose: (next: T
   const { preference, setPreference } = useTheme();
   const choose = useCallback(
     async (next: ThemePreference) => {
-      const end = themeSync.begin();
       setPreference(next);
+      // While ShelfSync restarts, nothing is sent: this tab's sign-in may be gone (re-review, medium)
+      if (isRestarting()) return false;
+      const end = themeSync.begin();
       try {
         const saved = await settingsWriter(api).saveTheme(next);
         end();
@@ -80,7 +83,12 @@ export function useSavedTheme(): { preference: ThemePreference; choose: (next: T
  */
 export function useThemeFromServer(): void {
   const { api } = useServices();
-  const { data } = useQuery({ queryKey: APP_SETTINGS_QUERY_KEY, queryFn: () => getAppSettings(api) });
+  const restarting = useSwitchPhase().kind === "restarting";
+  const { data } = useQuery({
+    queryKey: APP_SETTINGS_QUERY_KEY,
+    queryFn: () => getAppSettings(api),
+    enabled: !restarting, // paused while ShelfSync restarts (re-review, medium)
+  });
   const saved = data?.theme;
   useEffect(() => {
     if (saved) themeSync.fromServer(saved);

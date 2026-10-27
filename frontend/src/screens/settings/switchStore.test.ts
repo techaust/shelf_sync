@@ -33,7 +33,7 @@ describe("the switch store", () => {
     expect(store.get().phase).toEqual({ kind: "preparing", version: "0.3.0" });
     accept();
     await expect(running).resolves.toBe("restarting");
-    expect(store.get().phase).toEqual({ kind: "restarting", version: "0.3.0", late: false, back: false });
+    expect(store.get().phase).toEqual({ kind: "restarting", version: "0.3.0", late: false, back: null });
     store.reset();
   });
 
@@ -58,6 +58,56 @@ describe("the switch store", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(store.get().phase.kind).toBe("restarting");
     void running;
+    store.reset();
+  });
+
+  it("the 3-minute fallback waits for ShelfSync to go before the old copy's answer means 'nothing changed'", async () => {
+    const reload = vi.fn();
+    const store = createSwitchStore({ reload, clock });
+    let health: "old" | "gone" = "old";
+    const answers: PollAnswers = {
+      health: async () => {
+        if (health === "gone") throw new Error("no answer");
+        return { app: "shelfsync", version: "0.2.0" };
+      },
+      session: async () => "signed_in",
+      stillSwitching: async () => false, // the switch hasn't started yet: not busy
+    };
+    void store.run("preparing", "0.3.0", () => new Promise(() => undefined), answers);
+    await vi.advanceTimersByTimeAsync(SEND_WAIT_MS + POLL_EVERY_MS * 5);
+    expect(reload).not.toHaveBeenCalled(); // the old copy, not busy, but never seen gone: keep waiting
+    health = "gone";
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    health = "old";
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    expect(reload).toHaveBeenCalledTimes(1); // gone, then back as the old copy, not busy: nothing changed
+    store.reset();
+  });
+
+  it("the new version answering with this tab's sign-in: running (no reload)", async () => {
+    const reload = vi.fn();
+    const store = createSwitchStore({ reload, clock });
+    const answers: PollAnswers = {
+      health: async () => ({ app: "shelfsync", version: "0.3.0" }),
+      session: async () => "signed_in",
+      stillSwitching: async () => false,
+    };
+    await store.run("preparing", "0.3.0", async () => undefined, answers);
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    expect(store.get().phase).toMatchObject({ kind: "restarting", back: "running" });
+    expect(reload).not.toHaveBeenCalled();
+    store.reset();
+  });
+
+  it("claimSignedOut: takes a 401 only while restarting, and stops the poll", async () => {
+    const store = createSwitchStore({ reload: vi.fn(), clock });
+    expect(store.claimSignedOut()).toBe(false);
+    const health = vi.fn(gone);
+    await store.run("preparing", "0.3.0", async () => undefined, { ...silentPoll, health });
+    expect(store.claimSignedOut()).toBe(true);
+    expect(store.get().phase).toMatchObject({ kind: "restarting", back: "new_tab" });
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS * 3);
+    expect(health).not.toHaveBeenCalled();
     store.reset();
   });
 
@@ -98,7 +148,7 @@ describe("the switch store", () => {
     };
     await store.run("preparing", "0.3.0", async () => undefined, newCopy);
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    expect(store.get().phase).toEqual({ kind: "restarting", version: "0.3.0", late: false, back: true });
+    expect(store.get().phase).toEqual({ kind: "restarting", version: "0.3.0", late: false, back: "new_tab" });
     expect(reload).not.toHaveBeenCalled();
 
     const same = createSwitchStore({ reload, clock });

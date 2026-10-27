@@ -21,8 +21,9 @@ export type Phase =
   | { kind: "idle" }
   | { kind: "preparing"; version: string } // the install request runs: the server checks the files first
   | { kind: "rolling_back"; version: string }
-  /** `back`: a new copy answered, and opened its own signed-in tab (this one stays signed out). */
-  | { kind: "restarting"; version: string; late: boolean; back: boolean };
+  /** `back`: ShelfSync answered again. "new_tab": a new copy, which opened its own signed-in tab (this one is signed
+   *  out); "running": the new version answers and knows this tab (the new tab signed in; the cookie is shared). */
+  | { kind: "restarting"; version: string; late: boolean; back: null | "new_tab" | "running" };
 
 export type StatusKind = "ready" | "downloading" | "up_to_date" | "no_release" | "none";
 

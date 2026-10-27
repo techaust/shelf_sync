@@ -10,6 +10,7 @@ import { cacheSaved, useSavedTheme } from "../../theme/useSavedTheme";
 import { AppFailed, AppLoading, type AppResult, AppView } from "./AppView";
 import { resetAccess, saveApp } from "./actions";
 import { type AppForm, type AppFormErrors, checkAppForm, formFrom } from "./forms";
+import { useSwitchPhase } from "./switchStore";
 import { A } from "./wording";
 
 /** The form, started from the stored settings; a save puts what was saved back into it. */
@@ -115,7 +116,12 @@ function AppSettingsForm({ stored, stale }: { stored: AppSettings; stale: boolea
  *  Reset access token danger zone. */
 export function AppPage() {
   const { api } = useServices();
-  const query = useQuery({ queryKey: APP_SETTINGS_QUERY_KEY, queryFn: () => getAppSettings(api) });
+  const restarting = useSwitchPhase().kind === "restarting";
+  const query = useQuery({
+    queryKey: APP_SETTINGS_QUERY_KEY,
+    queryFn: () => getAppSettings(api),
+    enabled: !restarting, // paused while ShelfSync restarts (re-review, medium)
+  });
   if (query.isPending) return <AppLoading />;
   // The failure card only when there is nothing to show; a failed refresh keeps the form (review item 9)
   if (query.isError && !query.data) {

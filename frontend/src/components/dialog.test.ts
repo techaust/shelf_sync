@@ -135,12 +135,18 @@ describe("dialogBehaviour", () => {
   it("a second Esc that closes the native dialog while the action is sent: it opens again", () => {
     const dialog = fakeDialog();
     const onCancel = vi.fn();
-    const behaviour = dialogBehaviour(dialog, { onCancel, isBusy: () => true });
+    const log: string[] = [];
+    const behaviour = dialogBehaviour(dialog, {
+      onCancel,
+      isBusy: () => true,
+      busyFocus: () => focusable("confirm (busy)", log),
+    });
     behaviour.open(null, null);
     dialog.browserCloses();
     expect(dialog.open).toBe(true);
     expect(dialog.showModal).toHaveBeenCalledTimes(2);
     expect(onCancel).not.toHaveBeenCalled();
+    expect(log).toEqual(["confirm (busy)"]); // the focus goes back on the busy confirm button
   });
 
   it("a browser close while nothing is sent: React is told (Cancel) and the focus goes back", () => {
