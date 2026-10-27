@@ -14,11 +14,18 @@ from fastapi import FastAPI
 
 from shelfsync import messages
 from shelfsync.api.app import create_app
+from shelfsync.api.app_settings import AppSettingsService
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError
 from shelfsync.db.settings import DEFAULTS, get_all_settings
-from shelfsync.logs import configure_logging, install_output_guards, remove_logging, report_ctrl_c
+from shelfsync.logs import (
+    configure_logging,
+    install_output_guards,
+    remove_logging,
+    report_ctrl_c,
+    set_log_retention,
+)
 from shelfsync.paths import (
     DataPaths,
     UiMissingError,
@@ -170,7 +177,7 @@ def _start(
     finally:
         connection.close()
     preferred = settings["port"]
-    handler.backupCount = int(settings["log_retention_days"])
+    set_log_retention(handler, int(settings["log_retention_days"]))  # LOG-01: also prunes files past the retention
     if on_settings is not None:
         on_settings(settings)
 
@@ -191,7 +198,14 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, install_token, ui_dir=ui, updates=build_update_service(paths, secrets)), sock)
+        app = create_app(
+            port,
+            install_token,
+            ui_dir=ui,
+            updates=build_update_service(paths, secrets),
+            app_settings=AppSettingsService(lambda: connect(paths.database), handler),
+        )
+        serve(app, sock)
     finally:
         sock.close()
         paths.runtime_json.unlink(missing_ok=True)  # clean exit: nothing left to point a second launch at

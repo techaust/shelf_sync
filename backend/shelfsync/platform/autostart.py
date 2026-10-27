@@ -114,7 +114,9 @@ def launcher_command(executable: str | None = None, *, background: bool = False)
     root = installed_root() if executable is None else None
     # a Windows path on every platform (the Run value)
     folder = (
-        PureWindowsPath(root) / CURRENT_FOLDER_NAME if root is not None else PureWindowsPath(executable or sys.executable).parent
+        PureWindowsPath(root) / CURRENT_FOLDER_NAME
+        if root is not None
+        else PureWindowsPath(executable or sys.executable).parent
     )
     command = f'"{folder / "pythonw.exe"}" -m shelfsync.launcher'
     return f"{command} {BACKGROUND_FLAG}" if background else command
