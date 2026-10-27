@@ -81,7 +81,7 @@ def test_v29_the_pyproject_pins_windows_toasts_with_the_marker() -> None:
     """V29."""
     text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
     assert "\"windows-toasts==1.3.1; sys_platform == 'win32'\"" in text
-    assert '"pystray==0.19.5"' in text and '"Pillow==12.3.0"' in text
+    assert '"pystray==0.19.5"' in text and '"Pillow==13.0.0"' in text
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the other platforms don't have windows-toasts")

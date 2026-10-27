@@ -13,7 +13,7 @@ dependencies = [
     # Tray and notifications (M1a.4). pystray and Pillow are in the list on every platform (pystray's win32 backend
     # is chosen when it is imported, and the tray code imports it lazily); windows-toasts is Windows only (V29).
     "pystray==0.19.5",
-    "Pillow==12.3.0",
+    "Pillow==13.0.0",
     "windows-toasts==1.3.1; sys_platform == 'win32'",
 ]
 
@@ -34,8 +34,8 @@ dev = [
 package = false
 # 14-day cutoff for everything the pins pull in: releases on or before 2026-10-12 (04 section 2.1).
 exclude-newer = "2026-10-13T00:00:00Z"
-# Security-fix exceptions (owner, 2026-10-26, docs/11): pip-audit findings fixed only in newer releases.
-exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-18T00:00:00Z" }
+# Security-fix exceptions (owner, 2026-10-26 and 2026-10-27, docs/11): pip-audit findings fixed only in newer releases.
+exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-18T00:00:00Z", pillow = "2026-10-17T00:00:00Z" }
 
 [tool.ruff]
 line-length = 120
