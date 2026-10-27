@@ -131,6 +131,20 @@ _(builder, Sonnet 5.5, 2026-10-27; branch `fix/m1a.5-quit-build` cut from `e4e9a
 - 11 rows as in the brief (exit code 1 also means a stalled exit; the raw dump in `tmp\` is the one un-redacted output while it sits there). Also add a 04-A row: pystray 0.19.5 `icon.visible = False` from a non-loop thread removes the icon (windows test above), and `icon._stop()` is a private API to re-check on every pystray upgrade.
 - 06 §3 should name `tmp\shutdown-stall.txt` as a kept output that is read back through `redact`.
 
+### Fix round 1
+_(builder, Sonnet 5.5; commit c566c1a)_ All nine review findings fixed:
+1. **MEDIUM, arm unprotected:** `TrayServe` wraps `arm(45)` in `try/except OSError` and logs WARNING "The safety exit couldn't be armed (<ExcName>)"; the tray still stops, uvicorn is told to exit, `run()` returns 0 on Quit. Test: `test_a_guard_that_cant_be_armed_doesnt_stop_the_shut_down`.
+2. **MEDIUM, hide evidence:** the windows tests now wrap `pystray._util.win32.Shell_NotifyIcon` and record `(code, BOOL)`. **Real result (this PC, in the Claude package):** the hide from a non-loop thread gave `[(NIM_MODIFY, 0), (NIM_ADD, 1), (NIM_DELETE, 1), (NIM_MODIFY, 0)]`: NIM_DELETE returned TRUE, and a NIM_MODIFY on the same window and id afterwards returned FALSE (the icon is gone). The nested-loop (swallowed stop) test saw `[(1, 0), (0, 1), (2, 1)]`: the forced hide's NIM_DELETE returned TRUE while the loop was still stuck. The first NIM_MODIFY (FALSE) is pystray's own update before the icon is added.
+3. **LOW, Open after Quit:** `TrayServe.open_tab` returns early if `_quit` is set; `test_an_open_that_fires_after_quit_opens_nothing`.
+4. **LOW, `_force_stop` outcome:** it now logs INFO "Tray loop ended after the second stop (N.N s)" or WARNING "Tray loop still running; icon hidden (N.N s)" (time since `stop()` began; the early return no longer skips timing). Tests for both.
+5. **LOW, links:** `exit_guard.is_plain_file` / `remove_unsafe_entry` (symlink, junction, reparse point, or `st_nlink > 1`). `arm()` removes such an entry before opening; `server._report_stalled_exit` removes it unread and logs a WARNING without content. Tests with a hard link (always) and a symlink (skipped here: this account can't make symlinks, so the symlink variants were **not run**).
+6. **LOW, lock race test:** the sequential test keeps an honest docstring; new `test_stop_waits_for_a_refresh_that_is_in_the_middle_of_rebuilding_the_menu` (refresh blocked inside the `menu` setter; `stop()` must wait) would fail on the old code.
+7. **LOW, docstrings:** `exit_guard.py` now says only the interpreter's final clean-up cancels the timer (the last shut-down steps aren't covered) and that faulthandler holds its own reference to the file (the CPython behaviour; not re-verified against its source here).
+8. **LOW, second resolution:** `main(make_exit_guard=…)` takes a factory called inside `make_serve(paths)`; `shelfsync.launcher.make_real_exit_guard(paths)` is passed only from `__main__`; `real_exit_guard()` is gone. The "never a real guard in pytest" test stays.
+9. **LOW, stage 2 position:** the 5 s re-arm moved to the end of `TrayServe.__call__`'s `finally` (after the server join and thread log), only if armed; the post-`run_application` re-arm is gone. The residual (a relaunch within 5 s may log "Couldn't remove shutdown-stall.txt") is in the `launcher.py` docstring.
+
+Checks (same as before): `pytest` 692 passed, 9 skipped, 32 deselected; `mypy` clean (38 files); `ruff check` and `ruff format --check` clean; `bandit` exit 0; `pytest -m windows --no-cov` 31 passed, 1 skipped (V31); pip-audit not re-run (no dependency changed). Hand check re-run with the real launcher under `pythonw` (throwaway data folder, removed): exit 0 in 11.1 s, "Threads at exit: MainThread", `shutdown-stall.txt` empty. Not verified: the symlink tests (skipped on this account), a real tray click.
+
 ## 4. Designer report
 _(no screens)_
 
