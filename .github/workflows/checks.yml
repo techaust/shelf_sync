@@ -55,13 +55,13 @@ jobs:
       - name: Run the tests with coverage (pytest)
         run: uv run pytest
 
-      # Coverage of at least 90 % on secure/, inspect/, match/ and apply/ (07 section 1). It starts counting once a
+      # Coverage of at least 90 % on secure/, inspect/, match/, apply/ and update/, and on db/backup.py (07 section 1). It starts counting once a
       # folder has code besides __init__.py; until then there is nothing to measure.
-      - name: Check coverage of secure, inspect, match and apply
+      - name: Check coverage of secure, inspect, match, apply and update
         run: |
           # Each folder must reach 90 % on its own, so a well-covered folder can't hide a poorly covered one.
           failed=0
-          for folder in secure inspect match apply; do
+          for folder in secure inspect match apply update; do
             if find "backend/shelfsync/$folder" -name '*.py' ! -name '__init__.py' 2>/dev/null | grep -q .; then
               echo "Coverage of $folder:"
               uv run coverage report --include="backend/shelfsync/$folder/*" --fail-under=90 || failed=1
@@ -69,6 +69,9 @@ jobs:
               echo "No code in $folder yet: nothing to check."
             fi
           done
+          # The backup before a migration (SYS-07) is one file in db/, so it is checked on its own.
+          echo "Coverage of db/backup.py:"
+          uv run coverage report --include="backend/shelfsync/db/backup.py" --fail-under=90 || failed=1
           exit "$failed"
 
       - name: Scan the code for security problems (bandit)

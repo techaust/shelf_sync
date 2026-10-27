@@ -223,14 +223,21 @@ def powershell_signatures(folder: Path) -> list[dict[str, str | None]]:
         "| Get-AuthenticodeSignature | ForEach-Object { [pscustomobject]@{ Path=$_.Path; Status=[string]$_.Status; "
         "Subject=$_.SignerCertificate.Subject } } | ConvertTo-Json -Compress"
     )
+    # Windows PowerShell 5.1 started from a PowerShell 7 step (GitHub's `shell: pwsh`) inherits PSModulePath pointing at
+    # PowerShell 7's modules and may fail to load Microsoft.PowerShell.Security; without the variable it builds its own.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    env["SHELFSYNC_BUILD_FOLDER"] = str(folder)
     done = subprocess.run(  # nosec B603 B607
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         timeout=600,
-        env={**os.environ, "SHELFSYNC_BUILD_FOLDER": str(folder)},
+        env=env,
     )
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip()[-2000:]
+        raise BuildError(f"The signature check failed (exit {done.returncode}): {detail}")
     data = json.loads(done.stdout or "[]")
     return [data] if isinstance(data, dict) else data
 

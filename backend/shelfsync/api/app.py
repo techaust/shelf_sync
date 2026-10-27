@@ -2,7 +2,8 @@
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,12 +15,15 @@ from starlette.types import Scope
 
 from shelfsync import __version__
 from shelfsync.api.errors import register_error_handlers
+from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
+from shelfsync.api.updates import make_updates_router
 from shelfsync.paths import source_ui_dir
 from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
 from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
 from shelfsync.secure.token import InstallToken
+from shelfsync.update.service import UpdateService
 
 _log = logging.getLogger("shelfsync.api")
 
@@ -88,18 +92,43 @@ def create_app(
     clock: Callable[[], float] = time.monotonic,
     *,
     ui_dir: Path | None,
+    updates: UpdateService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
     `install_token` is the one token holder: start-up builds it before binding the port (so the secret store is read
     once and a failure holds no port) and the app never touches the store itself. `clock` times the 60-second
     tickets (tests pass their own). `ui_dir` (required, so no caller gets the real frontend/dist by accident) holds the
-    built UI; None serves the API only (most tests).
+    built UI; None serves the API only (most tests). `updates` is the update service (M1b.2); the default is the
+    "development, updates off" service, which makes no network call. The app starts it when the server starts and
+    stops it when the server stops (the lifespan below).
     """
+    service = updates if updates is not None else UpdateService.development()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        service.start()
+        try:
+            yield
+        finally:
+            service.stop()
+
     # No interactive docs and no public schema route (docs_url, redoc_url, openapi_url all None). The schema is
     # still available in code through app.openapi(), for openapi-typescript in M1a.3. debug stays off, so an
     # unhandled error never shows a traceback.
-    app = FastAPI(title="ShelfSync", version=__version__, debug=False, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(
+        title="ShelfSync",
+        version=__version__,
+        debug=False,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
+    app.state.updates = service
+    # `request_quit` is published by the launcher (m1b.1) and is absent in the developer entry; it is looked up when an
+    # install or roll back asks for it, so the order in which the launcher sets it doesn't matter.
+    service.bind_quit(lambda: getattr(app.state, "request_quit", None))
     sessions = SessionStore(clock)
     # The launcher and the tray (M1a.4) issue sign-in tickets in-process through this, so no token travels over HTTP
     # in the first copy. Nothing in a request handler reads it from here.
@@ -112,6 +141,8 @@ def create_app(
         return HealthResponse(app="shelfsync", version=__version__)
 
     app.include_router(make_session_router(sessions, install_token))
+    app.include_router(make_updates_router(service))
+    app.include_router(make_secrets_router(service))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

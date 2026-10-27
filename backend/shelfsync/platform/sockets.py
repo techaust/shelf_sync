@@ -250,6 +250,9 @@ if sys.platform == "win32":
 
 else:
 
+    def process_info(pid: int) -> ProcessInfo:
+        raise OwnerLookupError("Processes can be looked up on Windows only")
+
     def current_user_sid() -> str:
         raise OwnerLookupError("Socket owners can be looked up on Windows only")
 

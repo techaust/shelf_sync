@@ -135,10 +135,10 @@ def test_startup_empties_tmp(data_paths: DataPaths) -> None:
 def test_migration_failure_stops_startup_and_is_logged_and_notified(
     data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def broken(connection: object) -> None:
+    def broken(connection: object, paths: object) -> None:
         raise server.MigrationError("boom")
 
-    monkeypatch.setattr(server, "migrate", broken)
+    monkeypatch.setattr(server, "migrate_with_backup", broken)
     code, notifier, serve = start(data_paths)
     assert code == server.EXIT_MIGRATION_FAILED
     assert serve.sockname is None
