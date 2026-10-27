@@ -109,6 +109,9 @@
   .alert__title {
     font-weight: 600;
   }
+  .alert__when {
+    color: var(--color-text-muted);
+  }
   .alert__action {
     grid-column: 2;
     justify-self: start;
@@ -540,8 +543,11 @@
     color: var(--color-info);
   }
   .status-line.is-done {
-    color: var(--color-text-muted);
     font-size: var(--text-sm);
+  }
+  .status-line__when {
+    margin-left: var(--space-2);
+    color: var(--color-text-muted);
   }
   .action-row {
     display: flex;
@@ -674,6 +680,7 @@
   .confirm-dialog {
     width: min(36rem, calc(100vw - var(--space-12)));
     max-height: calc(100vh - var(--space-16));
+    margin: auto; /* Tailwind's preflight zeroes the UA's centring margin */
     padding: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);

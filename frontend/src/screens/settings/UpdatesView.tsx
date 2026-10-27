@@ -116,7 +116,13 @@ export function UpdatesView({
         <div className="card-alert stack-alert">
           {actionError ? <Alert tone="danger" title={actionError} /> : null}
           {model.notices.map((notice) => (
-            <Alert key={notice.key} tone={notice.tone} title={notice.title}>
+            <Alert
+              key={notice.key}
+              id={`up-notice-${notice.key}`}
+              tone={notice.tone}
+              title={notice.title}
+              when={notice.when ?? null}
+            >
               {notice.body}
             </Alert>
           ))}
@@ -151,7 +157,10 @@ export function UpdatesView({
         {model.lastChange ? (
           <p className="status-line is-done">
             <CircleCheck className="icon" aria-hidden="true" />
-            <span className="num">{model.lastChange}</span>
+            <span className="num">
+              {model.lastChange.text}
+              {model.lastChange.at ? <span className="status-line__when">{model.lastChange.at}</span> : null}
+            </span>
           </p>
         ) : null}
         <div className="action-row">
@@ -159,6 +168,7 @@ export function UpdatesView({
             type="button"
             className="btn"
             aria-disabled={!model.check.enabled || undefined}
+            aria-describedby={model.check.why ? `up-notice-${model.check.why}` : undefined}
             aria-busy={model.check.running || undefined}
             onClick={() => {
               if (model.check.enabled) actions.onCheck();

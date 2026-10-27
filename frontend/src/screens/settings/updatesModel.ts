@@ -12,6 +12,8 @@ export interface Notice {
   tone: Tone;
   title: string;
   body: string | null;
+  /** When it happened, for a result that stays until the next switch. */
+  when?: string | null;
 }
 
 /** What the page is doing on its own, between a confirmed Install or Roll back and the reload. */
@@ -27,9 +29,11 @@ export interface UpdatesModel {
   heading: string;
   checked: string | null;
   notices: Notice[];
-  lastChange: string | null;
+  /** The last switch when it went well, and when (a problem is a notice instead). */
+  lastChange: { text: string; at: string | null } | null;
   status: { kind: StatusKind; text: string | null; version: string | null };
-  check: { enabled: boolean; running: boolean };
+  /** `why`: the notice that says why Check now is off (its key), if one does. */
+  check: { enabled: boolean; running: boolean; why: string | null };
   install: { shown: boolean; enabled: boolean; version: string | null };
   rollBack: {
     shown: boolean;
@@ -56,11 +60,18 @@ export function describeUpdates(u: Updates, phase: Phase = { kind: "idle" }, dat
   else if (!u.key_available) notices.push({ key: "no-key", tone: "info", title: U.noKey, body: null });
   if (u.busy && idle) notices.push({ key: "busy", tone: "info", title: "An update is already under way.", body: null });
 
-  let lastChange: string | null = null;
+  let lastChange: UpdatesModel["lastChange"] = null;
   if (u.last_result) {
     const line = lastSwitch(u.last_result);
-    if (line.tone === "success") lastChange = line.title;
-    else notices.push({ key: "last-result", tone: line.tone, title: line.title, body: line.body });
+    if (line.tone === "success") lastChange = { text: line.title, at: date(u.last_result.at) };
+    else
+      notices.push({
+        key: "last-result",
+        tone: line.tone,
+        title: line.title,
+        body: line.body,
+        when: date(u.last_result.at),
+      });
   }
 
   const available = u.available;
@@ -92,7 +103,11 @@ export function describeUpdates(u: Updates, phase: Phase = { kind: "idle" }, dat
     notices,
     lastChange,
     status,
-    check: { enabled: !lockedOut && !u.checking, running: u.checking },
+    check: {
+      enabled: !lockedOut && !u.checking,
+      running: u.checking,
+      why: u.development ? "development" : u.busy && idle ? "busy" : null,
+    },
     install: {
       shown: status.kind === "ready",
       enabled: status.kind === "ready" && u.key_available && !lockedOut,
@@ -106,6 +121,7 @@ export function describeUpdates(u: Updates, phase: Phase = { kind: "idle" }, dat
       databaseChanged: u.database_changed,
       backupDate: date(u.backup_at),
     },
-    token: { set: u.token.set, expires: u.token.set ? expiry : null },
+    // the expiry beside "Saved", unless the notice at the top already says it
+    token: { set: u.token.set, expires: u.token.set && !u.token.notice ? expiry : null },
   } satisfies UpdatesModel;
 }

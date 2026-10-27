@@ -16,23 +16,29 @@ const ICONS: Record<AlertTone, LucideIcon> = {
  * (role="alert"); the others politely (role="status").
  */
 export function Alert({
+  id,
   tone,
   title,
   children,
+  when = null,
   action,
 }: {
+  id?: string;
   tone: AlertTone;
   title: ReactNode;
   children?: ReactNode;
+  /** When it happened (a local date and time), for a result that stays on screen. */
+  when?: string | null;
   action?: ReactNode;
 }) {
   const Icon = ICONS[tone];
   return (
-    <div className={`alert is-${tone}`} role={tone === "danger" ? "alert" : "status"}>
+    <div id={id} className={`alert is-${tone}`} role={tone === "danger" ? "alert" : "status"}>
       <Icon className="icon alert__icon" aria-hidden="true" />
       <div className="alert__text">
         <p className="alert__title">{title}</p>
         {children ? <p>{children}</p> : null}
+        {when ? <p className="alert__when num">{when}</p> : null}
       </div>
       {action ? <div className="alert__action">{action}</div> : null}
     </div>
