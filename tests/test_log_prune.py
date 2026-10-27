@@ -136,3 +136,38 @@ def test_a_rollover_prunes_afterwards(tmp_path: Path) -> None:
     assert "shelfsync.log.2000-01-01" not in names
     assert "shelfsync.log" in names
     assert any(name.startswith("shelfsync.log.20") for name in names)
+
+
+@pytest.mark.parametrize("days", [0, -1])
+def test_prune_and_set_retention_refuse_less_than_one_day(tmp_path: Path, days: int) -> None:
+    """LOG-01: a 0 would delete every rotated file."""
+    (tmp_path / "shelfsync.log.2000-01-01").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError):
+        prune_logs(tmp_path, days, TODAY)
+    handler = logs.configure_logging(tmp_path, 30)
+    try:
+        with pytest.raises(ValueError):
+            set_log_retention(handler, days)
+        assert handler.backupCount == 30
+    finally:
+        logs.remove_logging(handler)
+    assert (tmp_path / "shelfsync.log.2000-01-01").exists()
+
+
+def test_set_log_retention_holds_the_handlers_lock(tmp_path: Path) -> None:
+    """LOG-01: the change and the prune run under the handler's lock."""
+    handler = logs.configure_logging(tmp_path, 30)
+    seen: list[bool] = []
+    real = logs.prune_logs
+
+    def spy(*args: object, **kwargs: object) -> list[str]:
+        seen.append(handler.lock._is_owned())  # type: ignore[union-attr, attr-defined]
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    try:
+        logs.prune_logs = spy  # type: ignore[assignment]
+        set_log_retention(handler, 5)
+    finally:
+        logs.prune_logs = real
+        logs.remove_logging(handler)
+    assert seen == [True]

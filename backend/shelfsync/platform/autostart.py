@@ -8,6 +8,7 @@ value always names `<root>\\current\\pythonw.exe`, so an update needs no new val
 """
 
 import logging
+import ntpath
 import sys
 from pathlib import PureWindowsPath
 from typing import Protocol
@@ -144,7 +145,9 @@ def apply_start_with_windows(
     current = key.get(name)
     if enabled:
         wanted = command if command is not None else launcher_command(background=True)
-        if current == wanted:
+        # Compared case-insensitively like Windows paths, so a case or junction-prefix difference doesn't rewrite the
+        # value at every start (a value that does differ is still written as `wanted`).
+        if current is not None and ntpath.normcase(current) == ntpath.normcase(wanted):
             return "unchanged"
         key.set(name, wanted)
         return "set"
@@ -152,3 +155,18 @@ def apply_start_with_windows(
         return "unchanged"
     key.delete(name)
     return "removed"
+
+
+def apply_start_with_windows_safely(
+    enabled: bool, run_key: RunKey | None = None, *, installed: bool | None = None
+) -> str:
+    """`apply_start_with_windows` that never raises: returns "set", "removed", "unchanged", "skipped", or "failed" (an
+    `AutostartError`, logged as a warning with its fixed text). The one place the launcher (at start) and the settings
+    API (at a save) apply the setting."""
+    try:
+        outcome = apply_start_with_windows(enabled, run_key, installed=installed)
+    except AutostartError as error:
+        _log.warning("Start with Windows couldn't be applied (%s)", error)
+        return "failed"
+    _log.info("Start with Windows: %s", outcome)
+    return outcome

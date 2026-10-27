@@ -2,18 +2,20 @@
 
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from shelfsync.api.app_settings import APP_SETTINGS_PATH, AppSettingsService
+from shelfsync.api.app_settings import APP_SETTINGS_PATH, AppSettingsService, AppSettingsValues
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import migrate
 from shelfsync.db.settings import DEFAULTS, get_all_settings
 from shelfsync.logs import configure_logging, remove_logging
 from shelfsync.platform.autostart import AutostartError, FakeRunKey
+from shelfsync.ports import DEFAULT_PORT
 from tests.support import ORIGIN, WRITE_HEADERS, Harness, make_harness
 
 GOOD: dict[str, Any] = {
@@ -36,7 +38,9 @@ class Rig:
         logs.mkdir()
         self.logs = logs
         self.handler = configure_logging(logs, 30)
-        self.service = AppSettingsService(lambda: connect(self.database), self.handler, self.run_key, lambda: installed)
+        self.service = AppSettingsService(
+            lambda: connect(self.database), DEFAULT_PORT, self.handler, self.run_key, lambda: installed
+        )
         self.harness: Harness = make_harness(app_settings=self.service)
         self.client: TestClient = self.harness.signed_in_client()
 
@@ -73,7 +77,7 @@ def test_put_saves_all_five_and_says_what_it_did(rig: Rig) -> None:
     """SET-06: returns what was saved, `restart_needed` (the port changed) and the Run value's result."""
     response = put(rig, GOOD)
     assert response.status_code == 200
-    assert response.json() == {**GOOD, "restart_needed": True, "start_with_windows_applied": True}
+    assert response.json() == {**GOOD, "restart_needed": True, "start_with_windows_result": "applied"}
     assert rig.stored() == GOOD
     assert rig.client.get(APP_SETTINGS_PATH).json() == {**GOOD, "installed": True}
 
@@ -99,6 +103,7 @@ def test_a_copy_that_isnt_installed_never_touches_the_run_key(tmp_path: Path) ->
     try:
         response = put(rig, {**GOOD, "start_with_windows": True})
         assert response.status_code == 200
+        assert response.json()["start_with_windows_result"] == "not_installed"
         assert rig.run_key.values == {}
         assert rig.client.get(APP_SETTINGS_PATH).json()["installed"] is False
     finally:
@@ -113,13 +118,13 @@ class BrokenRunKey(FakeRunKey):
 def test_a_run_key_failure_is_reported_not_raised_and_the_rest_is_saved(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """SET-06: 200 with `start_with_windows_applied: false`, never a 500."""
+    """SET-06: 200 with `start_with_windows_result: "failed"`, never a 500."""
     rig = Rig(tmp_path, run_key=BrokenRunKey())
     try:
         with caplog.at_level(logging.WARNING, logger="shelfsync.api.settings"):
             response = put(rig, GOOD)
         assert response.status_code == 200
-        assert response.json()["start_with_windows_applied"] is False
+        assert response.json()["start_with_windows_result"] == "failed"
         assert rig.stored() == GOOD
         assert "couldn't be applied" in caplog.text
     finally:
@@ -259,5 +264,125 @@ def test_a_wrong_host_is_refused(rig: Rig) -> None:
 def test_the_default_service_keeps_settings_in_memory_and_never_the_real_run_key() -> None:
     """SET-06: what `create_app` uses when no service is passed."""
     client = make_harness().signed_in_client()
-    assert client.put(APP_SETTINGS_PATH, json=GOOD, headers=WRITE_HEADERS).json()["start_with_windows_applied"] is True
+    saved = client.put(APP_SETTINGS_PATH, json=GOOD, headers=WRITE_HEADERS).json()
+    assert saved["start_with_windows_result"] == "not_installed"
     assert client.get(APP_SETTINGS_PATH).json() == {**GOOD, "installed": False}
+
+
+# ---- review fixes ---------------------------------------------------------------------------------------------------
+
+
+def test_restart_needed_compares_with_the_port_the_server_is_bound_to(rig: Rig) -> None:
+    """SET-06: bound to 47615; saving 47616 needs a restart, going back doesn't, a theme-only save keeps it."""
+    assert put(rig, {**GOOD, "port": 47616}).json()["restart_needed"] is True
+    assert put(rig, {**GOOD, "port": 47615}).json()["restart_needed"] is False
+    assert put(rig, {**GOOD, "port": 47616}).json()["restart_needed"] is True
+    assert put(rig, {**GOOD, "port": 47616, "theme": "light"}).json()["restart_needed"] is True
+
+
+def test_the_default_service_uses_the_port_create_app_gets() -> None:
+    """SET-06."""
+    harness = make_harness()
+    client = harness.signed_in_client()
+    same = client.put(APP_SETTINGS_PATH, json={**GOOD, "port": harness.port}, headers=WRITE_HEADERS)
+    assert same.json()["restart_needed"] is False
+    other = client.put(APP_SETTINGS_PATH, json={**GOOD, "port": harness.port + 1}, headers=WRITE_HEADERS)
+    assert other.json()["restart_needed"] is True
+
+
+class CountingRunKey(FakeRunKey):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets = 0
+
+    def get(self, name: str) -> str | None:
+        self.gets += 1
+        return super().get(name)
+
+
+def test_the_run_key_is_touched_once_per_start_and_then_only_when_it_changes(tmp_path: Path) -> None:
+    """SET-06: a theme-only save leaves the Run key alone (and still says "applied")."""
+    key = CountingRunKey()
+    rig = Rig(tmp_path, run_key=key)
+    try:
+        assert put(rig, {**GOOD, "start_with_windows": True}).json()["start_with_windows_result"] == "applied"
+        assert key.gets == 1
+        again = put(rig, {**GOOD, "start_with_windows": True, "theme": "light"})
+        assert again.json()["start_with_windows_result"] == "applied"
+        assert key.gets == 1
+        put(rig, {**GOOD, "start_with_windows": False})
+        assert key.gets == 2
+    finally:
+        rig.close()
+
+
+def test_a_failed_run_key_is_tried_again_at_the_next_save(tmp_path: Path) -> None:
+    """SET-06."""
+    rig = Rig(tmp_path, run_key=BrokenRunKey())
+    try:
+        assert put(rig, GOOD).json()["start_with_windows_result"] == "failed"
+        assert put(rig, GOOD).json()["start_with_windows_result"] == "failed"
+    finally:
+        rig.close()
+
+
+def test_the_log_retention_is_applied_only_when_it_changes(rig: Rig) -> None:
+    """LOG-01: a save with the same retention doesn't prune."""
+    assert put(rig, {**GOOD, "log_retention_days": 30}).status_code == 200  # same as the handler's 30
+    old = rig.logs / "shelfsync.log.2000-01-01"
+    old.write_text("x", encoding="utf-8")
+    assert put(rig, {**GOOD, "log_retention_days": 30, "theme": "light"}).status_code == 200
+    assert old.exists()
+    assert put(rig, {**GOOD, "log_retention_days": 29}).status_code == 200
+    assert not old.exists()
+
+
+def test_get_falls_back_to_the_default_on_a_stored_value_that_is_not_valid(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SET-06: a hand-edited database never makes GET a 500; the warning names the key only."""
+    connection = connect(rig.database)
+    connection.execute("INSERT INTO setting (key, value_json) VALUES ('log_retention_days', '9999')")
+    connection.execute("INSERT INTO setting (key, value_json) VALUES ('theme', '\"purple\"')")
+    connection.execute("INSERT INTO setting (key, value_json) VALUES ('notifications', '{bad')")
+    connection.close()
+    with caplog.at_level(logging.WARNING, logger="shelfsync.api.settings"):
+        response = rig.client.get(APP_SETTINGS_PATH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["log_retention_days"] == DEFAULTS["log_retention_days"]
+    assert body["theme"] == DEFAULTS["theme"]
+    assert body["notifications"] == DEFAULTS["notifications"]
+    assert "'log_retention_days'" in caplog.text
+    assert "9999" not in caplog.text
+    assert "purple" not in caplog.text
+
+
+def test_two_saves_at_once_are_applied_in_the_order_they_commit(tmp_path: Path) -> None:
+    """SET-06: the whole save is one critical section."""
+    state = {"inside": 0, "overlap": False}
+
+    class SlowRunKey(FakeRunKey):
+        def get(self, name: str) -> str | None:
+            state["inside"] += 1
+            state["overlap"] = state["overlap"] or state["inside"] > 1
+            threading.Event().wait(0.05)
+            try:
+                return super().get(name)
+            finally:
+                state["inside"] -= 1
+
+    rig = Rig(tmp_path, run_key=SlowRunKey())
+    try:
+        threads = [
+            threading.Thread(target=rig.service.save, args=(AppSettingsValues(**{**GOOD, "start_with_windows": flag}),))
+            for flag in (True, False)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert state["overlap"] is False
+        assert ("ShelfSync" in rig.run_key.values) is rig.stored()["start_with_windows"]
+    finally:
+        rig.close()

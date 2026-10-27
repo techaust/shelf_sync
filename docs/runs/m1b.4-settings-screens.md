@@ -32,7 +32,7 @@ The M1b plan is in [runs/m1b.2-updater.md](m1b.2-updater.md) §0. The APIs these
    - each API error code shown with its 13 wording.
 3. **Settings › App** (`appPage()` in the mockup), wired to `GET`/`PUT /api/settings/app` and `POST` reset-token in `api/session.py`:
    - Theme (system, light, dark): applied at once through the existing `theme/` module, and saved. The app bar's ThemeMenu and this page always show the same value;
-   - Start with Windows and Notifications as Switches. When `start_with_windows_applied` is false, say it was saved but Windows wasn't changed;
+   - Start with Windows and Notifications as Switches. When `start_with_windows_result` is "failed", say it was saved but Windows wasn't changed;
    - Port (47615–47624) and "Keep logs for" (1–365 days), checked in the form before saving, with the API's limits;
    - Save; when `restart_needed` is true, say the new port is used after the next start;
    - Notifications: say nothing about which notifications exist yet (SYS-05 is M5); the mockup's helper line stays;

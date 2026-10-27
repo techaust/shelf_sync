@@ -21,6 +21,7 @@ from shelfsync.secure.redact import redact as _redact
 
 LOG_FILE_NAME = "shelfsync.log"
 CTRL_C_LINE = "Stopped with Ctrl+C."
+MAX_LOG_RETENTION_DAYS = 365  # the settings limit; also the retention in force until the settings are read
 
 
 def redact(text: str) -> str:
@@ -141,7 +142,10 @@ def prune_logs(logs_dir: Path, retention_days: int, today: date | None = None) -
     whatever their count (the handler's `backupCount` counts files, not days; LOG-01). Returns the names removed.
 
     Never the current file, never a name the handler doesn't write, never a folder; a link with such a name is
-    removed itself, not followed (`paths.remove_entry`). An error is logged and the file skipped."""
+    removed itself, not followed (`paths.remove_entry`). An error is logged and the file skipped. Refuses fewer than 1
+    day (ValueError): a 0 would delete every rotated file."""
+    if retention_days < 1:
+        raise ValueError("The log retention must be at least 1 day.")
     cutoff = (today if today is not None else datetime.now(UTC).date()) - timedelta(days=retention_days)
     removed: list[str] = []
     try:
@@ -151,7 +155,7 @@ def prune_logs(logs_dir: Path, retention_days: int, today: date | None = None) -
         return removed
     for entry in entries:
         match = _ROTATED_NAME.match(entry.name)
-        if match is None or entry.name == LOG_FILE_NAME:
+        if match is None:
             continue
         try:
             day = date(int(match[1]), int(match[2]), int(match[3]))
@@ -171,16 +175,24 @@ def prune_logs(logs_dir: Path, retention_days: int, today: date | None = None) -
 
 
 def set_log_retention(handler: TimedRotatingFileHandler, retention_days: int) -> list[str]:
-    """Keep `retention_days` of logs from now on and prune at once. Returns the names removed."""
-    handler.backupCount = retention_days
-    return prune_logs(Path(handler.baseFilename).parent, retention_days)
+    """Keep `retention_days` of logs from now on and prune at once, under the handler's lock (a rollover can't run
+    half-way through). Returns the names removed. Refuses fewer than 1 day (ValueError)."""
+    if retention_days < 1:
+        raise ValueError("The log retention must be at least 1 day.")
+    handler.acquire()
+    try:
+        handler.backupCount = retention_days
+        return prune_logs(Path(handler.baseFilename).parent, retention_days)
+    finally:
+        handler.release()
 
 
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:
     """Send every log record (ShelfSync's and uvicorn's) to logs\\shelfsync.log; return the handler.
 
     Rotation at UTC midnight keeps `retention_days` rotated files (and `prune_logs` removes older ones by date). It
-    doesn't prune here: the retention is the default until the settings are read (`set_log_retention`).
+    doesn't prune here: callers pass `MAX_LOG_RETENTION_DAYS` until the settings are read, then `set_log_retention`
+    lowers it (a lower retention at start-up must never delete files the owner's setting keeps).
     uvicorn's loggers have no handlers of their own here (the server is started with log_config=None) and
     propagate to the root logger, where this handler sits.
     """

@@ -315,11 +315,11 @@ def test_a_run_key_error_is_logged_and_start_up_continues(
     """SYS-04."""
     from shelfsync.platform.autostart import AutostartError
 
-    def refuse(enabled: bool, run_key: object = None, installed: object = None) -> str:
+    def refuse(enabled: bool, run_key: object = None, *, installed: object = None) -> str:
         raise AutostartError("Writing the Run key failed (PermissionError)")
 
-    monkeypatch.setattr(launcher, "apply_start_with_windows", refuse)
-    with caplog.at_level("WARNING", logger="shelfsync.launcher"):
+    monkeypatch.setattr("shelfsync.platform.autostart.apply_start_with_windows", refuse)
+    with caplog.at_level("WARNING", logger="shelfsync.autostart"):
         launcher.make_on_settings()({"start_with_windows": True})
     assert "couldn't be applied" in caplog.text
 

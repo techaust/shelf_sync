@@ -147,7 +147,7 @@ def create_app(
     app.include_router(make_updates_router(service))
     app.include_router(make_secrets_router(service))
     app.include_router(
-        make_app_settings_router(app_settings if app_settings is not None else AppSettingsService.development())
+        make_app_settings_router(app_settings if app_settings is not None else AppSettingsService.development(port))
     )
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:

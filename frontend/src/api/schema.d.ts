@@ -233,8 +233,11 @@ export interface components {
             restart_needed: boolean;
             /** Start With Windows */
             start_with_windows: boolean;
-            /** Start With Windows Applied */
-            start_with_windows_applied: boolean;
+            /**
+             * Start With Windows Result
+             * @enum {string}
+             */
+            start_with_windows_result: "applied" | "not_installed" | "failed";
             /**
              * Theme
              * @enum {string}
