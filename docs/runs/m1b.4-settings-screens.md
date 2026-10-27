@@ -208,7 +208,73 @@ They are in `.logs/shots/m1b.4/`, at a 1280 × 900 viewport unless the name says
 4. **The 13 rows.** 13 §3 rows for the strings above, and 11 rows for the decisions, are the lead's to add.
 
 ## 5. Review
-_(reviewer)_
+_(reviewer)_ The review itself (SEND BACK, 7.5/10, 21 items) reached the designer through the lead's message. The fixes are below.
+
+### Review fixes
+_(designer, 2026-10-28; worktree head before: 30eeaca)_ "Test" names the test that covers the change. "Pane" means it was checked in the built-in browser pane against the mocked API.
+
+| # | Level | Fix | Test |
+|---|---|---|---|
+| 1 | High | When the restart poll sees ShelfSync again, it asks `GET /api/session/status` with a plain request that never signs the tab out. A 401 means a new copy answered: the poll stops and the panel says "ShelfSync is back" / "It opened in a new tab, signed in. You can close this one." A 204 means the old copy is still running: the poll waits while `GET /api/updates` reports `busy`, then reloads (the not_switched case). The panel's waiting line is now "When ShelfSync is back, it opens in a new tab." | `restartPoll.test.ts` (new_tab; the 204 wait then reload); `switchStore.test.ts` (back: true; reload); `views.test.ts` (the back panel); pane |
+| 2 | High | The ConfirmDialog test passes its child as `createElement`'s third argument. The component's type is cast to say children come from there. There is no biome-ignore. `npm run lint` passes | lint |
+| 3 | Med | `dialog.ts` also listens for `close`. If React still wants the dialog open and the action is being sent, it opens again (`showModal()`). Otherwise React is told, through onCancel, and the focus goes back. A late `close` after a reopen is ignored | `dialog.test.ts` (second Esc while busy reopens; browser close tells React; our own close reports no Cancel) |
+| 4 | Med | `createThemeSync`: each choice holds a pending count until its save answers. A server theme (from a refetch, or an older save's answer in the cache) applies only when nothing is pending | `actions.test.ts` (light → system → light → system: only the last is applied; nothing pending applies) |
+| 5 | Med | The roll back words are chosen from `databaseChanged` alone, the same flag that sends `confirm_data_loss`. Without the backup's time the database line goes without its date. A changed database never reads "your data stays as it is" | `actions.test.ts` (roll back words, three cases); `views.test.ts` (dialog body) |
+| 6 | Med | The roll back dialog uses 13 §6's owner-decided rows for both cases, with "<version>" being the installed version. Kept: "ShelfSync will close and open again." first, "A copy of the current data is kept in the backups folder." after the database text, and the buttons "Roll back" and "Cancel" | as 5; pane, light and dark |
+| 7 | Med | Each poll question (health, session, busy) is ended after 3 s through an AbortSignal; the API client's `request` and `get` now take one. "Late" is its own 3-minute timer, so it fires even while a question hangs. A quick restart of the old version is caught by the session check (401) | `restartPoll.test.ts` (time limit with a hanging question; late on its own timer; quick restart; stop clears both) |
+| 8 | Med | `switchStore.ts` is a module store, like themeStore. It holds the phase and owns the restart poll, so leaving Settings › Updates and coming back never stops them. A second run while switching is refused | `switchStore.test.ts`; pane (App and back: the panel is still there) |
+| 9 | Med | Updates and App show the failure card only when `isError && !data`. A failed refresh keeps the page and adds "ShelfSync didn't answer just now, so this may be out of date." | `views.test.ts` (stale notice with the page kept) |
+| 10 | Med | `actions.ts` holds checkNow, saveToken, removeToken, resetAccess, saveApp and pollAnswers as plain functions. `switchStore.run` holds switchTo. SecretField's Save is `submitSecret` | `actions.test.ts`; `switchStore.test.ts`: no answer → restarting; confirm_required → asks again; a 409 → its 13 line; Reset → signed_out; SecretField empties after a save and keeps after a failure; theme sync |
+| 11 | Low | The password input is uncontrolled. Its value is read from the ref on submit and cleared through the ref, never kept in state or the value attribute | `views.test.ts` (no value attribute on the input); `actions.test.ts` (submitSecret) |
+| 12 | Low | `num` added to the dialog titles (Install, Roll back), the roll back body and alert, and the restart panel's line | `views.test.ts` |
+| 13 | Low | The optional-token line is hidden in a development copy (`showEmpty`) | `updatesModel.test.ts`; `views.test.ts` |
+| 14 | Low | Install's `aria-describedby` points at the no-key notice when the build has no key | `views.test.ts`; `updatesModel.test.ts` (`why: "no-key"`) |
+| 15 | Low | The busy notice reuses API_ERRORS.busy (`BUSY_LINE`) | `updatesModel.test.ts` |
+| 16 | Low | No answer is never stated as an outcome. The new lead wording is listed below | `actions.test.ts`; `updatesModel.test.ts` |
+| 17 | Low | ConfirmDialog opens and closes only on a change of `open`, through a ref guard. A change of `danger` while open moves nothing | the dialog tests; pane (Esc and focus back still work) |
+| 18 | Low | An Install or Roll back request still unanswered after 3 minutes falls through to the restart panel (`SEND_WAIT_MS`) | `switchStore.test.ts` |
+| 19 | Low | A 409 busy after Check now (or after a switch) uses the info tone, as the GET state does | `actions.test.ts`; `switchStore.test.ts`; `views.test.ts` |
+| 20 | Low | The token's expiry shows the date only. The notice reads "Your GitHub token expires in N days, on <date>. Make a new one before then." ("1 day"; past or today falls back to 13's "expires on <date>") | `updatesModel.test.ts`; pane |
+| 21 | Low | No chunk split, as asked. The build's main chunk is now 510.6 kB (the 500 kB advice) | none |
+
+**Wording changed or added in this round (for 13; the §4 list above is otherwise current):**
+- **Roll back dialog** (13 §6, the owner's decision):
+  - Lines: "ShelfSync will close and open again." + "<version> didn't change the database, so your data stays as it is. You can install <version> again from Settings › Updates."
+  - Or: "<version> changed the database. ShelfSync restores the backup taken just before the update, on <date>. Changes made since then are lost and can't be brought back. You can install <version> again from Settings › Updates." + "A copy of the current data is kept in the backups folder."
+  - No-date variant: drop ", on <date>".
+  - Buttons: "Roll back" and "Cancel".
+- **Restart panel** (proposed): "When ShelfSync is back, it opens in a new tab." When a new copy answers, it becomes "ShelfSync is back" / "It opened in a new tab, signed in. You can close this one." This replaces "This tab reloads when ShelfSync <v> answers."
+- **No answer** (lead wording):
+  - "ShelfSync didn't answer, so the reset may not have happened. Reload this page to check."
+  - "ShelfSync didn't answer, so the settings may not have been saved. Reload this page to check."
+  - "ShelfSync didn't answer, so the token may not have been saved. Reload this page to check."
+  - "ShelfSync didn't answer, so the token may not have been removed. Reload this page to check."
+  - "ShelfSync didn't answer, so that may not have happened. Reload this page to check." (any Updates action)
+  - "The theme applies to this tab, but it may not have been saved. Reload this page to check."
+- **Stale page** (proposed): "ShelfSync didn't answer just now, so this may be out of date."
+- **Token expiry** (13 §3 + the mockup): "Your GitHub token expires in <n> days, on <date>. Make a new one before then." ("in 1 day"), with the date only. "Expires on <date>." beside Saved, also the date only.
+
+**Run after the fixes (this PC).** All five ran through `tools/heavy.sh`:
+- `npm run lint`: passed (78 files).
+- `npm run typecheck`: passed.
+- `npm test`: 539 passed in 16 files.
+- `npm run build`: passed, with the same chunk-size warning.
+- `npm run schema:check`: current.
+
+`uv run pytest` was not run again: no backend file changed since the 1437-passed run in §4.
+
+**Fresh screenshots** are in `.logs/shots/m1b.4/` (pane, 1280 × 900, mocked sample answers):
+- Restart panel: `review-restart-waiting-light-1280.jpg`, `review-restart-waiting-dark-1280.jpg`, `review-restart-back-light-1280.jpg`, `review-restart-back-dark-1280.jpg`
+- Roll back, files only: `review-dialog-rollback-files-light-1280.jpg`, `review-dialog-rollback-files-dark-1280.jpg`
+- Roll back, database changed: `review-dialog-rollback-database-light-1280.jpg`, `review-dialog-rollback-database-dark-1280.jpg`
+- Expiry notice: `review-updates-ready-expiry-days-light-1280.jpg`
+
+The mock's restart sends empty answers while ShelfSync is "gone", then a new copy that answers the session check with 401. The console showed only those deliberate failures.
+
+**Not verified:**
+- Chrome's second-Esc close while busy, in a real browser. It is covered by the fake in `dialog.test.ts`, but the only busy dialog (Reset) answers too fast to try by hand.
+- The real switcher.
+- Playwright and axe, which run in CI only.
 
 ## 6. Integration notes
 _(lead)_
