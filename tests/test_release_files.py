@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 RELEASE = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+RELEASE_BUILD = (REPO / "packaging" / "release-build.ps1").read_text(encoding="utf-8")
 CHECKS = (REPO / ".github" / "workflows" / "checks.yml").read_text(encoding="utf-8")
 NSI = (REPO / "packaging" / "ShelfSync.nsi").read_text(encoding="utf-8")
 
@@ -59,9 +60,31 @@ def test_the_nsis_zip_is_checked_against_the_pinned_hash() -> None:
 
 def test_the_release_workflow_runs_the_smoke_the_installer_test_and_the_sentinel() -> None:
     """04-A V38, V40, V47."""
-    for step in ("packaging/build.py", "packaging/smoke.py", "makensis", "packaging/test-installer.ps1"):
-        assert step in RELEASE or step.removeprefix("packaging/") in RELEASE
-    assert "-RemoveData" in RELEASE
+    for step in (
+        "packaging/build.py",
+        "packaging/smoke.py",
+        "$Makensis",
+        "test-installer.ps1",
+        "shelfsync.update.manifest",
+    ):
+        assert step in RELEASE_BUILD
+    assert "-RemoveData" in RELEASE_BUILD
+
+
+def test_release_yml_runs_the_one_release_script_the_pc_runs_too() -> None:
+    """The release steps live in packaging/release-build.ps1, so a local run before a push proves what CI will run;
+    release.yml only calls it (no makensis, build.py or smoke.py of its own)."""
+    assert "./packaging/release-build.ps1" in RELEASE and "-RealSecrets" in RELEASE
+    for own in ("python -I packaging/", "& $env:NSIS_MAKENSIS", "./packaging/test-installer.ps1", "update.manifest"):
+        assert own not in RELEASE
+    assert "Set-Location $repo" in RELEASE_BUILD  # every relative path is the repo root's, wherever it's called from
+
+
+def test_the_nsi_names_its_brand_files_relative_to_its_own_folder() -> None:
+    r"""release.yml's first compile: a relative `${__FILEDIR__}` was applied twice (makensis changes into the script's
+    folder), so packaging\packaging\..\brand wasn't found."""
+    assert not re.search(r'^!define [A-Z_]+ "\$\{__FILEDIR__\}', NSI, re.MULTILINE)
+    assert r'!define MUI_ICON "..\brand\assets\app\shelfsync.ico"' in NSI
 
 
 def test_the_installer_is_per_user_and_writes_the_contract_keys() -> None:
@@ -195,7 +218,7 @@ def test_the_installer_script_plants_a_killed_switch() -> None:
 
 def test_the_workflow_builds_the_extra_setups_for_the_upgrade_and_older_checks() -> None:
     """Review round 1 (LOW 11): exit 6, the prune and the running refusal run in CI."""
-    assert "/DFAST" in RELEASE and "-OlderSetup" in RELEASE and "-NewerSetup" in RELEASE
+    assert "/DFAST" in RELEASE_BUILD and "-OlderSetup" in RELEASE_BUILD and "-NewerSetup" in RELEASE_BUILD
 
 
 def test_round_6_one_exit_code_list_and_the_cant_check_notice() -> None:

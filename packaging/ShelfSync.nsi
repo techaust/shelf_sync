@@ -95,14 +95,16 @@ Var RemoveData
 Var RemoveDataBox
 
 ; ---- MUI -----------------------------------------------------------------------------------------------------------
-!define MUI_ICON "${__FILEDIR__}\..\brand\assets\app\shelfsync.ico"
-!define MUI_UNICON "${__FILEDIR__}\..\brand\assets\app\shelfsync.ico"
+; makensis changes into this script's folder before compiling, so these are relative to packaging\. (${__FILEDIR__} is
+; relative when the script is given by a relative path, and was then applied twice: release.yml's first compile.)
+!define MUI_ICON "..\brand\assets\app\shelfsync.ico"
+!define MUI_UNICON "..\brand\assets\app\shelfsync.ico"
 !define MUI_ABORTWARNING
 !define MUI_HEADERIMAGE
-!define MUI_HEADERIMAGE_BITMAP "${__FILEDIR__}\..\brand\assets\installer\installer-header.bmp"
-!define MUI_HEADERIMAGE_UNBITMAP "${__FILEDIR__}\..\brand\assets\installer\installer-header.bmp"
-!define MUI_WELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\..\brand\assets\installer\installer-panel.bmp"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "${__FILEDIR__}\..\brand\assets\installer\installer-panel.bmp"
+!define MUI_HEADERIMAGE_BITMAP "..\brand\assets\installer\installer-header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "..\brand\assets\installer\installer-header.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "..\brand\assets\installer\installer-panel.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "..\brand\assets\installer\installer-panel.bmp"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
