@@ -38,3 +38,4 @@ desktop.ini
 
 # Agent worktrees
 .claude/worktrees/
+build-cache/
