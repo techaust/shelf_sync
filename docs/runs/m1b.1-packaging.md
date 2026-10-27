@@ -242,8 +242,36 @@ In the NSIS string table (`packaging/ShelfSync.nsi`):
 ## 4. Designer report
 _(none: the installer uses the existing brand art)_
 
-## 5. Review
-_(reviewer: `code-review` + `security-review`)_
+## 5. Review (round 1, SEND BACK)
+Findings as sent by the lead; every fix is in commit `8beabd4` (branch `m1b.1-build`).
+
+| Id | Where | Finding | Fix |
+|---|---|---|---|
+| HIGH 1 | `ShelfSync.nsi` `UnlinkAll`/`RemoveTreeSafely` | `dir /AL /S /B X` never lists X itself, so `RMDir /r X` follows X when it is a junction (the installer's pre-clean or prune of a version folder, or `versions` itself at uninstall); the guard also fails if an `rmdir` fails or the path doesn't survive cmd's code page | Both removed. `DeleteTree` (System plugin, `GetFileAttributesW` on every entry, the top folder included): a reparse point (0x400) is removed itself with `RMDir`/`Delete`, real folders only are entered, and if anything is left the whole delete stops, a notice names the path and the exit code is 8. `test-installer.ps1` cases: a version folder that is a junction (pre-clean and prune), `versions` itself a junction, a junction held open so it can't be removed (exit 8, nothing behind it deleted, a second run succeeds), a link inside a junction's target |
+| MEDIUM 1 | nsi `current` | `current` removed before `mklink`: a failed `mklink` leaves no `current` | `current.next` is made first (a failure leaves `current` untouched); then `current` is moved to `current.old`, `current.next` into place, and `current` is put back if that fails. `STR_LINK_FAILED` now says the installed version was left as it was |
+| MEDIUM 2 | `uninstall.py`, `test_uninstall.py` | A data folder that is itself a link was unlinked, not reported | Left alone; exit 1 and the target is printed (so the uninstaller shows its partial notice); test updated |
+| MEDIUM 3 | nsi, `uninstall.py` | The "running" check is only in `.onInit`/`un.onInit` | `IsRunning`/`un.IsRunning` again at the top of both sections (exit 5). `remove_data` holds `default_instance_lock(paths)` for the whole job and refuses (exit 4, a new NSIS notice) if it is held or can't be checked; the lock file is removed last, after the lock is let go |
+| LOW 1 | `server.py`, `tray/instance.py` | `OSError` from `acquire()` gave the generic notice | It gives `START_FAILED_DATA_FOLDER`; `default_instance_lock(paths=None)` takes the data folder `run_application` resolved (no-argument calls still work) |
+| LOW 2 | `tray/instance.py` | A sharing violation was decided at once | Retried for 1 s; a folder where the file should be is still refused at once |
+| LOW 3 | nsi | Bare `cmd` | `"$SYSDIR\cmd.exe"` (the only remaining use, `mklink`) |
+| LOW 4 | nsi | `--remove-data` exit 3 told the owner to delete the folder | New `STR_DATA_NOT_OURS` ("left this folder alone ...") |
+| LOW 5 | nsi, `uninstall.py` | A `-rehearsal` build's `/REMOVEDATA` would touch the real Credential Manager service | `--service ShelfSync${SUFFIX}` is always passed; the module takes `--service` and accepts only `ShelfSync[A-Za-z0-9._-]*`. The `-RemoveData` rehearsal now runs locally |
+| LOW 6 | `tray/launcher.py` | A `--background` second launch opened a tab | Exits 0 quietly, no tab, no toast |
+| LOW 7 | `tray/launcher.py` | `add_quit_guard` docstring | Guards may run on the tray's or a server thread: thread-safe, never block on either loop |
+| LOW 8 | `platform/notify.py` | `_toaster_aumid` written, never read | Dropped |
+| LOW 9 | nsi | Older-Setup guard used only `DisplayVersion` | Also compares every version folder name under `versions\` that starts with a digit; tested by setting `DisplayVersion` to 0.0.0 |
+| LOW 10 | `packaging/build.py` | Signer compared as a substring | `subject_fields()` parses `CN=`/`O=` and compares them exactly; spoofed subjects are tested |
+| LOW 11 | `test-installer.ps1`, `release.yml` | No CI test for exit 6, the prune and the running refusal; exit 5 not exact | The script covers all three (and the running refusal for the uninstaller), expects exit 5 exactly; `release.yml` compiles two extra `/DFAST` Setups (0.0.1, 99.0.0, test files only) and passes them |
+| LOW 12 | `tray/instance.py`, `secure/token.py` | `FakeFileLock`; the `INSTALL_TOKEN_NAME` alias | `FakeFileLock` merged into `FakeInstanceLock`. The alias is **kept**: `second_launch`, `launcher`, the token code and many tests import `INSTALL_TOKEN_NAME` from `secure.token` |
+| Extra | `_pth` | Does `python314._pth` give isolated mode? | **Yes** (checked): in the built folder `sys.flags.isolated == 1`, `safe_path == True`, `PYTHONPATH` is ignored and the working folder is not on `sys.path` (a `json.py` and a probe module in the cwd with `PYTHONPATH` set were not loaded). `smoke.py` now asserts it, so a start from any working folder loads nothing from it; no shortcut start-in change was needed |
+
+## 3b. Fixes (round 1)
+All of §5's findings are fixed in `8beabd4`. Re-run after the fixes (all with `UV_PYTHON_DOWNLOADS=never`):
+- `ruff check` and `ruff format --check`: clean (89 files). `mypy`: no issues, 40 files. `bandit -r backend`: no issues. `pip-audit`: not re-run (no dependency changed since the last clean run).
+- `pytest`: **786 passed, 12 skipped** (Windows only; Linux not run). `pytest -m windows --no-cov`: **38 passed**, 1 skipped (the V31 Defender check).
+- Rebuilt: `build.py` (exact signer check passed on all 33 files), `smoke.py` (now also asserts the isolated Python): passed. Four Setups compiled with `makensis` v3.13 (`-rehearsal` suffix; the 0.1.0 one, 0.0.1 and 99.0.0 with `/DFAST`).
+- Local rehearsal, `test-installer.ps1 ... -OlderSetup -NewerSetup -NewerVersion 99.0.0 -RemoveData`: **70 checks, all ok** (log `.logs/install-rehearsal-r2.log`). Includes: install, contract keys, shortcuts; Setup and uninstaller both refuse with exit 5 while `instance.lock` is held; sentinel junction survives; a version folder that is a junction survives the installer's pre-clean and its prune; `versions` as a junction survives the uninstall; a held junction makes the uninstall stop with exit 8 and delete nothing behind it, and the retry finishes; upgrade keeps `0.1.0` and `99.0.0` only; a repair removes nothing; an older Setup is refused with exit 6, also when only the version folders show it; `/REMOVEDATA` removed the throwaway data folder and spared the file behind a junction inside it (the suffixed build used the throwaway Credential Manager service `ShelfSync-rehearsal`).
+- Still not verified: the same list as in §3 (release.yml never run; installer screens; clean-account and `reg query` outside Claude). New: the NSIS `DeleteTree` was exercised through the CI-style script only, not through the GUI uninstaller.
 
 ## 6. Integration notes
 _(lead)_
