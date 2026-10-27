@@ -145,6 +145,13 @@ _(builder, Sonnet 5.5; commit c566c1a)_ All nine review findings fixed:
 
 Checks (same as before): `pytest` 692 passed, 9 skipped, 32 deselected; `mypy` clean (38 files); `ruff check` and `ruff format --check` clean; `bandit` exit 0; `pytest -m windows --no-cov` 31 passed, 1 skipped (V31); pip-audit not re-run (no dependency changed). Hand check re-run with the real launcher under `pythonw` (throwaway data folder, removed): exit 0 in 11.1 s, "Threads at exit: MainThread", `shutdown-stall.txt` empty. Not verified: the symlink tests (skipped on this account), a real tray click.
 
+### Fix round 2
+_(builder, Sonnet 5.5)_
+- **A:** `ExitGuard.arm()` removes whatever is at `tmp\shutdown-stall.txt` (suppressing OSError) and then creates it with `"xb"`, so an entry that couldn't be removed makes the open fail (FileExistsError, an OSError the launcher logs) instead of being written through; the comment that claimed otherwise is fixed. Test `test_arming_never_writes_through_a_link_that_cant_be_removed` (removal patched to fail, hard link; the symlink variant skipped here) leaves the target untouched.
+- **B:** the arm wrapper in `TrayServe` catches `Exception` (same WARNING with the class name; test parametrized with PermissionError and RuntimeError). `STAGE2_SECONDS` is now **10 s** (docstrings and tests updated), because `run()`'s crash path has to finish its SERVER_STOPPED toast inside stage 2 and a cold toast hasn't been timed.
+- **Style:** `paths._remove_entry` is now public `paths.remove_entry`, and `is_plain_file` moved into `paths.py`; `exit_guard.py` and `server.py` use them (`empty_tmp` behaves as before).
+- Checks: `ruff check`, `ruff format --check` clean; `mypy` clean; `bandit` exit 0; `pytest` 694 passed (before the last docstring-only edit), 10 skipped, 32 deselected; `pytest -m windows --no-cov` 31 passed, 1 skipped. Not run: the symlink variants (this account can't make symlinks).
+
 ## 4. Designer report
 _(no screens)_
 

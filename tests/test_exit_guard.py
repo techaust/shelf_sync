@@ -103,8 +103,8 @@ def test_exit_guard_arms_on_quit_crash_and_ctrl_c_and_rearms_after_run_applicati
 def test_a_guard_that_cant_be_armed_doesnt_stop_the_shut_down(
     data_paths: DataPaths, caplog: pytest.LogCaptureFixture, error: Exception
 ) -> None:
-    """SYS-02: any error from arming (an OSError from the stall file, or another) is logged; the tray still stops, uvicorn is told to
-    exit, Quit still ends with `run()`'s exit code 0 (not "start-up failed")."""
+    """SYS-02: any error from arming (an OSError from the stall file, or another) is logged;
+    the tray still stops, uvicorn is told to exit, Quit still ends with `run()`'s code 0 (not "start-up failed")."""
 
     class Broken(FakeGuard):
         def arm(self, seconds: float) -> None:
