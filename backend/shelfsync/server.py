@@ -41,6 +41,7 @@ from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 from shelfsync.secure.token import InstallToken
+from shelfsync.store_service import build_store_service
 from shelfsync.tray.exit_guard import STALL_FILE_NAME, remove_unsafe_entry
 from shelfsync.tray.instance import InstanceLock, default_instance_lock
 from shelfsync.update.service import build_update_service
@@ -203,12 +204,15 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
+        stores = build_store_service(paths, secrets)
+        stores.register_secrets()  # every stored key is masked in the log from the first line on (a failure only warns)
         app = create_app(
             port,
             install_token,
             ui_dir=ui,
             updates=build_update_service(paths, secrets),
             app_settings=AppSettingsService(lambda: connect(paths.database), port, handler, run_key, installed),
+            stores=stores,
         )
         serve(app, sock)
     finally:

@@ -36,6 +36,14 @@ ErrorCode = Literal[
     "cannot_restart",
     "too_soon",
     "confirm_required",
+    # Stores (M2.1): 404 `not_found`; 409 `store_exists`, `code_taken`, `keys_missing`, `busy`; 422 `keys_required`;
+    # 503 `secrets_unavailable`
+    "not_found",
+    "store_exists",
+    "code_taken",
+    "keys_missing",
+    "keys_required",
+    "secrets_unavailable",
 ]
 
 CONTENT_SECURITY_POLICY = (

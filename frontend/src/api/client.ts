@@ -36,6 +36,13 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   cannot_restart: true,
   too_soon: true,
   confirm_required: true,
+  // Stores (M2.1): 404 not_found; 409 store_exists, code_taken, keys_missing, busy; 422 keys_required; 503 secrets_unavailable
+  not_found: true,
+  store_exists: true,
+  code_taken: true,
+  keys_missing: true,
+  keys_required: true,
+  secrets_unavailable: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 
