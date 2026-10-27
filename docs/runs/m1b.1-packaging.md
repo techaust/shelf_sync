@@ -303,6 +303,17 @@ Tests added: `test_uninstall.py` (dangling link before lock, `lexists`, no fallb
 
 Re-run: ruff check and format clean (89 files); mypy no issues (40 files); bandit no issues; `pytest` **799 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py` and `smoke.py` passed; four Setups compiled; local rehearsal with `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r4.log`). The notice texts were not seen (silent runs).
 
+### Review round 4 (APPROVE for the PR) and small fixes
+| Id | Where | Finding | Fix |
+|---|---|---|---|
+| N1 | nsi `STR_RESTORE_FAILED` | Wrong on one of its two paths | "...couldn't finish switching ShelfSync to the new version, so it has no working version right now. Run the installer again to finish the install." |
+| N2 | nsi, `uninstall.py` | A Credential Manager failure shared the data-left notice; a non-numeric `$3` fell into it | Exit 5 = only an entry couldn't be removed, 6 = both, 1 = data left (now only data); new `STR_DATA_SECRETS` names Credential Manager and says the token may still be stored; `STR_DATA_PARTIAL` is for data only. Anything else in `$3` (99 no Python, nsExec "error" or "timeout", exit 2, a crash) is `STR_DATA_NOTHING`. Tests for 1, 5 and 6 and for the nsi branches |
+| N3 | `uninstall.py` | A dangling link skipped every lock | The session mutex (`WindowsInstanceLock`) is taken on its own (injectable `session_lock`); held or unavailable gives exit 4 and nothing removed |
+| Order | nsi | "Remove my data" fallback | `current`, then `current.next` (the newer build, with the longer `OWNED_SECRET_NAMES`), then `current.old` |
+| Port | test run | The reviewer's run hit a held 127.0.0.1:47615 | Checked before the full run (`Get-NetTCPConnection -LocalPort 47615`: nothing listening; `heavy.sh` also queues behind the other builder's runs). The clean run is reported below |
+
+Re-run: ruff check and format clean (89 files); mypy no issues; bandit no issues; `pytest` **802 passed, 12 skipped** (clean run, port free); `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py` and `smoke.py` passed; four Setups compiled; local rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r5.log`). The notice texts were not seen (silent runs), and exit codes 5 and 6 are exercised by the Python tests only, not by a real Credential Manager failure.
+
 ## 6. Integration notes
 _(lead)_
 

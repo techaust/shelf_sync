@@ -6,8 +6,9 @@ entry ShelfSync owns (`platform.secrets.OWNED_SECRET_NAMES`), then the data fold
 junction in it (`paths.remove_entry`). It carries on after a failure so one locked file doesn't leave the rest behind,
 and reports what is left. The lock file is the last thing removed, after the lock is let go.
 
-Exit codes: 0 everything removed; 1 something couldn't be removed or a data folder that is itself a link was left
-alone (the uninstaller says so, names the folder and goes on removing the program); 3 refused (the folder doesn't look
+Exit codes: 0 everything removed; 1 data was left behind (an entry in the data folder couldn't be removed, or the
+data folder is itself a link and was left alone); 5 only a Credential Manager entry couldn't be removed; 6 both
+(the uninstaller says so, names the folder and goes on removing the program); 3 refused (the folder doesn't look
 like ShelfSync's data folder, or no data folder is known: nothing was touched); 4 ShelfSync is running (nothing was
 touched). Output names entries and folders, never a secret. `--service` names the Credential Manager service (the
 default is ShelfSync's own; a throwaway build of the installer passes its own so it never touches the real one).
@@ -17,7 +18,7 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from shelfsync.paths import DataPaths, remove_entry, resolve_data_paths
@@ -28,12 +29,14 @@ from shelfsync.platform.secrets import (
     SecretStore,
     SecretStoreError,
 )
-from shelfsync.tray.instance import InstanceLock, default_instance_lock
+from shelfsync.tray.instance import InstanceLock, WindowsInstanceLock, default_instance_lock
 
 EXIT_OK = 0
 EXIT_INCOMPLETE = 1
 EXIT_REFUSED = 3
 EXIT_RUNNING = 4
+EXIT_SECRETS = 5  # only a Credential Manager entry couldn't be removed (the data is gone)
+EXIT_BOTH = 6  # data was left behind and an entry couldn't be removed
 
 _SERVICE = re.compile(r"ShelfSync[A-Za-z0-9._-]*")
 
@@ -116,26 +119,33 @@ def _say(text: str) -> None:
     sys.stdout.write(text + "\n")
 
 
-def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: InstanceLock | None = None) -> int:
+def remove_data(
+    paths: DataPaths,
+    store: SecretStore | None = None,
+    lock: InstanceLock | None = None,
+    session_lock: Callable[[], InstanceLock] = WindowsInstanceLock,
+) -> int:
     """The whole job; returns the exit code."""
     if not looks_like_data_folder(paths.root):
         _say(f"Refused: {paths.root} doesn't look like ShelfSync's data folder.")
         return EXIT_REFUSED
     link = is_link(paths.root)
     instance: InstanceLock | None = None
-    if not (link and not paths.root.exists()):
-        # A live link takes the lock through it, as a plain folder does. A dangling one can't hold a lock file, so the
-        # lock is skipped: that must never read as "running".
-        try:
-            instance = lock if lock is not None else default_instance_lock(paths)
-            free = instance.acquire()
-        except OSError:
-            free = False  # can't tell: treat it as running, touch nothing
-        if not free:
-            _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
-            return EXIT_RUNNING
     try:
-        problems = 0
+        if link and not paths.root.exists():
+            # A dangling link can't hold a lock file, so the file lock is skipped (that must never read as "running"),
+            # but the session mutex is still taken on its own: a running copy holds it.
+            instance = session_lock()
+        else:
+            # A live link takes the lock through it, as a plain folder does.
+            instance = lock if lock is not None else default_instance_lock(paths)
+        free = instance.acquire()
+    except OSError:
+        free = False  # can't tell: treat it as running, touch nothing
+    if not free:
+        _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
+        return EXIT_RUNNING
+    try:
         try:
             secret_store = store if store is not None else KeyringSecretStore(SERVICE_NAME)
             failed_secrets = remove_secrets(secret_store)
@@ -143,17 +153,17 @@ def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: Instan
             failed_secrets = list(OWNED_SECRET_NAMES)
         for name in failed_secrets:
             _say(f"Couldn't remove the Credential Manager entry {name}.")
-            problems += 1
+        data_left = False
         if link:
-            _say(
-                f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone."
-                " The stored sign-in token was removed where possible."
-            )
-            return EXIT_INCOMPLETE
-        for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
-            _say(f"Couldn't remove {name} in {paths.root}.")
-            problems += 1
-        return EXIT_OK if problems == 0 else EXIT_INCOMPLETE
+            _say(f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone.")
+            data_left = True
+        else:
+            for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
+                _say(f"Couldn't remove {name} in {paths.root}.")
+                data_left = True
+        if data_left:
+            return EXIT_BOTH if failed_secrets else EXIT_INCOMPLETE
+        return EXIT_SECRETS if failed_secrets else EXIT_OK
     finally:
         if instance is not None:
             instance.release()  # a second release is harmless

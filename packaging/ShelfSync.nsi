@@ -49,13 +49,14 @@ ManifestDPIAware true
 !define STR_LINK_FAILED "The installer couldn't switch ShelfSync to the new version. The version you had installed was left as it was. Close any window showing the ShelfSync folder and run the installer again."
 !define STR_STUCK_SETUP "The installer couldn't remove a file or link in its program folder. Close any window that's using it, then run the installer again. This is what couldn't be removed:"
 !define STR_STUCK_UNINSTALL "The uninstaller couldn't remove a file or link in its program folder. Close any window that's using it, then run the uninstaller again. This is what couldn't be removed:"
-!define STR_RESTORE_FAILED "The installer couldn't finish switching ShelfSync to the new version, and couldn't put the old one back. Run the installer again to finish the install."
+!define STR_RESTORE_FAILED "The installer couldn't finish switching ShelfSync to the new version, so it has no working version right now. Run the installer again to finish the install."
 !define STR_DATA_NOT_OURS "ShelfSync left this folder alone because it doesn't look like ShelfSync's own data folder:"
 !define STR_FINISH_RUN "Open ShelfSync"
 !define STR_DATA_TITLE "Remove my data"
 !define STR_DATA_TEXT "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."
 !define STR_DATA_CHECK "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
-!define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. The stored sign-in token was removed where possible. Delete what is left yourself if you want it gone; this is the data folder:"
+!define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. Delete what is left yourself if you want it gone; this is the data folder:"
+!define STR_DATA_SECRETS "ShelfSync couldn't remove its stored sign-in token from Windows Credential Manager, so it may still be stored there. You can delete the ShelfSync entry under Windows Credentials in Credential Manager."
 !define STR_DATA_NOTHING "ShelfSync couldn't find its own program to remove your data with, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 
 Name "${APP_NAME}"
@@ -486,17 +487,19 @@ Section "Uninstall"
   ; 2. "Remove my data": the app's own module removes the Credential Manager entries it owns and the data folder, from
   ;    the installed Python and before any program file goes. A failure is reported; the program is still removed.
   ;    --service keeps a throwaway build (SUFFIX) away from the real ShelfSync Credential Manager service.
-  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 part is left
-  ;    (the tokens are removed even when the data folder is a link and its data is left). 99 here: no Python was found.
+  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 data is left
+  ;    (the tokens are removed even when the data folder is a link and its data is left); 5 only a Credential Manager entry
+  ;    is left; 6 both. See the notices below.
   ${If} $RemoveData == 1
-    ; After a killed switch `current` may be missing: fall back to `current.old`, then `current.next`.
+    ; After a killed switch `current` may be missing: fall back to `current.next` (the newer build, with the
+    ; longer list of owned secrets), then `current.old`.
     StrCpy $4 ""
     ${If} ${FileExists} "$INSTDIR\current\python.exe"
       StrCpy $4 "$INSTDIR\current\python.exe"
-    ${ElseIf} ${FileExists} "$INSTDIR\current.old\python.exe"
-      StrCpy $4 "$INSTDIR\current.old\python.exe"
     ${ElseIf} ${FileExists} "$INSTDIR\current.next\python.exe"
       StrCpy $4 "$INSTDIR\current.next\python.exe"
+    ${ElseIf} ${FileExists} "$INSTDIR\current.old\python.exe"
+      StrCpy $4 "$INSTDIR\current.old\python.exe"
     ${EndIf}
     StrCpy $3 99
     ${If} $4 != ""
@@ -504,16 +507,24 @@ Section "Uninstall"
       Pop $3
     ${EndIf}
     Call un.GetDataDir
-    ${If} $3 == 99
-      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOTHING}" /SD IDOK
+    ; 0 done; 1 data left behind; 3 not ShelfSync's folder; 4 running; 5 only a Credential Manager entry is left; 6 both.
+    ; Anything else (99 here: no Python; nsExec's "error" or "timeout"; exit 2; a crash) is "nothing was removed".
+    ${If} $3 == 0
+    ${ElseIf} $3 == 1
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK
     ${ElseIf} $3 == 3
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOT_OURS}$\r$\n$0" /SD IDOK
     ${ElseIf} $3 == 4
       MessageBox MB_OK|MB_ICONSTOP "${STR_RUNNING_UNINSTALL}" /SD IDOK
       SetErrorLevel 5
       Abort
-    ${ElseIf} $3 != 0
+    ${ElseIf} $3 == 5
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_SECRETS}" /SD IDOK
+    ${ElseIf} $3 == 6
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_SECRETS}" /SD IDOK
+    ${Else}
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOTHING}" /SD IDOK
     ${EndIf}
   ${EndIf}
 

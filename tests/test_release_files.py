@@ -166,10 +166,21 @@ def test_round_3_guards_are_in_the_installer_script() -> None:
     first = section.index('"$INSTDIR\\current\\python.exe"')
     assert (
         first
-        < section.index('"$INSTDIR\\current.old\\python.exe"')
         < section.index('"$INSTDIR\\current.next\\python.exe"')
+        < section.index('"$INSTDIR\\current.old\\python.exe"')
+    )  # round 4: the newer build first (its list of owned secrets is the longer one)
+    assert "StrCpy $3 99" in section and "!define STR_DATA_NOTHING" in NSI
+    # Round 4: each exit code has its own branch; anything else (nsExec's "error", exit 2) is "nothing removed".
+    for code in ("== 1", "== 3", "== 4", "== 5", "== 6"):
+        assert f"${{ElseIf}} $3 {code}" in section
+    assert section.index("${ElseIf} $3 == 6") < section.index(
+        '${Else}\n      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOTHING}"'
     )
-    assert "${If} $3 == 99" in section and "!define STR_DATA_NOTHING" in NSI
+    assert (
+        "!define STR_DATA_SECRETS" in NSI
+        and "Credential Manager" in NSI.split("!define STR_DATA_SECRETS")[1].split("\n")[0]
+    )
+    assert "so it has no working version right now" in NSI
     script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
     assert "remove-data-killed-switch" in script and "remove-data-no-python" in script
     assert "function Plant-KilledSwitch([string]$old, [string]$next)" in script

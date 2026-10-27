@@ -123,7 +123,7 @@ def test_an_entry_that_cant_be_removed_gives_a_nonzero_exit_and_the_data_still_g
     paths = make_data(tmp_path)
     store = StuckStore()
     store.set(INSTALL_TOKEN_NAME, "SECRET-VALUE-123")
-    assert uninstall.remove_data(paths, store, FakeInstanceLock(set())) == uninstall.EXIT_INCOMPLETE
+    assert uninstall.remove_data(paths, store, FakeInstanceLock(set())) == uninstall.EXIT_SECRETS
     out = capsys.readouterr().out
     assert INSTALL_TOKEN_NAME in out and "SECRET-VALUE-123" not in out
     assert not paths.root.exists()
@@ -201,7 +201,7 @@ def test_a_store_that_cant_even_be_opened_is_an_incomplete_removal(
 
     monkeypatch.setattr(uninstall, "KeyringSecretStore", broken)
     paths = make_data(tmp_path)
-    assert uninstall.remove_data(paths, None, FakeInstanceLock(set())) == uninstall.EXIT_INCOMPLETE
+    assert uninstall.remove_data(paths, None, FakeInstanceLock(set())) == uninstall.EXIT_SECRETS
     assert not paths.root.exists()
 
 
@@ -297,7 +297,8 @@ def test_a_dangling_link_as_the_data_folder_is_reported_not_called_running(
     broken = FakeInstanceLock({"x"}, "x")  # would say "running" if it were asked
     store = MemorySecretStore()
     store.set(INSTALL_TOKEN_NAME, "value")
-    assert uninstall.remove_data(DataPaths(link), store, broken) == uninstall.EXIT_INCOMPLETE
+    code = uninstall.remove_data(DataPaths(link), store, broken, lambda: FakeInstanceLock(set(), "mutex"))
+    assert code == uninstall.EXIT_INCOMPLETE
     out = capsys.readouterr().out
     assert "link" in out and "running" not in out
     assert store.get(INSTALL_TOKEN_NAME) is None  # the stored tokens are removed even though the folder is dangling
@@ -327,7 +328,54 @@ def test_a_service_whose_store_cant_be_built_never_falls_back_to_the_real_one(
     data_paths.root.mkdir(parents=True)
     (data_paths.root / "shelfsync.db").write_text("db", encoding="utf-8")
     code = uninstall.main(["--remove-data", "--service", "ShelfSync-x"], lock=FakeInstanceLock(set()))
-    assert code == uninstall.EXIT_INCOMPLETE
+    assert code == uninstall.EXIT_SECRETS
     assert built == ["ShelfSync-x"]
     assert "install-token" in capsys.readouterr().out
     assert not data_paths.root.exists()
+
+
+def test_a_dangling_link_still_takes_the_session_mutex_and_refuses_while_it_is_held(tmp_path: Path) -> None:
+    """SYS-08: no lock file through a dangling link, but a running copy's session mutex still refuses (exit 4)."""
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    link = tmp_path / "ShelfSync"
+    if not make_link(link, gone):
+        pytest.skip("this account can't make directory links")
+    gone.rmdir()
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    held = FakeInstanceLock({"mutex"}, "mutex")
+    assert uninstall.remove_data(DataPaths(link), store, None, lambda: held) == uninstall.EXIT_RUNNING
+    assert store.get(INSTALL_TOKEN_NAME) == "value"
+
+
+def test_a_mutex_that_cant_be_taken_counts_as_running_for_a_dangling_link(tmp_path: Path) -> None:
+    """SYS-08: fail closed (off Windows the real mutex refuses to be built)."""
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    link = tmp_path / "ShelfSync"
+    if not make_link(link, gone):
+        pytest.skip("this account can't make directory links")
+    gone.rmdir()
+
+    def refuse() -> FakeInstanceLock:
+        raise OSError("no mutex")
+
+    assert uninstall.remove_data(DataPaths(link), MemorySecretStore(), None, refuse) == uninstall.EXIT_RUNNING
+
+
+def test_the_exit_codes_tell_data_left_from_a_token_left(tmp_path: Path) -> None:
+    """SYS-08: 1 data left, 5 only the token left, 6 both, 0 neither."""
+    paths = make_data(tmp_path)
+    assert uninstall.remove_data(paths, StuckStore(), FakeInstanceLock(set())) == uninstall.EXIT_SECRETS == 5
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "ShelfSync2"
+    if not make_link(link, real):
+        pytest.skip("this account can't make directory links")
+    assert uninstall.remove_data(DataPaths(link), StuckStore(), FakeInstanceLock(set())) == uninstall.EXIT_BOTH == 6
+    assert (
+        uninstall.remove_data(DataPaths(link), MemorySecretStore(), FakeInstanceLock(set()))
+        == uninstall.EXIT_INCOMPLETE
+        == 1
+    )
