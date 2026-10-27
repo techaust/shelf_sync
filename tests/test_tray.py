@@ -151,6 +151,8 @@ class FakeIcon:
     auto_ready: ClassVar[bool] = True
     stop_delay: ClassVar[float] = 0.0
     loop_never_ends: ClassVar[bool] = False  # `stop()` and `_stop()` post a message that is never handled
+    repost_ends_loop: ClassVar[bool] = False  # ... except that the second post (`_stop()`) is handled
+    menu_hook: ClassVar[Callable[[], None] | None] = None  # runs inside the `menu` setter (a slow rebuild)
 
     def __init__(self, name: str, icon: Any, title: str, menu: Any) -> None:
         self.name, self._icon, self.title, self._menu = name, icon, title, menu
@@ -182,6 +184,8 @@ class FakeIcon:
 
     @menu.setter
     def menu(self, value: Any) -> None:
+        if FakeIcon.menu_hook is not None:
+            FakeIcon.menu_hook()
         self._menu = value
         self.menus.append(value)
 
@@ -216,6 +220,8 @@ class FakeIcon:
     def _stop(self) -> None:
         """pystray's private re-post of the stop message."""
         self.reposts += 1
+        if FakeIcon.repost_ends_loop:
+            self.stop_event.set()
 
 
 class FakeMenu:
@@ -238,6 +244,8 @@ def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.SimpleNamesp
     FakeIcon.auto_ready = True
     FakeIcon.stop_delay = 0.0
     FakeIcon.loop_never_ends = False
+    FakeIcon.repost_ends_loop = False
+    FakeIcon.menu_hook = None
     module = types.SimpleNamespace(Icon=FakeIcon, Menu=FakeMenu, MenuItem=FakeMenuItem)
     monkeypatch.setitem(sys.modules, "pystray", module)
     yield module

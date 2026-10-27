@@ -190,13 +190,13 @@ class Tray:
             if self._ready.is_set() and loop is not None and loop is not threading.current_thread():
                 loop.join(timeout=2)
                 if loop.is_alive():
-                    self._force_stop(icon, loop)
+                    self._force_stop(icon, loop, started)
                     return
         if self._watcher is not None:
             self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
         _log.info("Tray stopped in %.1f s", time.monotonic() - started)
 
-    def _force_stop(self, icon: Any, loop: threading.Thread) -> None:
+    def _force_stop(self, icon: Any, loop: threading.Thread, started: float) -> None:
         """The message loop didn't end in time: post the stop again, and take the icon out of the tray ourselves."""
         _log.warning("The tray icon's message loop didn't end in 2 seconds")
         try:
@@ -210,6 +210,11 @@ class Tray:
         loop.join(timeout=1)
         if self._watcher is not None:
             self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
+        took = time.monotonic() - started  # since `stop()` began: this path returns early, so it reports its own time
+        if loop.is_alive():
+            _log.warning("Tray loop still running; icon hidden (%.1f s)", took)
+        else:
+            _log.info("Tray loop ended after the second stop (%.1f s)", took)
 
     def refresh(self) -> None:
         """The state or the taskbar theme changed: show the matching icon and rebuild the menu."""

@@ -23,7 +23,7 @@ from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 from shelfsync.secure.token import InstallToken
-from shelfsync.tray.exit_guard import STALL_FILE_NAME
+from shelfsync.tray.exit_guard import STALL_FILE_NAME, remove_unsafe_entry
 from shelfsync.tray.instance import InstanceLock, default_instance_lock
 
 HOST = "127.0.0.1"  # never anything else (NFR-5, 06 section 2)
@@ -123,8 +123,12 @@ STALL_REPORT_MAX_BYTES = 64 * 1024
 def _report_stalled_exit(paths: DataPaths) -> None:
     """The last exit stalled and the safety exit ended it: log what it dumped, through the redacting handler (06
     section 3). `empty_tmp` removes the file right after."""
+    path = paths.tmp / STALL_FILE_NAME
+    if remove_unsafe_entry(path):  # a link or a file with several names: never read, never followed
+        _log.warning("A link or shared file was found in place of the stall report; it was removed unread")
+        return
     try:
-        with (paths.tmp / STALL_FILE_NAME).open("rb") as stall_file:
+        with path.open("rb") as stall_file:
             content = stall_file.read(STALL_REPORT_MAX_BYTES)
     except OSError:  # no file (the usual case) or an unreadable one: nothing to report
         return

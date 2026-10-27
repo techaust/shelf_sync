@@ -1,9 +1,10 @@
-"""M1a.5, the safety exit (UI-TRAY, SYS-02, SYS-03): the guard is armed on every way out and re-armed after
-`run_application`; a stalled exit is ended with a stack dump that holds no values; the next start logs the dump
-through `redact` and removes it. A real guard never runs in-process (it would end pytest)."""
+"""M1a.5, the safety exit (UI-TRAY, SYS-02, SYS-03): the guard is armed on every way out and re-armed at the
+end of `TrayServe.__call__`; a stalled exit is ended with a stack dump that holds no values; the next start logs the
+dump through `redact` and removes it. A real guard never runs in-process (it would end pytest)."""
 
 import asyncio
 import faulthandler
+import os
 import subprocess
 import sys
 import textwrap
@@ -18,7 +19,7 @@ from shelfsync import server
 from shelfsync.paths import DataPaths
 from shelfsync.secure.redact import register_secret
 from shelfsync.tray import launcher
-from shelfsync.tray.exit_guard import STALL_FILE_NAME, ExitGuard
+from shelfsync.tray.exit_guard import STALL_FILE_NAME, ExitGuard, is_plain_file
 from tests.test_launcher import FakeTray, Running, wait_for
 from tests.test_run_application import go
 from tests.test_server import RecordingServe
@@ -53,7 +54,8 @@ def with_guard(running: Running) -> FakeGuard:
 def test_exit_guard_arms_on_quit_crash_and_ctrl_c_and_rearms_after_run_application(
     data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """UI-TRAY, SYS-02: stage 1 (45 s) on every way out, before the tray is stopped; stage 2 (5 s) in `main()`."""
+    """UI-TRAY, SYS-02: stage 1 (45 s) on every way out, before the tray is stopped; stage 2 (5 s) at the end of
+    `TrayServe.__call__`, so it covers run()'s clean-up and the lock release."""
     # Quit
     running = Running(data_paths)
     guard = with_guard(running)
@@ -62,7 +64,8 @@ def test_exit_guard_arms_on_quit_crash_and_ctrl_c_and_rearms_after_run_applicati
     running.start()
     FakeTray.on_stop = lambda: order.append(f"tray stopped after {guard.calls}")
     running.finish()
-    assert guard.calls == [("arm", launcher.STAGE1_SECONDS)] and launcher.STAGE1_SECONDS == 45.0
+    assert guard.calls == [("arm", 45.0), ("rearm", 5.0)]
+    assert (launcher.STAGE1_SECONDS, launcher.STAGE2_SECONDS) == (45.0, 5.0)
     assert order == ["tray stopped after [('arm', 45.0)]"]  # armed before the tray was stopped
 
     # Ctrl+C
@@ -80,7 +83,7 @@ def test_exit_guard_arms_on_quit_crash_and_ctrl_c_and_rearms_after_run_applicati
     monkeypatch.setattr(running.serve._quit, "wait", interrupted)
     running.thread.start()
     running.thread.join(timeout=20)
-    assert not running.thread.is_alive() and guard.calls == [("arm", 45.0)]
+    assert not running.thread.is_alive() and guard.calls == [("arm", 45.0), ("rearm", 5.0)]
 
     # a server crash
     def broken(self: Any, sockets: Any = None) -> None:
@@ -93,13 +96,52 @@ def test_exit_guard_arms_on_quit_crash_and_ctrl_c_and_rearms_after_run_applicati
     guard = with_guard(running)
     running.thread.start()
     running.thread.join(timeout=20)
-    assert not running.thread.is_alive() and guard.calls == [("arm", 45.0)]
+    assert not running.thread.is_alive() and guard.calls == [("arm", 45.0), ("rearm", 5.0)]
 
 
-def test_main_rearms_for_five_seconds_only_if_the_guard_was_armed(
+def test_a_guard_that_cant_be_armed_doesnt_stop_the_shut_down(
+    data_paths: DataPaths, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SYS-02: an OSError from opening the stall file is logged; the tray still stops, uvicorn is told to exit, Quit
+    still ends with `run()`'s exit code 0 (not "start-up failed")."""
+
+    class Broken(FakeGuard):
+        def arm(self, seconds: float) -> None:
+            raise PermissionError("no write access")
+
+    running = Running(data_paths)
+    guard = Broken()
+    running.serve._exit_guard = guard  # type: ignore[assignment]
+    running.start()
+    with caplog.at_level("WARNING"):
+        running.finish()
+    assert running.error == [] and running.tray.stopped
+    assert "The safety exit couldn't be armed (PermissionError)" in caplog.text
+    assert guard.calls == []  # never armed, so no stage 2 either
+    assert [t for t in threading.enumerate() if t.name == "uvicorn"] == []  # uvicorn was told to exit
+
+    code, *_ = go(RecordingServe())  # and `run()` itself still returns EXIT_OK on a clean Quit
+    assert code == server.EXIT_OK
+
+
+def test_an_open_that_fires_after_quit_opens_nothing(data_paths: DataPaths) -> None:
+    """UI-TRAY: an Open running in its action thread can fire after Quit; no tab then."""
+    running = Running(data_paths, open_first_tab=False)
+    running.start()
+    try:
+        running.serve.open_tab()
+        assert len(running.shell.urls) == 1
+        running.serve.request_quit()
+        running.serve.open_tab()
+        assert len(running.shell.urls) == 1
+    finally:
+        running.finish()
+
+
+def test_main_passes_the_data_folder_run_application_resolved_to_the_guard_factory(
     data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """UI-TRAY, SYS-02: stage 2."""
+    """UI-TRAY: the guard is built from `make_serve(paths)`'s paths, not from a second resolution."""
     from shelfsync.platform.notify import FakeNotifier
     from shelfsync.platform.secrets import MemorySecretStore
     from shelfsync.platform.shell import FakeShell
@@ -107,15 +149,20 @@ def test_main_rearms_for_five_seconds_only_if_the_guard_was_armed(
 
     monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(set()))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
+    built: list[DataPaths] = []
     guard = FakeGuard()
-    monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: guard.arm(45.0))
-    assert launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore(), exit_guard=guard) == 0  # type: ignore[arg-type]
-    assert guard.calls == [("arm", 45.0), ("rearm", launcher.STAGE2_SECONDS)] and launcher.STAGE2_SECONDS == 5.0
 
-    idle = FakeGuard()  # never armed (a second launch, a start failure): nothing to re-arm
-    monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: None)
-    assert launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore(), exit_guard=idle) == 0  # type: ignore[arg-type]
-    assert idle.calls == []
+    def factory(paths: DataPaths) -> Any:
+        built.append(paths)
+        return guard
+
+    seen: list[Any] = []
+    monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: seen.append(self._exit_guard))
+    assert (
+        launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore(), make_exit_guard=factory)
+        == 0
+    )
+    assert built == [data_paths] and seen == [guard]
 
 
 def test_in_process_main_never_arms_a_real_guard(data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,7 +183,7 @@ def test_in_process_main_never_arms_a_real_guard(data_paths: DataPaths, monkeypa
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: guards.append(self._exit_guard))
     assert launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore()) == 0
     assert guards == [None]
-    built = entry.real_exit_guard()
+    built = entry.make_real_exit_guard(data_paths)
     assert isinstance(built, ExitGuard) and not built.armed
     assert not (data_paths.tmp / STALL_FILE_NAME).exists()  # nothing opened until it is armed
 
@@ -310,3 +357,53 @@ def test_the_stall_report_is_capped_at_64_kb(data_paths: DataPaths) -> None:
     text = _log_text(data_paths)
     assert "A" * server.STALL_REPORT_MAX_BYTES in text
     assert "A" * (server.STALL_REPORT_MAX_BYTES + 1) not in text
+
+
+# ---- links in the stall file's place -----------------------------------------------------------------------------
+
+
+def make_link(kind: str, stall: Path, target: Path) -> None:
+    if kind == "hard":
+        os.link(target, stall)
+    else:
+        try:
+            os.symlink(target, stall)
+        except (OSError, NotImplementedError):
+            pytest.skip("this account can't make symlinks")
+
+
+@pytest.mark.parametrize("kind", ["hard", "symlink"])
+def test_a_linked_stall_file_is_removed_unread_at_next_start(data_paths: DataPaths, kind: str) -> None:
+    """06 section 3: the read-back never follows a link or reads a file with several names; the entry goes, the
+    target stays."""
+    data_paths.tmp.mkdir(parents=True)
+    target = data_paths.root / "elsewhere.txt"
+    target.write_text("Thread 0xBEEF private content", encoding="utf-8")
+    stall = data_paths.tmp / STALL_FILE_NAME
+    make_link(kind, stall, target)
+    go(RecordingServe())
+    text = _log_text(data_paths)
+    assert "private content" not in text and "0xBEEF" not in text
+    assert "in place of the stall report" in text
+    assert not stall.exists() and not stall.is_symlink()
+    assert target.read_text(encoding="utf-8") == "Thread 0xBEEF private content"
+
+
+@pytest.mark.parametrize("kind", ["hard", "symlink"])
+def test_arming_removes_a_linked_stall_file_instead_of_writing_through_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """UI-TRAY: `open("wb")` would truncate the link's target; the guard removes the entry first."""
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *a, **k: None)
+    target = tmp_path / "victim.txt"
+    target.write_text("keep me", encoding="utf-8")
+    folder = tmp_path / "tmp"
+    folder.mkdir()
+    make_link(kind, folder / STALL_FILE_NAME, target)
+    guard = ExitGuard(folder)
+    guard.arm(45)
+    assert guard._file is not None
+    guard._file.close()
+    assert guard.armed
+    assert target.read_text(encoding="utf-8") == "keep me"
+    assert is_plain_file(folder / STALL_FILE_NAME)

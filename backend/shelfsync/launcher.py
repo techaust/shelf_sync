@@ -1,18 +1,15 @@
 """`python -m shelfsync.launcher`: the installed entry point (04 section 8); the work is in `tray.launcher`."""
 
-from shelfsync.paths import resolve_data_paths
+from shelfsync.paths import DataPaths
 from shelfsync.tray.exit_guard import ExitGuard
 from shelfsync.tray.launcher import main
 
 
-def real_exit_guard() -> ExitGuard | None:
-    """The one real safety exit (only here: an armed guard would end a test run). No data folder, no guard: the
-    start-up reports that itself."""
-    try:
-        return ExitGuard(resolve_data_paths().tmp)
-    except Exception:
-        return None
+def make_real_exit_guard(paths: DataPaths) -> ExitGuard:
+    """The one real safety exit, built from the data folder `run_application` resolved. Only `__main__` passes it
+    (an armed guard would end a test run); building it opens nothing until it is armed."""
+    return ExitGuard(paths.tmp)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(exit_guard=real_exit_guard()))
+    raise SystemExit(main(make_exit_guard=make_real_exit_guard))
