@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
-from shelfsync.ports import DEFAULT_PORT, MAX_PORT, MIN_PORT
+from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 
 DEFAULTS: dict[str, Any] = {
     "port": DEFAULT_PORT,
@@ -21,8 +21,9 @@ def _check(key: str, value: Any) -> None:
     expected = type(DEFAULTS[key])
     if type(value) is not expected:  # exact type, so True is not accepted for an int setting
         raise TypeError(f"Setting '{key}' must be {expected.__name__}, not {type(value).__name__}.")
-    if key == "port" and not MIN_PORT <= value <= MAX_PORT:
-        raise ValueError(f"Setting 'port' must be between {MIN_PORT} and {MAX_PORT}.")
+    if key == "port" and not DEFAULT_PORT <= value <= LAST_PORT:
+        # The "all in use" notice names 47615-47624, so the setting stays inside that range (M1a.1 re-check).
+        raise ValueError(f"Setting 'port' must be between {DEFAULT_PORT} and {LAST_PORT}.")
 
 
 def get_setting(connection: sqlite3.Connection, key: str) -> Any:

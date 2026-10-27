@@ -101,8 +101,8 @@ def test_the_app_store_is_credential_manager_under_the_shelfsync_service_name() 
 
 
 def test_replacing_a_value_leaves_no_copy_of_the_old_one_behind() -> None:
-    """SET-06: keyring's own set_password would re-save the old value under `<name>@<service>`; the adapter deletes
-    first, so after two sets only the second value exists in Credential Manager under this throwaway service."""
+    """SET-06: keyring's own set_password would re-save the old value under `<name>@<service>`; the adapter removes
+    that copy after the write, so after two sets only the second value exists under this throwaway service."""
     name = "replaced"
     with throwaway_store([name]) as store:
         service = store._service
@@ -113,6 +113,22 @@ def test_replacing_a_value_leaves_no_copy_of_the_old_one_behind() -> None:
         assert store._backend._read_credential(f"{name}@{service}") is None  # type: ignore[attr-defined]
         current = store._backend._read_credential(service)  # type: ignore[attr-defined]
         assert current is not None and current.value == second
+
+
+def test_a_failed_write_keeps_the_old_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SET-06 (R1): the write comes first, so a write that fails leaves the stored token where it was."""
+    name = "kept"
+    with throwaway_store([name]) as store:
+        store.set(name, "old-" + secrets.token_urlsafe(8))
+        old = store.get(name)
+
+        def failing(*args: object) -> None:
+            raise RuntimeError("write refused")
+
+        monkeypatch.setattr(store._backend, "set_password", failing)
+        with pytest.raises(SecretStoreError):
+            store.set(name, "new-" + secrets.token_urlsafe(8))
+        assert store.get(name) == old
 
 
 def test_entries_are_kept_on_this_machine_even_if_the_environment_asks_otherwise(

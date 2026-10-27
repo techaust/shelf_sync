@@ -6,13 +6,19 @@ requires-python = "==3.12.*"
 dependencies = [
     "fastapi==0.143.0",
     "uvicorn==0.54.0",
+    # The second launch asks the running copy for a sign-in ticket (M1a.4). Moved here from the dev group, same pin.
+    "httpx==0.28.1",
     # Credential Manager adapter (M1a.2). Windows only: Linux CI uses the in-memory fake and installs none of it.
     "keyring==25.7.0; sys_platform == 'win32'",
+    # Tray and notifications (M1a.4). pystray and Pillow are in the list on every platform (pystray's win32 backend
+    # is chosen when it is imported, and the tray code imports it lazily); windows-toasts is Windows only (V29).
+    "pystray==0.19.5",
+    "Pillow==13.0.0",
+    "windows-toasts==1.3.1; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx==0.28.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "hypothesis==6.169.0",
@@ -28,8 +34,8 @@ dev = [
 package = false
 # 14-day cutoff for everything the pins pull in: releases on or before 2026-10-12 (04 section 2.1).
 exclude-newer = "2026-10-13T00:00:00Z"
-# Security-fix exceptions (owner, 2026-10-26, docs/11): pip-audit findings fixed only in newer releases.
-exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-18T00:00:00Z" }
+# Security-fix exceptions (owner, 2026-10-26 and 2026-10-27, docs/11): pip-audit findings fixed only in newer releases.
+exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-18T00:00:00Z", pillow = "2026-10-17T00:00:00Z" }
 
 [tool.ruff]
 line-length = 120
@@ -53,13 +59,21 @@ strict = true
 mypy_path = "backend"
 packages = ["shelfsync"]
 
+# pystray ships no type hints; windows-toasts is Windows only (not installed on Linux CI), so its imports are not found there.
+[[tool.mypy.overrides]]
+module = ["pystray", "windows_toasts", "windows_toasts.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]
-markers = ["windows: needs Windows; deselected by default, run on purpose with `pytest -m windows`; proves behaviour the Linux CI can't"]
+markers = [
+    "windows: needs Windows; deselected by default, run on purpose with `pytest -m windows`; proves behaviour the Linux CI can't",
+    "defender: raises a Windows Defender alert (the EICAR check, V31); never run by `-m windows`'s default, see its file",
+]
 # "-m 'not windows'": the Windows checks write throwaway Credential Manager entries, so a plain run skips them; run
 # them on purpose with `pytest -m windows` (a -m on the command line replaces this one).
-addopts = "-ra --strict-markers -m 'not windows' --cov --cov-report=term-missing:skip-covered"
+addopts = "-ra --strict-markers -m 'not windows and not defender' --cov --cov-report=term-missing:skip-covered"
 
 [tool.coverage.run]
 source = ["backend/shelfsync"]

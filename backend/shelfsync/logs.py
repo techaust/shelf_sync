@@ -4,17 +4,20 @@ import json
 import logging
 import sys
 import threading
+import time
 import warnings
+from collections.abc import Callable
 from datetime import UTC, datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Final
 
 from shelfsync.clock import to_iso
 from shelfsync.secure.redact import redact as _redact
 
 LOG_FILE_NAME = "shelfsync.log"
+CTRL_C_LINE = "Stopped with Ctrl+C."
 
 
 def redact(text: str) -> str:
@@ -55,21 +58,71 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
+# Told once, the first time a log line can't be written (the launcher sets it to a toast: under pythonw nobody sees
+# stderr). Nothing is passed to it: the owner-facing text is fixed.
+_write_failure_notice: Callable[[], None] | None = None
+_write_failure_told = False
+
+
+def set_write_failure_notice(notice: Callable[[], None] | None) -> None:
+    """Call `notice` once, the first time a log write fails (the count starts again each time this is called)."""
+    global _write_failure_notice, _write_failure_told
+    _write_failure_notice = notice
+    _write_failure_told = False
+
+
 def _report_write_failure() -> None:
-    """One fixed line to stderr, through the redacting handler, when a log line couldn't be written. It names the
-    exception type and nothing from the record (the stdlib's own report prints the raw message and arguments)."""
+    """One fixed line to stderr, through the redacting handler, when a log line couldn't be written, and the notice,
+    once. It names the exception type and nothing from the record (the stdlib's own report prints the raw message and
+    arguments)."""
+    global _write_failure_told
     kind = sys.exc_info()[0]
     text = f"A log line couldn't be written ({kind.__name__ if kind is not None else 'unknown error'})"
     record = logging.LogRecord("shelfsync.logs", logging.ERROR, __file__, 0, text, None, None)
-    RedactingStderrHandler().emit(record)
+    _stderr_handler().emit(record)
+    if _write_failure_notice is not None and not _write_failure_told:
+        _write_failure_told = True
+        try:
+            _write_failure_notice()
+        except Exception:  # a notification that can't be shown must not add a second failure
+            return
 
 
-class RedactingFileHandler(TimedRotatingFileHandler):
-    """The log file handler. A failed write (bad arguments, a rollover refused by Windows) is reported as one fixed
-    line instead of the stdlib's dump of the message and arguments."""
+class RedactingAppendHandler(logging.FileHandler):
+    """Appends to the log file and never rotates or prunes it, with the same redaction and the same fixed report of a
+    failed write. For a short-lived second process that shares the running copy's file."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # With delay=True the stdlib opens the file inside emit(), outside its own error handling: a file that can't be
+        # opened would raise out of the logging call. Report it like any other failed write instead.
+        try:
+            super().emit(record)
+        except RecursionError:
+            raise  # like the stdlib: logging that logs itself for ever is not a write failure to report
+        except Exception:
+            self.handleError(record)
 
     def handleError(self, record: logging.LogRecord) -> None:
         _report_write_failure()
+
+
+class RedactingFileHandler(TimedRotatingFileHandler):
+    """The log file handler. A failed write (bad arguments) is reported as one fixed line instead of the stdlib's
+    dump of the message and arguments. A rollover that Windows refuses (the old file is open in another program)
+    keeps logging into the current file and tries again at the next rollover time, instead of losing every later
+    line."""
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        _report_write_failure()
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            if self.stream is None:  # the stdlib closed it before the rename failed
+                self.stream = self._open()
+            self.rolloverAt = self.computeRollover(int(time.time()))
+            _report_write_failure()
 
 
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:
@@ -81,6 +134,18 @@ def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileH
     handler = RedactingFileHandler(
         logs_dir / LOG_FILE_NAME, when="midnight", utc=True, backupCount=retention_days, encoding="utf-8"
     )
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    return handler
+
+
+def configure_append_logging(logs_dir: Path) -> logging.Handler:
+    """Like `configure_logging`, but the handler only appends (see `RedactingAppendHandler`)."""
+    # delay=True: the file is opened at the first line, so building the handler can't fail and a file that can't be
+    # opened is one reported write failure, not a failed start.
+    handler = RedactingAppendHandler(logs_dir / LOG_FILE_NAME, encoding="utf-8", delay=True)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.addHandler(handler)
@@ -131,15 +196,30 @@ class RedactingStderrHandler(logging.Handler):
         return None
 
 
+_STDERR_HANDLER: Final = RedactingStderrHandler()
+
+
+def _stderr_handler() -> RedactingStderrHandler:
+    """The one redacting stderr handler. It holds no state, so it is built once and reused."""
+    return _STDERR_HANDLER
+
+
 def _exc_info(
     exc_type: type[BaseException], exc_value: BaseException | None, traceback: TracebackType | None
 ) -> tuple[type[BaseException], BaseException, TracebackType | None] | None:
     return None if exc_value is None else (exc_type, exc_value, traceback)
 
 
+def report_ctrl_c() -> None:
+    """Ctrl+C is not a crash: one fixed line through the redacting handler. Never Python's own hook, which would
+    print the chained traceback unredacted."""
+    record = logging.LogRecord("shelfsync.logs", logging.WARNING, __file__, 0, CTRL_C_LINE, None, None)
+    _stderr_handler().emit(record)
+
+
 def _log_uncaught(exc_type: type[BaseException], exc_value: BaseException, traceback: TracebackType | None) -> None:
-    if issubclass(exc_type, KeyboardInterrupt):  # Ctrl+C is not a crash: leave it to Python's own hook
-        _originals.get("excepthook", sys.__excepthook__)(exc_type, exc_value, traceback)
+    if issubclass(exc_type, KeyboardInterrupt):
+        report_ctrl_c()
         return
     _UNCAUGHT.critical("Uncaught exception", exc_info=(exc_type, exc_value, traceback))
 
@@ -180,7 +260,7 @@ def install_output_guards() -> None:
         thread_excepthook=threading.excepthook,
         unraisablehook=sys.unraisablehook,
     )
-    logging.lastResort = RedactingStderrHandler()
+    logging.lastResort = _stderr_handler()
     sys.excepthook = _log_uncaught
     threading.excepthook = _log_uncaught_in_thread
     sys.unraisablehook = _log_unraisable

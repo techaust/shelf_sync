@@ -7,9 +7,11 @@ them in `finally`, never through a fixture (pytest installs its own thread hook 
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
+import time
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -344,8 +346,7 @@ def test_main_installs_the_guards_before_anything_else(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(server, "install_output_guards", fake_guards)
     monkeypatch.setattr(server, "resolve_data_paths", fake_resolve)
-    with pytest.raises(RuntimeError):
-        server.main()
+    assert server.main() == server.EXIT_START_FAILED  # now inside the start-up try: a plain exit code, no traceback
     assert order == ["guards", "resolve"]
 
 
@@ -393,18 +394,94 @@ def test_a_failed_log_write_is_reported_even_without_the_guards(
     assert "A log line couldn't be written (TypeError)" in captured.err
 
 
-def test_ctrl_c_goes_to_the_original_hook_and_is_not_logged_as_a_crash(tmp_path: Path) -> None:
-    """LOG-01: a KeyboardInterrupt isn't a CRITICAL "Uncaught exception"."""
-    seen: list[type[BaseException]] = []
-    original = sys.excepthook
-    sys.excepthook = lambda exc_type, exc_value, traceback: seen.append(exc_type)
-    try:
-        with guards(), file_log(tmp_path) as log_file:
-            sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
-    finally:
-        sys.excepthook = original
-    assert seen == [KeyboardInterrupt]
+def test_ctrl_c_prints_one_fixed_line_and_never_the_chained_traceback(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01 (M1a.2 re-check R2): a KeyboardInterrupt isn't a CRITICAL crash, and Python's own hook would print its
+    chained exception (here holding a key) unredacted."""
+    secret = key(40)
+    with guards(), file_log(tmp_path) as log_file:
+        interrupt = KeyboardInterrupt()
+        interrupt.__context__ = RuntimeError(f"failed with {secret}")
+        sys.excepthook(KeyboardInterrupt, interrupt, None)
+    captured = capfd.readouterr()
+    assert captured.err.strip() == f"WARNING: shelfsync.logs: {logs.CTRL_C_LINE}"
+    assert secret not in captured.out + captured.err
     assert not log_file.exists() or "Uncaught" not in log_file.read_text(encoding="utf-8")
+
+
+def test_ctrl_c_with_no_stderr_prints_nothing_and_does_not_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOG-01: under pythonw `sys.stderr` is None."""
+    with guards(), file_log(tmp_path):
+        monkeypatch.setattr(sys, "stderr", None)
+        sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
+
+
+def test_one_stderr_handler_is_reused_for_every_report(tmp_path: Path) -> None:
+    """LOG-01 (R6): a failed write doesn't build a new handler each time."""
+    with guards():
+        first = logs._stderr_handler()
+        assert logs.logging.lastResort is first
+        assert logs._stderr_handler() is first
+
+
+def test_the_first_failed_log_write_calls_the_notice_once(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    """LOG-01 (R6): under pythonw nobody sees stderr, so the first failure also reaches the owner, once."""
+    told: list[int] = []
+    logs.set_write_failure_notice(lambda: told.append(1))
+    try:
+        with guards(), file_log(tmp_path), only_the_file_handler() as logger:
+            logger.error("%s and %s", "x")
+            logger.error("%s and %s", "y")
+    finally:
+        logs.set_write_failure_notice(None)
+    assert told == [1]
+    assert capfd.readouterr().err.count("A log line couldn't be written") == 2  # the stderr line is every time
+
+
+def test_a_notice_that_fails_does_not_break_the_report(tmp_path: Path) -> None:
+    """LOG-01 (R6)."""
+
+    def broken() -> None:
+        raise RuntimeError("no toast")
+
+    logs.set_write_failure_notice(broken)
+    try:
+        with guards(), file_log(tmp_path), only_the_file_handler() as logger:
+            logger.error("%s and %s", "x")  # must not raise
+    finally:
+        logs.set_write_failure_notice(None)
+
+
+def test_a_rollover_that_windows_refuses_keeps_logging_into_the_current_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01 (R6): the stdlib closes the stream and, when the rename fails, leaves it closed, so every later line
+    was lost. Now the file is reopened, the next try waits for the next rollover time, and the failure is reported."""
+    told: list[int] = []
+    logs.set_write_failure_notice(lambda: told.append(1))
+
+    def refused(self: object, source: str, dest: str) -> None:
+        raise PermissionError("file in use")
+
+    try:
+        with file_log(tmp_path) as log_file:
+            handler = next(h for h in logging.getLogger().handlers if isinstance(h, logs.RedactingFileHandler))
+            logging.getLogger("shelfsync.rollover").warning("before")
+            monkeypatch.setattr(logs.RedactingFileHandler, "rotate", refused)
+            handler.rolloverAt = int(time.time()) - 10  # a rollover is due now
+            logging.getLogger("shelfsync.rollover").warning("during")
+            logging.getLogger("shelfsync.rollover").warning("after")
+            handler.flush()
+            text = log_file.read_text(encoding="utf-8")
+            assert handler.rolloverAt > time.time()
+    finally:
+        logs.set_write_failure_notice(None)
+    assert "before" in text and "during" in text and "after" in text
+    assert told == [1]
+    assert "A log line couldn't be written (PermissionError)" in capfd.readouterr().err
 
 
 @pytest.mark.parametrize("before", [False, True])
@@ -418,3 +495,70 @@ def test_removing_the_guards_restores_the_earlier_warnings_capture(before: bool)
     finally:
         logs.remove_output_guards()
         logging.captureWarnings(False)
+
+
+def _age(path: Path, days: int) -> None:
+    old = time.time() - days * 86400
+    os.utime(path, (old, old))
+
+
+def test_the_second_launchs_handler_never_rotates_or_prunes_the_running_copys_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01 (review 2): a short-lived second process shares the file. A rotating handler built on an old file would
+    rename it under the running copy (a refusal by Windows would toast a false "can't write its log"), and would prune
+    with retention 30. The append handler only adds lines."""
+    log_file = tmp_path / logs.LOG_FILE_NAME
+    log_file.write_text('{"message": "from the running copy"}\n', encoding="utf-8")
+    _age(log_file, 3)
+    told: list[int] = []
+    logs.set_write_failure_notice(lambda: told.append(1))
+
+    def refused(self: object, source: str, dest: str) -> None:
+        raise PermissionError("the running copy has it open")
+
+    monkeypatch.setattr(logs.RedactingFileHandler, "rotate", refused)
+    secret = key(50)
+    handler = logs.configure_append_logging(tmp_path)
+    try:
+        logging.getLogger("shelfsync.launcher").warning("second launch %s", secret)
+        handler.flush()
+    finally:
+        logs.remove_logging(handler)
+        logs.set_write_failure_notice(None)
+    assert [p.name for p in tmp_path.iterdir()] == [logs.LOG_FILE_NAME]  # nothing rotated, nothing pruned
+    text = log_file.read_text(encoding="utf-8")
+    assert "from the running copy" in text and "second launch" in text
+    assert secret not in text  # still redacted
+    assert told == []
+    assert "couldn't be written" not in capfd.readouterr().err
+
+
+def test_the_rotating_handler_on_the_same_old_file_would_have_rotated_it(tmp_path: Path) -> None:
+    """LOG-01 (review 2): the control for the test above, so it can't pass for the wrong reason."""
+    log_file = tmp_path / logs.LOG_FILE_NAME
+    log_file.write_text('{"message": "from the running copy"}\n', encoding="utf-8")
+    _age(log_file, 3)
+    with file_log(tmp_path):
+        logging.getLogger("shelfsync.launcher").warning("second launch")
+    assert len(list(tmp_path.iterdir())) == 2  # the old file was renamed away
+
+
+def test_the_append_handler_reports_a_failed_write_like_the_other_one(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01: a bad-arguments record gives the fixed line, nothing from the record."""
+    secret = key(51)
+    handler = logs.configure_append_logging(tmp_path)
+    logger = logging.getLogger("shelfsync.badappend")
+    logger.handlers[:] = [handler]
+    logger.propagate = False
+    try:
+        logger.error("%s and %s", secret)
+    finally:
+        logger.handlers.clear()
+        logger.propagate = True
+        logs.remove_logging(handler)
+    captured = capfd.readouterr()
+    assert "A log line couldn't be written (TypeError)" in captured.err
+    assert secret not in captured.out + captured.err

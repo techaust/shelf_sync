@@ -7,6 +7,7 @@ import socket
 import time
 from collections.abc import Callable
 from logging.handlers import TimedRotatingFileHandler
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -15,13 +16,14 @@ from shelfsync import messages
 from shelfsync.api.app import UI_DIR, create_app
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError, migrate
-from shelfsync.db.settings import DEFAULTS, get_setting
-from shelfsync.logs import configure_logging, install_output_guards, remove_logging
+from shelfsync.db.settings import DEFAULTS, get_all_settings
+from shelfsync.logs import configure_logging, install_output_guards, remove_logging, report_ctrl_c
 from shelfsync.paths import DataPaths, create_data_folders, empty_tmp, resolve_data_paths, write_runtime_json
 from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
-from shelfsync.ports import DEFAULT_PORT, LAST_PORT, MAX_PORT, MIN_PORT
+from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 from shelfsync.secure.token import InstallToken
+from shelfsync.tray.instance import InstanceLock, default_instance_lock
 
 HOST = "127.0.0.1"  # never anything else (NFR-5, 06 section 2)
 
@@ -34,23 +36,30 @@ EXIT_OK = 0
 EXIT_PORTS_IN_USE = 1
 EXIT_MIGRATION_FAILED = 2
 EXIT_START_FAILED = 3  # any other failure before the server was running
+EXIT_SERVER_STOPPED = 7  # the server was running and then stopped on its own
 
 _log = logging.getLogger("shelfsync.server")
 
+
+class ServerStoppedError(Exception):
+    """The server was running and stopped without being asked to (not a failure to start)."""
+
+
 Serve = Callable[[FastAPI, socket.socket], None]
+MakeServe = Callable[[DataPaths], Serve]
+OnSettings = Callable[[dict[str, Any]], None]
+SecondLaunch = Callable[[DataPaths], int]
 
 
 def candidate_ports(preferred: int) -> list[int]:
     """The port setting first, then each next one up to 47624.
 
-    A port setting outside 47615-47624 gets no fallback: only that port is tried. A port outside 1024-65535 is an
-    error.
+    The setting stays inside 47615-47624 (the "all in use" notice names that range), so a stored value outside it is
+    an error, not a port to try.
     """
-    if not MIN_PORT <= preferred <= MAX_PORT:
-        raise ValueError(f"The port setting {preferred} is outside {MIN_PORT}-{MAX_PORT}.")
-    if DEFAULT_PORT <= preferred <= LAST_PORT:
-        return list(range(preferred, LAST_PORT + 1))
-    return [preferred]
+    if not DEFAULT_PORT <= preferred <= LAST_PORT:
+        raise ValueError(f"The port setting {preferred} is outside {DEFAULT_PORT}-{LAST_PORT}.")
+    return list(range(preferred, LAST_PORT + 1))
 
 
 def _try_bind(port: int) -> socket.socket | None:
@@ -114,15 +123,22 @@ def _start(
     retry_seconds: float,
     handler: TimedRotatingFileHandler,
     secrets: SecretStore,
+    on_settings: OnSettings | None = None,
 ) -> int:
+    # Only the one running copy gets here (the instance lock is held), so a runtime.json that exists is a leftover
+    # of a copy that didn't exit cleanly: it isn't ours and must not point a second launch at a dead port.
+    paths.runtime_json.unlink(missing_ok=True)
     empty_tmp(paths)
     connection = connect(paths.database)
     try:
         migrate(connection)
-        preferred = get_setting(connection, "port")
-        handler.backupCount = int(get_setting(connection, "log_retention_days"))
+        settings = get_all_settings(connection)
     finally:
         connection.close()
+    preferred = settings["port"]
+    handler.backupCount = int(settings["log_retention_days"])
+    if on_settings is not None:
+        on_settings(settings)
 
     # The install token is loaded (made on first run) before any port is bound, once, and handed to the app: if the
     # secret store fails, the start-up fails here and holds no port.
@@ -144,6 +160,7 @@ def _start(
         serve(create_app(port, install_token, ui_dir=UI_DIR), sock)
     finally:
         sock.close()
+        paths.runtime_json.unlink(missing_ok=True)  # clean exit: nothing left to point a second launch at
     return EXIT_OK
 
 
@@ -153,19 +170,32 @@ def run(
     serve: Serve = serve_with_uvicorn,
     retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
     secrets: SecretStore | None = None,
+    on_settings: OnSettings | None = None,
 ) -> int:
     """Start ShelfSync; return the exit code. `serve` and `secrets` are replaceable for tests (`secrets` defaults to
-    Credential Manager).
+    Credential Manager); `on_settings` is called with the settings once they are read (the launcher applies Start
+    with Windows there).
 
-    Logging is set up first (with the default retention, adjusted once the settings are read), so every start-up
-    failure is logged. A failure is also sent to the notifier in plain words and gets its own exit code.
+    The caller holds the single-instance lock (`run_application`). Logging is set up first (with the default
+    retention, adjusted once the settings are read), so every start-up failure is logged. A failure is also sent to
+    the notifier in plain words and gets its own exit code.
     """
     handler: TimedRotatingFileHandler | None = None
     try:
-        create_data_folders(paths)
-        handler = configure_logging(paths.logs, int(DEFAULTS["log_retention_days"]))
+        try:
+            create_data_folders(paths)
+            handler = configure_logging(paths.logs, int(DEFAULTS["log_retention_days"]))
+        except OSError:
+            # No log exists yet, so the notice must not point to one.
+            _log.exception("start-up stopped: the data folder or the log file couldn't be used")
+            notifier.notify(messages.START_FAILED_DATA_FOLDER)
+            return EXIT_START_FAILED
         store = secrets if secrets is not None else default_secret_store()
-        return _start(paths, notifier, serve, retry_seconds, handler, store)
+        return _start(paths, notifier, serve, retry_seconds, handler, store, on_settings)
+    except ServerStoppedError:
+        _log.exception("the server stopped unexpectedly")
+        notifier.notify(messages.SERVER_STOPPED)
+        return EXIT_SERVER_STOPPED
     except MigrationError:
         _log.exception("start-up stopped: the database couldn't be migrated")
         notifier.notify(messages.START_FAILED_MIGRATION)
@@ -179,7 +209,51 @@ def run(
             remove_logging(handler)
 
 
+def run_application(
+    make_serve: MakeServe,
+    notifier: Notifier,
+    on_second_launch: SecondLaunch,
+    *,
+    lock: InstanceLock | None = None,
+    secrets: SecretStore | None = None,
+    on_settings: OnSettings | None = None,
+    retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
+) -> int:
+    """The whole start: find the data folder, take the single-instance lock (before anything touches the tmp folder,
+    the database or the install token), then `run` with the `serve` that `make_serve(paths)` builds for the data
+    folder found here (so nothing resolves it a second time). If another copy holds the lock this is a second launch:
+    `on_second_launch(paths)` decides what that does and its code is returned. Ctrl+C is a normal stop (exit 0).
+    """
+    try:
+        paths = resolve_data_paths()
+    except Exception:
+        _log.exception("start-up failed: the data folder is unknown")
+        notifier.notify(messages.START_FAILED_DATA_FOLDER)
+        return EXIT_START_FAILED
+    try:
+        instance = lock if lock is not None else default_instance_lock()
+        if not instance.acquire():
+            return on_second_launch(paths)
+        try:
+            return run(paths, notifier, make_serve(paths), retry_seconds, secrets, on_settings)
+        finally:
+            instance.release()
+    except KeyboardInterrupt:
+        report_ctrl_c()
+        return EXIT_OK
+    except Exception:
+        _log.exception("start-up failed")
+        notifier.notify(messages.START_FAILED)
+        return EXIT_START_FAILED
+
+
+def _already_running(paths: DataPaths) -> int:
+    """The developer entry on a second start: say so and stop. (The launcher opens a signed-in tab instead.)"""
+    _log.warning("ShelfSync is already running. Open it from the tray icon.")
+    return EXIT_OK
+
+
 def main() -> int:
-    """`python -m shelfsync`: a development entry point (the launcher is M1a.4)."""
+    """`python -m shelfsync`: the developer entry (no tray; the installed entry is `python -m shelfsync.launcher`)."""
     install_output_guards()  # first: from here nothing leaves the process unredacted, even before logging is set up
-    return run(resolve_data_paths(), LogNotifier())
+    return run_application(lambda paths: serve_with_uvicorn, LogNotifier(), _already_running)
