@@ -73,6 +73,9 @@ _(builder, Sonnet 5.5 medium, 2026-10-27)_
 
 **Suggestions for the lead:** `.github/workflows/checks.yml` has no hardcoded 3.12 (no `python-version` line; it relies on `.python-version`/setup-uv): no change needed, though confirm setup-uv can find 3.14.8 on the runner (m1b.1 should pin it). Docs still naming 3.12: `docs/09-tooling.md:16` (Python 3.12.10 row), `docs/04-architecture.md:95` (local tools), `docs/02-plan.md:137` and `docs/02-plan-appendix/plan-page.src.html:200` (then republish the plan page), `docs/04-architecture-appendix/A-stack-verification.md:22` (V11 cites `python312._pth` / 3.12 docs; re-verify for 3.14), `docs/11-decisions.md:24` (historical, leave), `CLAUDE.md:58` ("moving from 3.12" can say 3.14 now). Note the unparenthesised `except A, B:` style may surprise readers; it is the py314 formatter's output.
 
+### Fix round 1
+Low finding: in `tests/test_exit_guard.py` the stall and clean tests now run each child as `with run_child(...) as child:` with a `try/finally: child.kill()` inside, so the stdout pipe closes and the child is reaped on every path (failed `readline` assert, timed-out `wait`); `Popen.__exit__` only waits, hence the explicit kill. Same assertions. `pytest tests/test_exit_guard.py -W default --no-cov` (16 passed, 3 skipped, no warnings), `ruff check`, `ruff format --check`, `mypy`: clean. `.github/` untouched.
+
 ## 4. Designer report
 _(no screens)_
 

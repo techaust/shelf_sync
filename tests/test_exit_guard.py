@@ -276,20 +276,24 @@ def run_child(tmp_path: Path, mode: str, executable: str | None = None) -> subpr
 def test_stalled_exit_is_ended_and_dumped(tmp_path: Path) -> None:
     """UI-TRAY, SYS-02, 06 section 3: a process stuck in an exit callback is ended within seconds with code 1, and the
     file holds every thread's stack but no value."""
-    control = run_child(tmp_path, "control")
-    assert control.stdout is not None and control.stdout.readline().strip() == "armed"
-    time.sleep(3)
-    still_alive = control.poll() is None
-    control.kill()
-    control.wait()
-    control.stdout.close()
+    # `with` closes the pipe and reaps the child on every path; `kill()` first, so a failed assert or a timed-out
+    # wait never leaves a stalled child behind (`__exit__` itself only waits).
+    with run_child(tmp_path, "control") as control:
+        try:
+            assert control.stdout is not None and control.stdout.readline().strip() == "armed"
+            time.sleep(3)
+            still_alive = control.poll() is None
+        finally:
+            control.kill()
     assert still_alive, "without the guard the child should still be stuck at 3 s"
 
-    child = run_child(tmp_path, "stall")
-    assert child.stdout is not None and child.stdout.readline().strip() == "armed"
-    started = time.monotonic()
-    code = child.wait(timeout=10)
-    child.stdout.close()
+    with run_child(tmp_path, "stall") as child:
+        try:
+            assert child.stdout is not None and child.stdout.readline().strip() == "armed"
+            started = time.monotonic()
+            code = child.wait(timeout=10)
+        finally:
+            child.kill()  # a no-op once the child has ended
     assert code == 1 and time.monotonic() - started < 3
     dump = (tmp_path / "tmp" / STALL_FILE_NAME).read_text(encoding="utf-8")
     assert "Thread 0x" in dump and "stuck" in dump  # the function name is there ...
@@ -298,10 +302,11 @@ def test_stalled_exit_is_ended_and_dumped(tmp_path: Path) -> None:
 
 def test_clean_exit_leaves_an_empty_stall_file_and_code_0(tmp_path: Path) -> None:
     """UI-TRAY: nothing cancels the guard; a normal exit just ends first and leaves an empty file."""
-    child = run_child(tmp_path, "clean")
-    code = child.wait(timeout=10)
-    assert child.stdout is not None
-    child.stdout.close()
+    with run_child(tmp_path, "clean") as child:
+        try:
+            code = child.wait(timeout=10)
+        finally:
+            child.kill()
     assert code == 0
     assert (tmp_path / "tmp" / STALL_FILE_NAME).read_bytes() == b""
 
