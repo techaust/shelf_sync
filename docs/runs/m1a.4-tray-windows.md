@@ -247,4 +247,4 @@ _(lead, 2026-10-27)_
 - The installed launcher now serves the built UI from `frontend/dist/` when it exists (M1b moves `UI_DIR` to `paths.py`, already a carry-over).
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Brief written at Opus 5.5 medium. Starts after M1a.2 and M1a.3 are ready, from the branch head the lead names.
+_(lead, 2026-10-27, end of day)_ **Merged as #9** (squash `9a22c8f`) after the integration fix (`ui_dir=None`) and one CI fix (`PureWindowsPath`, §6). **Still to do with the owner:** the M1a exit test (tray menu: Open ShelfSync, View logs, Quit, a second launch) and V31 (command in §3). M1b carry-overs are listed in [10-status](../10-status.md).

@@ -50,6 +50,7 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public during development**, owner's choice, [11](docs/11-decisions.md)). Anything committed is public: never commit secrets or store addresses.
 - `main` is protected on GitHub while the repo is public (PR required, CI must pass, linear history, no force-push; [11](docs/11-decisions.md) 2026-10-26), and a tracked pre-push hook also refuses pushes to `main` and force-pushes.
 - Work on a branch → push → PR → merge on green. **Every push and every PR merge needs the owner's yes until the owner says otherwise.**
+- PRs are squash-merged (auto-merge isn't available: wait for green, then merge by hand). A branch cut from another branch's pre-squash head is moved with `git rebase --onto main <old base>`, and the full checks run again before its push.
 - Agents work in their own git worktrees and never push; the lead integrates.
 - Commit identity (repo-local): `TecHaust Technologies <admin@techaust.com>`. Conventional commits citing PRD IDs, e.g. `feat(match): edition-word penalty [MAT-05]`.
 
@@ -59,8 +60,10 @@ Python 3.12 (embedded, signed) · FastAPI + uvicorn · SQLite (`sqlite3`, WAL, n
 ## Commands
 App (from the repo root; heavy ones through `bash tools/heavy.sh --log <name> …`):
 - `uv sync --locked`: install the locked Python packages.
-- `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest`, `uv run bandit -r backend`, `uv run pip-audit`: the same checks CI runs.
-- `PYTHONPATH=backend uv run python -m shelfsync`: start the server by hand (development only; the launcher comes in M1a.4).
+- `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `uv run pytest`, `uv run bandit -r backend`: the same checks CI runs. pip-audit as CI runs it: `uv export --locked --no-emit-project --format requirements-txt --output-file <file>`, then `uv run pip-audit --require-hashes --disable-pip -r <file>`.
+- `uv run pytest -m windows --no-cov`: the Windows checks (Credential Manager, Run key, mutex, socket owner, toast; throwaway entries). Deselected by default; run before each milestone exit. The V31 Defender check (`-m defender`, `SHELFSYNC_RUN_V31=1`) runs only with the owner present.
+- `PYTHONPATH=backend uv run pythonw -m shelfsync.launcher`: the app with its tray, as installed (one copy; a second launch opens a signed-in tab). `PYTHONPATH=backend uv run python -m shelfsync`: the server alone, no tray (development).
+- Screens (in `frontend/`): `npm ci`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest), `npm run build` (writes `frontend/dist/`, which the server serves), `npm run schema:check`. Playwright + axe (`npm run e2e`) run in CI only: no test browser is downloaded to this PC.
 
 Other tools:
 - `node tools/model-audit.mjs [YYYY-MM-DD]`: every run since that date (default today), with models, effort and skills; it flags anything outside the plan.

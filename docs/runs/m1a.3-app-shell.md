@@ -291,4 +291,4 @@ _(lead, 2026-10-27)_
 - **PR #8, first CI run:** rebased onto `main` cleanly (the brief commit dropped as already upstream). Playwright + axe: 23 of 24 passed. The forced-colours test failed on one node: the `health-chip is-none` text was `#9db0a8` on Canvas white (2.28:1). Fixed with a forced-colours rule that sets the chip and its icon to `CanvasText`; Biome, Vitest 261 and the build pass locally; forced colours can't be emulated in the built-in browser, so CI is the check.
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Brief written at Opus 5.5 medium. Waits for M1a.2's fix round and re-check, then the designer starts from the head of `feat/m1a.2-security`.
+_(lead, 2026-10-27, end of day)_ **Merged as #8** (squash `6931f95`) after one CI fix (forced-colours contrast on the empty health chip, §6); Playwright + axe 24/24 in CI. Open follow-ups: the duplicated dark rules in `app.css` into component tokens (later token task); modals with native `<dialog>` (M2 brief). Closed.
