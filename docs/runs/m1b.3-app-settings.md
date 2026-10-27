@@ -71,7 +71,46 @@ The M1b plan is in [runs/m1b.2-updater.md](m1b.2-updater.md) §0. m1b.1 (#15), m
 _(Tier B: none)_
 
 ## 3. Builder report
-_(builder)_
+Builder: Sonnet 5.5, worktree branch `worktree-agent-a7fa3226c665c0518` (the worktree started on `main`; it was fast-forwarded to `62ec6e1`, the tip of `feat/m1b.3-app-settings`, because that branch is checked out in another worktree).
+
+**Skills and tools:** Context7 (FastAPI and Pydantic): `StrictInt`/`StrictBool` refuse `true` and `"30"` for numbers, `ConfigDict(extra="forbid")` refuses unknown fields, `response_model` on a PUT. No skill was loaded through the Skill tool: the lead said not to load `security-review` or `code-review`, and no other skill in the row applies to this task (not stated otherwise in the brief).
+
+**Files changed**
+- `backend/shelfsync/api/app_settings.py` (new): `AppSettingsService`, `make_app_settings_router`, the models. `GET`/`PUT /api/settings/app`. Strict types; `port` 47615-47624; `theme` system/light/dark; `log_retention_days` 1-365; all required; unknown fields (`installed` included) refused as the fixed 422 `invalid_request`. A save is one `BEGIN IMMEDIATE` transaction through `set_setting`. Answers the five values + `restart_needed` (port differs from the stored one) + `start_with_windows_applied`.
+- `backend/shelfsync/api/app.py`: keyword-only `app_settings=` on `create_app`, like `updates=`; the default is `AppSettingsService.development()` (settings in a shared in-memory SQLite, no log handler, a `FakeRunKey`, never installed).
+- `backend/shelfsync/server.py`: start-up calls `set_log_retention` (was a bare `backupCount =`) and passes the real service (`connect(paths.database)`, the log handler).
+- `backend/shelfsync/logs.py`: `prune_logs`, `set_log_retention`; `RedactingFileHandler.doRollover` prunes after a successful rollover. `configure_logging` deliberately doesn't prune (the retention is still the default there; pruning with 30 could delete files the owner's 365 keeps).
+- `backend/shelfsync/platform/autostart.py`: `is_installed_copy()` is `installed_root() is not None`; `install_folder` and `INSTALL_SUBFOLDER` removed (no other user); `launcher_command()` with no executable names `<root>\current\pythonw.exe` for an installed copy.
+- `pyproject.toml`: one `filterwarnings` entry (message + `StarletteDeprecationWarning` + module `fastapi|starlette.testclient`).
+- Tests: `tests/test_app_settings.py` (new, 51 cases), `tests/test_log_prune.py` (new), `tests/test_autostart.py` (installed-copy tests rewritten: from `versions\<v>`, from `current` junction, source tree, other version folder, `SHELFSYNC_INSTALL_DIR`, Run command names `current`), `tests/test_guard.py` (route walk asserts both routes), `tests/support.py` (`make_harness(app_settings=)`), `tests/test_logs.py` and `tests/test_output_guards.py` (two existing rotation tests used fixed or 3-day-old dates and now meet the age pruning; they use dates relative to today / a retention of 10 days).
+- `frontend/src/api/schema.d.ts`: regenerated. No new error codes (every refusal is `invalid_request`), so `client.ts` is unchanged.
+
+**Decisions made (routine)**
+- Age rule: a rotated file named for day D is kept while `today(UTC) - D <= N days` (N rotated files at most, equal to `backupCount`); the date is taken from the name, not the mtime.
+- `start_with_windows_applied` is false only on `AutostartError`; for a copy that isn't installed ("skipped") it is true (nothing to apply).
+- A real folder with a rotated name is skipped; a link with one is removed itself.
+
+**Commands and results** (all with `UV_PYTHON_DOWNLOADS=never`)
+- `uv run ruff check`: pass. `uv run ruff format --check`: 127 files formatted.
+- `uv run mypy`: no issues, 59 files. `uv run mypy --platform linux`: no issues.
+- `uv run bandit -r backend`: 0 issues (exit 0).
+- pip-audit as in CLAUDE.md (`uv export` then `--require-hashes --disable-pip`): no known vulnerabilities.
+- `bash tools/heavy.sh --log pytest-full2 uv run pytest`: 1421 passed, 16 skipped, 49 deselected, no warnings (the first full run had one failure, fixed above, and ResourceWarnings from the development service's open in-memory connection, fixed with `weakref.finalize`).
+- `pytest -m windows --no-cov`: 48 passed, 1 skipped (the V31 Defender check, which needs the owner).
+- `npm run schema` then `npm run schema:check`: current. `npm run typecheck`: pass. (`npm ci` was run in the worktree's `frontend/`.)
+
+**Not verified**
+- `-m windows` ran inside the Claude app, which the CLAUDE.md says doesn't count for the registry and Credential Manager; the owner's run in Windows PowerShell is the one that counts. The new code adds no Windows-only test.
+- `PUT` with a real Run key on an installed copy was not tried (tests use `FakeRunKey`); no installer or release build was run (nothing in `packaging/` changed).
+- Not run: frontend lint, `npm test`, `npm run build` (only the schema file changed).
+- Concurrency: the PUT is a sync route (thread pool); two PUTs at once are serialized by `BEGIN IMMEDIATE`, but the Run key and handler updates after the commit aren't under that lock (last writer wins on each).
+- The `PUT` of `start_with_windows` re-applies the Run value even if unchanged (idempotent: "unchanged" when it already matches).
+
+**Proposed 13 wording** (no string is shown by the backend; these are for m1b.4's screen)
+- Notice when `start_with_windows_applied` is false: "Your settings were saved, but Windows wouldn't let ShelfSync change its start-up entry. Start with Windows is unchanged."
+- Notice when `restart_needed` is true: "The new port is used the next time ShelfSync starts."
+- Hint for a development copy (`installed` false): "This copy isn't installed, so Start with Windows is saved but not applied."
+- Field limits to show in the form: port 47615 to 47624; log retention 1 to 365 days.
 
 ## 5. Review
 _(reviewer)_
