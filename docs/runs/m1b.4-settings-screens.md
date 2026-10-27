@@ -1,4 +1,4 @@
-Status: open (brief written 2026-10-28; the owner's standing instruction of 2026-10-28 covers build, review and merge)
+Status: done (merged; see the PR in CHANGELOG)
 Tier: C code with A effort, as the M1b plan says ([m1b.2 §0](m1b.2-updater.md)): the first build of these screens
 Usage: lead `claude-opus-5-5/high` wrote this brief (the effort was left at high overnight; see 10)
 
@@ -296,7 +296,7 @@ The mock's restart sends empty answers while ShelfSync is "gone", then a new cop
 - Playwright and axe, which run in CI only.
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-10-28)_ Reviews: first pass **SEND BACK** 7.5/10 (21 findings, two high: the restart ended on a signed-out page; lint failed on the last commit); re-review **APPROVE** 9/10 (one new medium: a 401 from another request during a restart showed the lock panel; seven low); all fixed (tables above). The lead read the last fix's sign-out routing: it only chooses which panel shows during a restart, every request still gets its 401 and no data. The designer's worktree was on the pre-squash m1b.3 head `3c125d2`; its eight commits were cherry-picked onto `feat/m1b.4-settings-screens` from `main` (after #19) with no conflict. The new strings are in 13 §3 ("Settings screens (M1b.4, proposed)"). Known and accepted: the main chunk is about 512 kB (a split is for M2's screens); the tab title stays the last page's while the shell shows the restart panel.
 
 ## 7. Handover
-_(lead, 2026-10-28)_ Brief written; the designer starts once m1b.3 is merged.
+_(lead, 2026-10-28)_ Built, reviewed twice, fixed and checked locally; pushed and merged on green under the owner's overnight instruction. M1b's code is complete; its exit test is the owner's ([runbooks/m1b-exit-test.md](../runbooks/m1b-exit-test.md)).
