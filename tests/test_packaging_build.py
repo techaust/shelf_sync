@@ -247,7 +247,7 @@ def test_a_subject_that_doesnt_parse_completely_is_refused(subject: str) -> None
     with pytest.raises(build.BuildError):
         build.subject_fields(subject)
     with pytest.raises(build.BuildError):
-        build.check_signatures([record(r"D:\python.exe", subject=subject)], ["python.exe"])
+        build.check_signatures([record(r"D:\b\python.exe", subject=subject)], ["python.exe"])
 
 
 def test_real_looking_subjects_parse_fully() -> None:

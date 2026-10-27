@@ -128,7 +128,7 @@ jobs:
         run: |
           $v = "${{ steps.version.outputs.version }}"
           $built = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          & "build\ShelfSync-$v\python.exe" -I -B -m shelfsync.update.manifest --version $v --source-commit "${{ github.sha }}" --built-at $built --files-txt buildiles.txt --setup "build\ShelfSync-Setup-$v.exe" --zip "build\shelfsync-$v-win64.zip" --out build\manifest.json
+          & "build\ShelfSync-$v\python.exe" -I -B -m shelfsync.update.manifest --version $v --source-commit "${{ github.sha }}" --built-at $built --files-txt build\files.txt --setup "build\ShelfSync-Setup-$v.exe" --zip "build\shelfsync-$v-win64.zip" --out build\manifest.json
           if ($LASTEXITCODE -ne 0) { throw "couldn't write manifest.json" }
 
       - name: Keep the build
