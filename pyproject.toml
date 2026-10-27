@@ -75,6 +75,12 @@ markers = [
 ]
 # "-m 'not windows'": the Windows checks write throwaway Credential Manager entries, so a plain run skips them; run
 # them on purpose with `pytest -m windows` (a -m on the command line replaces this one).
+# Only this one warning is filtered (by message, category and module): starlette's notice that TestClient wants httpx2
+# instead of httpx. A change of httpx is not ours to make here (new packages need the owner's yes); every other
+# warning still shows.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning:(fastapi|starlette)\\.testclient",
+]
 addopts = "-ra --strict-markers -m 'not windows and not defender' --cov --cov-report=term-missing:skip-covered"
 
 [tool.coverage.run]

@@ -6,10 +6,11 @@ import secrets
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
+from shelfsync import __version__
 from shelfsync.platform import autostart
 from shelfsync.platform.autostart import (
     FakeRunKey,
@@ -18,6 +19,8 @@ from shelfsync.platform.autostart import (
     is_installed_copy,
     launcher_command,
 )
+from shelfsync.platform.junction import default_links
+from shelfsync.update.layout import INSTALL_DIR_ENV, installed_root
 
 COMMAND = r'"C:\Users\x\AppData\Local\Programs\ShelfSync\current\pythonw.exe" -m shelfsync.launcher --background'
 
@@ -89,23 +92,56 @@ def test_an_old_run_value_without_the_flag_is_rewritten() -> None:
     assert key.values["ShelfSync"] == COMMAND
 
 
-def test_only_a_python_under_the_install_folders_current_is_the_installed_copy(
+def _installed_tree(tmp_path: Path) -> tuple[Path, Path]:
+    """`<root>/versions/<this version>/` with a `current` link to it; returns (root, version folder)."""
+    root = tmp_path / "Programs" / "ShelfSync"
+    version = root / "versions" / __version__
+    version.mkdir(parents=True)
+    default_links().create(root / "current", version)
+    return root, version
+
+
+def test_a_copy_started_from_its_version_folder_is_installed(tmp_path: Path) -> None:
+    """SYS-04: one test for "installed" (layout.installed_root), and the two names agree."""
+    root, version = _installed_tree(tmp_path)
+    assert is_installed_copy(str(version / "pythonw.exe"))
+    assert installed_root(str(version / "pythonw.exe")) == root
+
+
+def test_a_copy_started_through_current_is_installed(tmp_path: Path) -> None:
+    """SYS-04: `current` is a junction; it resolves to the version folder, so both starts agree."""
+    root, _ = _installed_tree(tmp_path)
+    assert is_installed_copy(str(root / "current" / "pythonw.exe"))
+    assert installed_root(str(root / "current" / "pythonw.exe")) == root
+
+
+def test_the_source_tree_and_other_version_folders_are_not_installed(tmp_path: Path) -> None:
+    """SYS-04."""
+    assert not is_installed_copy(sys.executable)  # this venv
+    other = tmp_path / "Programs" / "ShelfSync" / "versions" / "9.9.9"
+    other.mkdir(parents=True)
+    assert not is_installed_copy(str(other / "pythonw.exe"))
+    assert not is_installed_copy(str(tmp_path / "Programs" / "ShelfSync" / "currentx" / "python.exe"))
+
+
+def test_a_rehearsal_install_dir_is_not_an_installed_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-04: SHELFSYNC_INSTALL_DIR names a layout for updates, but the copy still isn't installed, so it never
+    writes the Run key."""
+    monkeypatch.setenv(INSTALL_DIR_ENV, str(tmp_path / "rehearsal"))
+    assert not is_installed_copy(sys.executable)
+    assert apply_start_with_windows(True, FakeRunKey()) == "skipped"
+
+
+def test_the_run_value_names_current_even_when_started_from_the_version_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SYS-04: the path is compared as written (current is a junction, which must not be resolved away)."""
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    current = tmp_path / "Programs" / "ShelfSync" / "current"
-    assert is_installed_copy(str(current / "pythonw.exe"))
-    assert is_installed_copy(str(current / "Lib" / "python.exe"))
-    assert not is_installed_copy(str(tmp_path / "Programs" / "ShelfSync" / "versions" / "1.0" / "python.exe"))
-    assert not is_installed_copy(str(tmp_path / "Programs" / "ShelfSync" / "currentx" / "python.exe"))
-    assert not is_installed_copy(sys.executable)  # this venv
-
-
-def test_without_localappdata_nothing_is_installed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SYS-04."""
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    assert not is_installed_copy(r"C:\anywhere\pythonw.exe")
+    """SYS-04: the default command of an installed copy names `<root>\\current\\pythonw.exe`."""
+    root, version = _installed_tree(tmp_path)
+    monkeypatch.setattr(sys, "executable", str(version / "pythonw.exe"))
+    expected = PureWindowsPath(root) / "current" / "pythonw.exe"
+    assert launcher_command(background=True) == f'"{expected}" -m shelfsync.launcher --background'
+    # an explicit executable is still taken as written
+    assert launcher_command(r"C:\x\python.exe") == r'"C:\x\pythonw.exe" -m shelfsync.launcher'
 
 
 def test_the_test_runner_is_not_an_installed_copy() -> None:
