@@ -27,6 +27,15 @@ $failures = New-Object System.Collections.Generic.List[string]
 function Check([bool]$ok, [string]$what) {
     if ($ok) { Write-Host "ok   $what" } else { Write-Host "FAIL $what"; $failures.Add($what) }
 }
+# True once none of the paths exists, waiting up to 10 s: a Desktop synced by OneDrive (this PC) can show a deleted
+# shortcut for a moment after the uninstaller removed it (a local run failed on it once; the next check passed).
+function Gone([string[]]$paths) {
+    for ($i = 0; $i -lt 20; $i++) {
+        if (-not ($paths | Where-Object { Test-Path $_ })) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
 
 if ((Test-Path $Root) -and (Get-ChildItem $Root -Force | Select-Object -First 1)) { throw "$Root isn't empty; use a new throwaway folder" }
 New-Item -ItemType Directory -Force $Root | Out-Null
@@ -137,7 +146,7 @@ Check ((Uninstall) -eq 0) "silent uninstall exits 0"
 $left = @(Get-ChildItem $script:install -Force | ForEach-Object { $_.Name })
 Check (($left.Count -eq 1) -and ($left[0] -eq "uninstall.exe")) "only uninstall.exe is left in the program folder (left: $($left -join ', '))"
 Check (Test-Path (Join-Path $script:outside "keep.txt")) "the sentinel file outside survived (the delete did not follow the junction)"
-Check (-not (Test-Path $startMenu) -and -not (Test-Path $desktop)) "both shortcuts are gone"
+Check (Gone @($startMenu, $desktop)) "both shortcuts are gone"
 Check (-not (Test-Path $uninstallKey)) "the uninstall key is gone"
 Check (-not (Test-Path $aumidKey)) "the AUMID key is gone"
 Check ($null -eq (Get-ItemProperty $runKey -Name "ShelfSync$Suffix" -ErrorAction SilentlyContinue)) "the Run value is gone"
