@@ -288,6 +288,7 @@ _(lead, 2026-10-27)_
 - The lead added `color` to the `.btn` and `.nav-item` transitions (`70b072e`, `d93eae2`), and the scanner self-check to CI (`2c7d8ab`). The lead read the round 2 diff; no further re-check.
 - **Before the PR:** rebase onto `main` after M1a.2 merges (this branch starts at `872dea4`), then run the full checks again. The first CI run includes Playwright + axe, which has never run.
 - The wording is in [13](../13-content.md) §3 and the decisions in [11](../11-decisions.md). The `.gitignore` lines are on the docs branch.
+- **PR #8, first CI run:** rebased onto `main` cleanly (the brief commit dropped as already upstream). Playwright + axe: 23 of 24 passed. The forced-colours test failed on one node: the `health-chip is-none` text was `#9db0a8` on Canvas white (2.28:1). Fixed with a forced-colours rule that sets the chip and its icon to `CanvasText`; Biome, Vitest 261 and the build pass locally; forced colours can't be emulated in the built-in browser, so CI is the check.
 
 ## 7. Handover
 _(lead, 2026-10-27)_ Brief written at Opus 5.5 medium. Waits for M1a.2's fix round and re-check, then the designer starts from the head of `feat/m1a.2-security`.

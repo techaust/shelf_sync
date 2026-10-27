@@ -734,4 +734,9 @@
   .store-dot {
     forced-color-adjust: none;
   }
+  /* the quiet "nothing connected" chip keeps its muted app-bar colour otherwise (axe: 2.28:1 on Canvas) */
+  .health-chip.is-none,
+  .health-chip.is-none .icon {
+    color: CanvasText;
+  }
 }
