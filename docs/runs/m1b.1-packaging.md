@@ -351,10 +351,24 @@ Re-run (port 47615 had no listener): ruff check and format clean (90 files); myp
 Re-run (port 47615 had no listener): ruff check and format clean (90 files); mypy no issues; bandit no issues; `pytest` **817 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py`, `smoke.py`, `makensis` x4 and the rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r8.log`). Note: another run (`tools/release/rehearse.py`) was using `build/ShelfSync-0.1.0` of this worktree while I rebuilt it.
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-10-27)_
+- **Review:** seven reviewer rounds (Opus high, `code-review` + `security-review`). Round 1 was SEND BACK (1 high, 3 medium); rounds 2–7 were APPROVE with follow-ups, all fixed except L-1 of round 7, an accepted hedge. The last fix pass (`73846d1..0ed818b`, wording and tidy-ups) was **not** re-reviewed. The m1b.2 builder found a real bug, the missing tray icons in the built folder, which round 5 fixed.
+- **Wording:** the installer, uninstaller and "screens missing" strings are added to [13 §3](../13-content.md) as **proposed**, for the owner to approve before merge.
+- **Records:** 04-A V40 (verified: `RMDir /r` follows junctions), V47 (verified locally) and V49 (measured) are updated. Decision rows are in [11](../11-decisions.md).
+- **For the merge with m1b.2:**
+  - `server.py`: one `create_app(...)` line takes both `ui_dir=` and `updates=`.
+  - Add `make_manifest` to `release.yml`'s placeholder step.
+  - `OWNED_SECRET_NAMES` already lists `github-token`.
+- **Still open, at M1b integration:**
+  - `release.yml` has never run (a `workflow_dispatch` run, with the owner's yes).
+  - The installer's notices have never been seen on screen.
+  - The exit-9 path is checked by text tests only.
+  - The clean-account install, `reg query`, and `-m windows` plus the rehearsal from Windows PowerShell outside Claude (V36, V42) are still to do.
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Brief written, waiting for the owner's yes. Then:
-1. the lead downloads NSIS 3.13 and pins its hash;
-2. the builder starts (Sonnet medium, own worktree);
-3. the m1b.2 final brief at Opus high, so both builders can run side by side.
+_(lead, 2026-10-27)_ m1b.1 is ready for a PR at `0ed818b` (branch `m1b.1-build`, worktree `agent-a1e0d53eff589f5c5`), with the brief commit `b46d73c` at its base. Next:
+1. The owner approves the 13 wording, the push and the PR.
+2. CI (`checks.yml`) runs on the PR.
+3. The lead starts one `release.yml` run by `workflow_dispatch` on the PR branch, with the owner's yes.
+4. Squash-merge on green, with the owner's yes.
+5. Move `feat/m1b.2-updater` with `git rebase --onto main b46d73c`.
