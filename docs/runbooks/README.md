@@ -14,13 +14,13 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [troubleshooting.md](troubleshooting.md) | "ShelfSync won't open", port in use, the tray icon missing, reading the logs (grows) |
 | [keys-and-policies.md](keys-and-policies.md) | Make the Shop Manager key for each store and the two AWS keys with their policies; record the bucket's versioning and encryption |
 | [key-rotation.md](key-rotation.md) | Replace a WooCommerce key, an AWS key, the GitHub token, the install token; what to do if the signing key is seen or lost |
+| [restore-database.md](restore-database.md) | Restore the database from a daily, pre-migration or pre-rollback backup with the restore command |
 
 Added when their milestone is built ([08](../08-roadmap.md)):
 
 | Runbook | Milestone | What it covers |
 |---|---|---|
 | `test-stack.md` | M2 | Starting and resetting the LocalWP + moto test stack |
-| `restore-database.md` | M2 | Restoring the database from a daily backup |
 | `calibration.md` | M4 | Running the calibration and reading its report |
 | `canary.md` | M6 | The live canary, test download and rollback, step by step |
 | `backup-and-new-pc.md` | M7 | Export, import, and moving to a new PC |
