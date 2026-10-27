@@ -1,4 +1,4 @@
-Status: open (brief written 2026-10-28; the owner's standing instruction of 2026-10-28 covers build, review and merge)
+Status: done (merged; see the PR in CHANGELOG)
 Tier: B ([12 §2](../12-models-and-usage.md)); `platform/` and the API middleware rows of 09 §3 add `security-review`
 Usage: lead `claude-opus-5-5/high` wrote this brief (the effort was left at high overnight; see 10)
 
@@ -113,7 +113,9 @@ Builder: Sonnet 5.5, worktree branch `worktree-agent-a7fa3226c665c0518` (the wor
 - Field limits to show in the form: port 47615 to 47624; log retention 1 to 365 days.
 
 ## 5. Review
-_(reviewer)_
+_(reviewer: Opus 5.5 high, 2026-10-28)_ **APPROVED**, rating 8.5/10: no critical or high findings; 2 medium (the Start with Windows result field, `restart_needed` against the stored port) and 10 low. All but finding 7 were fixed by the builder (table below). Finding 7 (a `-Suffix` build writes the real Run value if installed interactively and launched) is a recorded follow-up ([11](../11-decisions.md), 2026-10-28).
+
+**Re-review** (Opus 5.5 high): **APPROVED**, 8.5/10. Every fix checked, lock order sound (the service lock, then the handler's). Four new follow-ups, fixed by the lead in `e9e99ff`: N1 (medium) a failed apply after an earlier success was later reported as applied: the flag now resets on a failure (`test_a_failure_after_an_earlier_success_is_tried_again_at_the_next_save`); N2 start-up read the retention unvalidated: start-up uses `stored_app_settings`, the same fallback as GET (`test_a_stored_retention_that_is_not_valid_falls_back_at_start_up`); N3 the `normcase` comment; N4 the apply outcomes are typed `Literal`s.
 
 ### Review fixes (builder, Sonnet 5.5)
 | # | Finding | Fix | Test |
@@ -132,7 +134,7 @@ _(reviewer)_
 | 7 | (not fixed here) | the lead records it as a follow-up | |
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-10-28)_ The builder's worktree started on `main`; it fast-forwarded to the brief's commit, so the merge was clean. The fix merge conflicted only in the m1b.4 brief's line on the save result (kept the lead's fuller line). Checked here before the push: ruff, format, mypy and `mypy --platform linux`, bandit, pip-audit, the full pytest (1,437 passed), frontend lint, typecheck, schema check, Vitest (261) and build, and `release-build.ps1` (all installer checks passed).
 
 ## 7. Handover
 _(lead, 2026-10-28)_ Brief written; builder next.
@@ -162,3 +164,5 @@ Before every push:
 Clean up afterwards: the merged worktrees `agent-a1e0d53eff589f5c5` and `agent-ac2f65217273a2b24` (branches `m1b.1-build`, `m1b.2-build`, `m1b.2-integrate`, `m1b.2-prerebase`), and `build/`.
 
 For the owner: one `reg query` on the Uninstall\ShelfSync key outside Claude. The lead's effort was left at high (owner asleep).
+
+_(lead, 2026-10-28)_ Built, reviewed twice, fixed, and checked locally; pushed and merged on green under the owner's overnight instruction. Next: m1b.4 screens on this API.
