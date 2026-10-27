@@ -5,6 +5,15 @@ thread) and, on the main thread, a wait loop that Ctrl+C can interrupt. Quit sto
 shut down and waits for it; start-up's own clean-up then closes the socket and removes runtime.json, and the process
 exits 0.
 
+Safety exit: once Quit (or a crash, or Ctrl+C) starts the shut-down, an `ExitGuard` is armed for 45 s (more than the
+worst bounded path, about 34 s) and, at the end of `TrayServe.__call__` (after the server join), re-armed for 10 s, so
+the 10 s cover `run()`'s clean-up, the release of the single-instance lock and the interpreter's finalization. If the
+process still hasn't ended by then, faulthandler writes every thread's stack to `tmp\\shutdown-stall.txt` and ends it
+with exit code 1; the next start logs that file. Residual: a relaunch within those 10 s may log "Couldn't remove
+shutdown-stall.txt" (the old process still holds the file). Only `shelfsync.launcher`'s `__main__` passes a factory
+that builds a real guard (from the data folder `run_application` resolved); a guard that can't be armed is logged and
+the shut-down goes on without it.
+
 A second launch (the mutex is taken) opens a new signed-in tab in the running copy and exits; see `second_launch`.
 """
 
@@ -24,6 +33,7 @@ from shelfsync.platform.notify import Notifier, default_notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.platform.shell import Shell, ShellError, WindowsShell
 from shelfsync.secure.sessions import SessionStore, sign_in_url
+from shelfsync.tray.exit_guard import ExitGuard
 from shelfsync.tray.second_launch import second_launch
 from shelfsync.tray.state import TrayState
 from shelfsync.tray.tray import Tray
@@ -32,6 +42,9 @@ _log = logging.getLogger("shelfsync.launcher")
 
 SERVER_START_SECONDS = 15.0
 SERVER_STOP_SECONDS = 15.0
+STAGE1_SECONDS = 45.0  # the exit guard, armed when the shut-down starts
+# Re-armed at the end of `__call__`: run()'s clean-up (a crash's toast, not timed cold), the lock release, finalization.
+STAGE2_SECONDS = 10.0
 _WAIT_STEP_SECONDS = 0.5
 
 
@@ -47,7 +60,9 @@ class TrayServe:
         state: TrayState | None = None,
         make_tray: Callable[..., Any] = Tray,
         open_first_tab: bool = True,
+        exit_guard: ExitGuard | None = None,
     ) -> None:
+        self._exit_guard = exit_guard
         self._paths = paths
         self._notifier = notifier
         self._shell = shell
@@ -61,7 +76,8 @@ class TrayServe:
         self._before_quit: list[Callable[[], bool]] = []
 
     def add_quit_guard(self, guard: Callable[[], bool]) -> None:
-        """Hook for M5: `guard()` returns False while an upload is running, and Quit then waits. None exist yet."""
+        """Hook for M5: `guard()` returns False while an upload is running, and Quit then waits. None exist yet.
+        A guard runs on the tray's loop thread and must never wait on it."""
         self._before_quit.append(guard)
 
     # --- the menu's actions -------------------------------------------------------------------------------------
@@ -69,7 +85,7 @@ class TrayServe:
     def open_tab(self) -> None:
         """Open ShelfSync with a fresh single-use ticket. The address is never logged."""
         sessions = self._sessions
-        if sessions is None:
+        if sessions is None or self._quit.is_set():  # an Open that was queued before Quit must not open a tab now
             return
         try:
             self._shell.open_url(sign_in_url(self._port, sessions.issue_ticket()))
@@ -122,9 +138,21 @@ class TrayServe:
             while not self._quit.wait(_WAIT_STEP_SECONDS):  # Ctrl+C raises here
                 pass
         finally:
+            _log.info("Stopping (Quit: %s)", "yes" if self._quit_requested.is_set() else "no")
+            if self._exit_guard is not None:
+                try:
+                    self._exit_guard.arm(STAGE1_SECONDS)
+                except Exception as error:  # no safety exit is better than no shut-down
+                    _log.warning("The safety exit couldn't be armed (%s)", type(error).__name__)
             tray.stop()
             uv.should_exit = True
             thread.join(timeout=SERVER_STOP_SECONDS)
+            if thread.is_alive():
+                _log.warning("The server thread didn't end in %.0f seconds", SERVER_STOP_SECONDS)
+            _log.info("Threads at exit: %s", ", ".join(f"{t.name} (daemon={t.daemon})" for t in threading.enumerate()))
+            if self._exit_guard is not None and self._exit_guard.armed:
+                # Stage 2: what is left (run()'s clean-up, the lock release, finalization) gets 10 s.
+                self._exit_guard.rearm(STAGE2_SECONDS)
         # A crash is reported first, even if Quit was asked for meanwhile: it is the more useful fact.
         if crashed:
             raise server.ServerStoppedError("The server stopped unexpectedly") from crashed[0]
@@ -162,15 +190,18 @@ def main(
     notifier: Notifier | None = None,
     shell: Shell | None = None,
     secrets: SecretStore | None = None,
+    make_exit_guard: Callable[[DataPaths], ExitGuard | None] | None = None,
 ) -> int:
-    """`python -m shelfsync.launcher`."""
+    """`python -m shelfsync.launcher`. `make_exit_guard(paths)` builds the safety exit from the data folder that
+    `run_application` resolved; it is None in tests: a real armed guard would end pytest."""
     logs.install_output_guards()
     toasts = notifier if notifier is not None else default_notifier()
     opener = shell if shell is not None else WindowsShell()
     logs.set_write_failure_notice(lambda: toasts.notify(messages.LOG_WRITE_FAILED))
 
     def make_serve(paths: DataPaths) -> server.Serve:
-        return TrayServe(paths, toasts, opener)
+        guard = make_exit_guard(paths) if make_exit_guard is not None else None
+        return TrayServe(paths, toasts, opener, exit_guard=guard)
 
     def second(paths: DataPaths) -> int:
         store = secrets if secrets is not None else default_secret_store()
