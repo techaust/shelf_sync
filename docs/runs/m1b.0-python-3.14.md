@@ -93,7 +93,9 @@ Checked correct: `uv.lock` changed no package name or version (only `requires-py
 ## 6. Integration notes
 _(lead, 2026-10-27)_
 - The branch was rebased onto `docs/m1a-closed` (today's record) so they go in one PR. The lead added the setup-python step to `.github/workflows/checks.yml` (`503aec4`; YAML checked).
-- Owner's checks outside Claude: see the handover.
+- **Full checks in the main checkout on 3.14.8 (lead):** ruff, ruff format, mypy (38 files), bandit clean; pytest 694 passed, 10 skipped; pip-audit: no known vulnerabilities (`.logs/m1b.0-int-checks.log`).
+- **Owner, outside Claude (Windows PowerShell), 2026-10-27:** `uv run pythonw -m shelfsync.launcher` on 3.14.8 started and quit on one tray click (log: "Stopping (Quit: yes)", "Tray stopped in 0.0 s", "Threads at exit: MainThread"); `pytest -m windows --no-cov` on Python 3.14.8: 31 passed, 1 skipped (V31).
+- CI: not run yet (the first push shows whether setup-python's 3.14.8 works).
 
 ## 7. Handover
-_(lead)_
+_(lead, 2026-10-27)_ Ready to push with the owner's yes, as one PR with today's record (`docs/m1a-closed`). After the merge: m1b.1 and m1b.2 briefs (m1b.2's final brief at Opus high).
