@@ -181,8 +181,13 @@ class WooClient:
                 declared = response.headers.get("content-length", "")
                 if declared.isascii() and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
+                encoding = response.headers.get("content-encoding", "identity").strip().lower()
+                if encoding not in ("", "identity"):
+                    raise ReadRefused(
+                        "bad_response"
+                    )  # we asked for none: nothing is decoded, so the cap is on wire bytes
                 body = b""
-                for chunk in response.iter_bytes():
+                for chunk in response.iter_raw():
                     body += chunk
                     if len(body) > MAX_BODY_BYTES:
                         raise ReadRefused("bad_response")
@@ -191,6 +196,8 @@ class WooClient:
                 return WooResponse(response.status_code, response.headers, body)
         except httpx.TimeoutException:
             raise ReadRefused("timeout") from None
+        except httpx.DecodingError:
+            raise ReadRefused("bad_response") from None
         except httpx.TransportError as error:
             raise ReadRefused("tls_error" if _is_tls_error(error) else "unreachable") from None
 

@@ -3,6 +3,7 @@ with the log redaction when stored and at start-up, and the "Remove my data" swe
 
 import logging
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -168,7 +169,7 @@ def test_the_service_registers_stored_keys_at_start_up_and_warns_when_the_databa
     secrets.set("store-1-key", KEY)
     secrets.set("store-1-secret", SECRET)
     service = StoreService.in_memory(secrets)
-    with service._open() as connection:
+    with closing(service._open()) as connection:
         connection.execute(
             "INSERT INTO store (name, url, code, shape, color, created_at) "
             "VALUES ('S', 'https://a.example', 'SA', 'circle', 'indigo', 'x')"

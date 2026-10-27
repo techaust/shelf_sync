@@ -2,10 +2,12 @@
 replacement and removal can't overlap), the 60-second limit on a whole read test, the HTTP loggers held at WARNING, id
 limits, the host-change order (old keys out before the new address goes in), and the smaller hardening items."""
 
+import gc
 import logging
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -111,7 +113,7 @@ def test_an_address_changed_under_a_running_test_leaves_the_result_unsaved() -> 
     add_store(rig)
 
     def moved_meanwhile(request: httpx.Request) -> httpx.Response:
-        with rig.service._open() as connection:  # forced through the repository, past the slot
+        with closing(rig.service._open()) as connection:  # forced through the repository, past the slot
             update_store(connection, 1, {"url": "https://store-moved.example"})
         return system_status()
 
@@ -408,3 +410,154 @@ def test_o6_a_wal_database_with_its_wal_file_present_gives_the_store_entry_names
         conn.close()
     assert (secrets.get("store-1-key"), secrets.get("store-1-secret")) == (None, None)
     assert isinstance(paths, DataPaths) and isinstance(sqlite3.sqlite_version, str)
+
+
+# ---- review fixes ---------------------------------------------------------------------------------------------------
+
+
+class CommitFails:
+    """A connection that refuses COMMIT while `armed`, and passes everything else to the real one."""
+
+    armed = False
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+
+    def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+        if sql == "COMMIT" and CommitFails.armed:
+            raise sqlite3.OperationalError("disk I/O error")
+        return self._real.execute(sql, *args)  # type: ignore[arg-type]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+
+def test_m1_when_the_old_address_cannot_be_put_back_the_old_keys_are_not_put_under_the_new_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = FailingSecretStore()
+    rig = make_store_rig(secrets)
+    add_store(rig)
+    import shelfsync.store_service as module
+
+    real_update, calls = module.update_store, []
+
+    def failing_undo(connection: sqlite3.Connection, store_id: int, changes: object) -> bool:
+        calls.append(1)
+        if len(calls) == 2:  # the first call is the edit itself, the second is `_undo_edit`
+            raise sqlite3.OperationalError("database is locked")
+        return real_update(connection, store_id, changes)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(module, "update_store", failing_undo)
+    secrets.fail_set_on = secrets.sets + 1  # writing the new keys fails
+    client = rig.harness.signed_in_client()
+    response = client.patch("/api/stores/1", headers=WRITE_HEADERS, json=move_body())
+    assert (response.status_code, response.json()) == (503, {"error": "secrets_unavailable"})
+    assert len(calls) == 2
+    assert rig.service.get(1).row.url == OTHER_URL  # the address could not be put back ...
+    assert (secrets.get("store-1-key"), secrets.get("store-1-secret")) == (None, None)  # ... so no keys anywhere
+
+
+def test_m1_a_failed_commit_of_a_host_change_keeps_the_old_address_and_gives_the_old_keys_back() -> None:
+    secrets = FailingSecretStore()
+    rig = make_store_rig(secrets)
+    add_store(rig)
+    real_open = rig.service._open
+    rig.service._open = lambda: CommitFails(real_open())  # type: ignore[assignment,return-value]
+    CommitFails.armed = True
+    try:
+        client = rig.harness.signed_in_client(raise_server_exceptions=False)
+        assert client.patch("/api/stores/1", headers=WRITE_HEADERS, json=move_body()).status_code == 500
+    finally:
+        CommitFails.armed = False
+    assert rig.service.get(1).row.url == STORE_URL
+    assert (secrets.get("store-1-key"), secrets.get("store-1-secret")) == (KEY, SECRET)
+
+
+@pytest.mark.parametrize("body", [b"this is not gzip", None])
+def test_m2_any_content_encoding_is_refused_not_decoded_and_never_a_500(body: bytes | None) -> None:
+    import gzip
+
+    payload = body if body is not None else gzip.compress(b'{"environment":{"version":"9.4.1","wp_version":"6.7"}}')
+    for encoding in ("gzip", "br", "deflate", "gzip, br"):
+
+        def answer(request: httpx.Request, encoding: str = encoding) -> httpx.Response:
+            # built from a stream, so nothing decodes it before the client does (a real transport hands over raw bytes)
+            return httpx.Response(200, headers={"Content-Encoding": encoding}, stream=httpx.ByteStream(payload))
+
+        woo = FakeWoo(status=answer)
+        outcome = run_read_test_for(woo)
+        assert (outcome.reason, outcome.health) == ("bad_response", "unreachable")
+        assert len(woo.requests) == 1
+
+
+def test_m2_identity_encoding_is_fine_and_a_decoding_error_is_a_bad_response() -> None:
+    answer = httpx.Response(
+        200,
+        headers={"Content-Encoding": "identity"},
+        content=b'{"environment":{"version":"9.4.1","wp_version":"6.7"}}',
+    )
+    assert run_read_test_for(FakeWoo(status=answer)).ok
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        raise httpx.DecodingError("bad gzip")
+
+    assert run_read_test_for(FakeWoo(status=broken)).reason == "bad_response"
+
+
+def run_read_test_for(woo: FakeWoo):  # type: ignore[no-untyped-def]
+    from shelfsync.apply.woocommerce import run_read_test
+
+    with WooClient(STORE_URL, KEY, SECRET, transport=woo.transport, monotonic=woo.time.monotonic) as client:
+        return run_read_test(client, 150, "SA", sleep=woo.time.sleep, monotonic=woo.time.monotonic)
+
+
+def test_l1_the_slot_is_still_held_while_the_result_is_saved_and_free_afterwards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shelfsync.store_service as module
+
+    rig = make_store_rig()
+    add_store(rig)
+    held: list[bool] = []
+    real_save = module.save_test_result
+
+    def watching(*args: object, **kwargs: object) -> bool:
+        held.append(1 in rig.service._busy)
+        return real_save(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(module, "save_test_result", watching)
+    assert rig.service.test(1).outcome.ok
+    assert held == [True]
+    assert not rig.service._busy
+
+
+def test_l2_the_in_memory_services_keeper_connection_is_closed_with_the_service() -> None:
+    from shelfsync.store_service import StoreService
+
+    service = StoreService.in_memory()
+    keeper = service._keeper
+    assert keeper is not None
+    keeper.execute("SELECT 1")  # open now
+    del service
+    gc.collect()
+    with pytest.raises(sqlite3.ProgrammingError):
+        keeper.execute("SELECT 1")  # closed: nothing is left to warn about at exit
+
+
+def test_l4_an_unknown_stored_colour_shows_the_default_with_a_warning_instead_of_failing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from dataclasses import replace
+
+    from shelfsync.api.stores import DEFAULT_COLOR, to_model
+    from shelfsync.store_service import StoreView
+
+    rig = make_store_rig()
+    add_store(rig)
+    view = rig.service.list()[0]
+    odd = StoreView(replace(view.row, color="violet"), view.consumer_key, view.consumer_secret)
+    caplog.set_level(logging.WARNING)
+    assert to_model(odd).color == DEFAULT_COLOR == "indigo"
+    assert "unknown colour key" in caplog.text and "violet" not in caplog.text
+    assert to_model(StoreView(replace(view.row, color="teal"), None, None)).color == "teal"

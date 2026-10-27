@@ -60,7 +60,7 @@ OVERLAY = [
 ]
 # The rehearsal's own migrations carry numbers no real migration will reach, so they never collide with one the source
 # tree adds (0002_store, ...). BASE is the schema the copied source already has; NEW and BROKEN come after it.
-BASE_SCHEMA = latest_schema()
+BASE_SCHEMA = 0  # set in main() from the --base build's own migrations folder
 NEW_SCHEMA = 9001
 BROKEN_SCHEMA = 9002
 MIGRATION_2 = "CREATE TABLE rehearsal_note (id INTEGER PRIMARY KEY, body TEXT NOT NULL);\n"
@@ -318,10 +318,12 @@ def stage(layout: InstallLayout, paths: DataPaths, version: str) -> None:
 
 
 def main() -> int:
+    global BASE_SCHEMA
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
+    BASE_SCHEMA = latest_schema(args.base / "shelfsync" / "db" / "migrations")  # the build's own, not this repo's
     if args.work.exists() and any(args.work.iterdir()):
         raise SystemExit("--work must be an empty or new folder")
     layout = InstallLayout(args.work / "Programs" / "ShelfSync")
@@ -339,7 +341,9 @@ def main() -> int:
     try:
         say("Building the fake versions (a copy of the embedded build each, overlaid and signed with a throwaway key)")
         build_version(layout, args.base, "0.0.1", BASE_SCHEMA, key, key, service, {})
-        build_version(layout, args.base, "0.0.2", NEW_SCHEMA, key, key, service, {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2})
+        build_version(
+            layout, args.base, "0.0.2", NEW_SCHEMA, key, key, service, {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2}
+        )
         links.create(layout.current, layout.version_dir("0.0.1"))
 
         say("\n1. Install 0.0.1")
@@ -410,7 +414,16 @@ def main() -> int:
 
         say("\n4. A tampered 0.0.3 is refused")
         # built only now: a switch prunes every version but the two it keeps, so an earlier one would be gone
-        build_version(layout, args.base, "0.0.3", NEW_SCHEMA, wrong, key, service, {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2})
+        build_version(
+            layout,
+            args.base,
+            "0.0.3",
+            NEW_SCHEMA,
+            wrong,
+            key,
+            service,
+            {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2},
+        )
         found = app.runtime()
         pid_before = found[1] if found else 0
         stage(layout, paths, "0.0.3")

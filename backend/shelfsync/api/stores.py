@@ -18,6 +18,7 @@ frontend maps each key to its light and dark colours (`frontend/src/styles/store
 2**63 - 1 (SQLite's integers are 64-bit), so a huge one is a 422, never a 500.
 """
 
+import logging
 from typing import Annotated, Any, Literal, Self
 
 from fastapi import APIRouter, Path, Response
@@ -26,6 +27,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from shelfsync.api.errors import ApiError, ErrorResponse
 from shelfsync.db.stores import StoreRow
 from shelfsync.store_service import StoreError, StoreService, StoreView, normalize_url
+
+_log = logging.getLogger("shelfsync.stores")
 
 STORES_PATH = "/api/stores"
 
@@ -160,6 +163,20 @@ class StoreTestResponse(BaseModel):
     warning: str | None  # `no_downloadable_products`
 
 
+DEFAULT_COLOR: Color = "indigo"
+
+
+def _color(row: StoreRow) -> Color:
+    """The stored key, or the default (with a warning) for any other value, so a list never fails on one row. The
+    table's CHECK allows only the two keys, so widening the palette needs a migration as well as a new key here."""
+    if row.color == "indigo":
+        return "indigo"
+    if row.color == "teal":
+        return "teal"
+    _log.warning("Store %s has an unknown colour key; showing the default", row.code)
+    return DEFAULT_COLOR
+
+
 def to_model(view: StoreView) -> StoreModel:
     row: StoreRow = view.row
     return StoreModel(
@@ -168,7 +185,7 @@ def to_model(view: StoreView) -> StoreModel:
         url=row.url,
         code=row.code,
         shape=row.shape,  # type: ignore[arg-type]  # the table's CHECK allows only these
-        color=row.color,  # type: ignore[arg-type]  # written only through the API's own Literal
+        color=_color(row),
         spacing_ms=row.spacing_ms,
         main_button=row.main_button,
         state=row.state,  # type: ignore[arg-type]

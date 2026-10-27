@@ -6,7 +6,8 @@ CREATE TABLE store (
     url                TEXT NOT NULL,                      -- normalised https://host[:port][/path], no trailing /
     code               TEXT NOT NULL CHECK (code GLOB '[A-Z][A-Z]'),
     shape              TEXT NOT NULL CHECK (shape IN ('circle', 'square', 'triangle', 'diamond')),
-    color              TEXT NOT NULL,                      -- a palette key, not a hex value
+    color              TEXT NOT NULL CHECK (color IN ('indigo', 'teal')),  -- a palette key, not a hex value;
+                                                           -- a new key needs a new migration (05 section 2.3)
     spacing_ms         INTEGER NOT NULL DEFAULT 150 CHECK (spacing_ms BETWEEN 50 AND 5000),
     main_button        TEXT NOT NULL DEFAULT 'Download' CHECK (length(main_button) BETWEEN 1 AND 40),
     state              TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'paused')),

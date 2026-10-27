@@ -47,6 +47,16 @@ def html(status: int) -> httpx.Response:
     )
 
 
+def unread(response: httpx.Response) -> httpx.Response:
+    """A fresh, not yet read copy: what a real transport hands the client, which reads the raw bytes itself (a response
+    built with `content=` or `json=` is already read, and its stream can't be read again)."""
+    try:
+        body = response.content
+    except httpx.ResponseNotRead:
+        return response  # built from a stream already
+    return httpx.Response(response.status_code, headers=response.headers, stream=httpx.ByteStream(body))
+
+
 class FakeTime:
     """A clock and a sleep that only move when told to."""
 
@@ -83,7 +93,7 @@ class FakeWoo:
             answer = self.products_answer if self.products_answer is not None else products()
         else:
             return httpx.Response(404, json={"code": "rest_no_route", "message": "x", "data": {"status": 404}})
-        return answer(request) if callable(answer) else answer
+        return unread(answer(request) if callable(answer) else answer)
 
     @property
     def transport(self) -> httpx.MockTransport:

@@ -1,6 +1,7 @@
 """SET-01, ERR-01, SYS-03: the Stores API behind the deny-by-default guard: limits, duplicates, atomic saves, the key
 pair, removal, the read test, and that no secret is ever in a response."""
 
+from contextlib import closing
 from typing import Any
 
 import httpx
@@ -494,7 +495,8 @@ def test_removing_a_store_deletes_both_entries_and_hides_the_row() -> None:
     assert rig.secrets.get("store-1-key") is None and rig.secrets.get("store-1-secret") is None
     assert client.get("/api/stores").json() == {"stores": []}
     assert error(client.delete("/api/stores/1", headers=WRITE_HEADERS)) == (404, {"error": "not_found"})
-    row = rig.service._open().execute("SELECT removed_at FROM store WHERE id = 1").fetchone()
+    with closing(rig.service._open()) as connection:
+        row = connection.execute("SELECT removed_at FROM store WHERE id = 1").fetchone()
     assert row[0] is not None  # a soft delete: history will point at the id
 
 

@@ -87,7 +87,9 @@ def test_the_migration_is_in_the_folder_in_order() -> None:
     "changes",
     [
         {"name": ""}, {"name": "x" * 61}, {"code": "sa"}, {"code": "S"}, {"code": "SAA"}, {"code": "S1"},
-        {"shape": "hexagon"}, {"spacing_ms": 49}, {"spacing_ms": 5001}, {"main_button": ""},
+        {"shape": "hexagon"},
+        {"color": "violet"}, {"color": "#4d4d99"}, {"color": ""},
+{"spacing_ms": 49}, {"spacing_ms": 5001}, {"main_button": ""},
         {"main_button": "x" * 41}, {"state": "gone"}, {"health": "fine"},
     ],
 )  # fmt: skip

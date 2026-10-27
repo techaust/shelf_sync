@@ -20,6 +20,7 @@ import sqlite3
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
@@ -158,6 +159,7 @@ class StoreService:
             transport=transport,
         )
         service._keeper = keeper
+        weakref.finalize(service, keeper.close)  # closed when the service is dropped (the database goes with it)
         return service
 
     # ---- reads -----------------------------------------------------------------------------------------------------
@@ -331,8 +333,9 @@ class StoreService:
         try:
             self._credentials.save(old.id, *keys)
         except SecretStoreError:
-            self._undo_edit(connection, old, changes)
-            self._credentials.put_back(old.id, *old_pair)
+            if self._undo_edit(connection, old, changes):
+                self._credentials.put_back(old.id, *old_pair)  # the old address is back, so the old keys may go too
+            # else: the new address stays and so does "no keys": the old keys must never sit under it
             raise StoreError(503, "secrets_unavailable") from None
         reset_health(connection, old.id)
         updated = get_store(connection, old.id)
@@ -340,13 +343,15 @@ class StoreService:
             raise StoreError(404, "not_found")
         return self._view(updated)
 
-    def _undo_edit(self, connection: sqlite3.Connection, old: StoreRow, changes: Mapping[str, Any]) -> None:
-        """Put the columns an edit changed back to what they were (the health stays `unknown`)."""
+    def _undo_edit(self, connection: sqlite3.Connection, old: StoreRow, changes: Mapping[str, Any]) -> bool:
+        """Put the columns an edit changed back to what they were (the health stays `unknown`). False when that
+        failed: the caller must then leave the store without keys."""
         before = {column: getattr(old, column) for column in changes}
         try:
-            update_store(connection, old.id, before)
+            return update_store(connection, old.id, before)
         except (UrlTaken, CodeTaken, sqlite3.Error) as error:
             _log.warning("A store's earlier address couldn't be put back (%s)", type(error).__name__)
+            return False
 
     def set_keys(self, store_id: int, consumer_key: str, consumer_secret: str) -> None:
         self._claim(store_id)
@@ -405,6 +410,9 @@ class StoreService:
         until the worker really ends, so a second test or an edit can't overlap it."""
         self._claim(store_id)
         handed_over = False
+        completed = False
+        overrun = {"yes": False}
+        finished = threading.Event()
         try:
             with closing(self._open()) as connection:
                 row = get_store(connection, store_id)
@@ -421,7 +429,6 @@ class StoreService:
                 monotonic=self._monotonic,
             )
             result: dict[str, Any] = {}
-            finished = threading.Event()
 
             def work() -> None:
                 try:
@@ -437,12 +444,15 @@ class StoreService:
                     result["error"] = error
                 finally:
                     _close_quietly(client)
-                    self._release(store_id)  # the worker, not the request, frees the slot
-                    finished.set()
+                    with self._busy_lock:
+                        finished.set()
+                        if overrun["yes"]:  # the request gave up waiting: only now is the store free
+                            self._busy.discard(store_id)
 
             threading.Thread(target=work, name=f"store-test-{store_id}", daemon=True).start()
             handed_over = True
-            if finished.wait(self._limit_seconds + self._grace_seconds):
+            completed = finished.wait(self._limit_seconds + self._grace_seconds)
+            if completed:
                 if "error" in result:
                     raise result["error"]
                 outcome: ReadOutcome = result["outcome"]
@@ -469,8 +479,14 @@ class StoreService:
                 )
             return ReadReport(outcome, tested_at)
         finally:
-            if not handed_over:
-                self._release(store_id)
+            if not handed_over or completed:
+                self._release(store_id)  # after the result is saved
+            else:  # no answer in time: the worker lets go when it ends (or has, in the meantime)
+                with self._busy_lock:
+                    if finished.is_set():
+                        self._busy.discard(store_id)
+                    else:
+                        overrun["yes"] = True
 
 
 def _close_quietly(client: WooClient) -> None:
