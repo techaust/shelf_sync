@@ -58,7 +58,7 @@ class Running:
         self.sock = server.bind_first_free([0])
         assert self.sock is not None
         self.port = self.sock.getsockname()[1]
-        self.app: FastAPI = create_app(self.port, InstallToken(MemorySecretStore()))
+        self.app: FastAPI = create_app(self.port, InstallToken(MemorySecretStore()), ui_dir=None)
         self.error: list[BaseException] = []
         self.thread = threading.Thread(target=self._run, daemon=True)
 

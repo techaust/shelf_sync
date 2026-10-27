@@ -1,4 +1,4 @@
-Status: open (ready for PR once Pillow is decided)
+Status: open (PR open)
 Tier: B ([12 §2](../12-models-and-usage.md): tray, launcher, notifications); the `reviewer` also runs `security-review` because it touches `platform/` and sends the install token (09 §3)
 Usage: (filled from node tools/model-audit.mjs)
 
@@ -239,7 +239,11 @@ Fixes by the `builder` at medium, then a re-check by the `reviewer` at medium.
 - **09:** rerun `-m windows` on every keyring upgrade (private `_read_credential`, `_delete_password`).
 
 ## 6. Integration notes
-_(empty)_
+_(lead, 2026-10-27)_
+- **Pillow 13.0.0** (owner, security exception, [11](../11-decisions.md)): `exclude-newer-package` gets `pillow = 2026-10-17`; only Pillow changed in the lock; the V29 pin test updated. pip-audit clean (as CI runs it, with hashes).
+- **Rebased onto `main`** after #7 (M1a.2, squashed) and #8 (M1a.3) with `--onto main 6dca164`. The two brief-only commits came out as already on `main` (#6); later conflicts in this file took the branch's text, and §1 matches `main`.
+- **M1a.3 + M1a.4 together:** `create_app()` now requires `ui_dir` (M1a.3). `server.py` already passes `UI_DIR`; two test helpers here (`test_launcher.py`, `test_second_launch.py`) didn't, giving 9 failures and 8 errors. Fixed with `ui_dir=None` like the other API-only tests. After that: 670 passed, Windows checks 27 passed, ruff, format, mypy, bandit and pip-audit clean.
+- The installed launcher now serves the built UI from `frontend/dist/` when it exists (M1b moves `UI_DIR` to `paths.py`, already a carry-over).
 
 ## 7. Handover
 _(lead, 2026-10-27)_ Brief written at Opus 5.5 medium. Starts after M1a.2 and M1a.3 are ready, from the branch head the lead names.

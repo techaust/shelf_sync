@@ -338,7 +338,7 @@ def real_copy(data_paths: DataPaths, store: MemorySecretStore) -> Iterator[int]:
     sock = server.bind_first_free([0])
     assert sock is not None
     port = sock.getsockname()[1]
-    app = create_app(port, InstallToken(store))
+    app = create_app(port, InstallToken(store), ui_dir=None)
     uv = uvicorn.Server(server.make_uvicorn_config(app, port))
     thread = threading.Thread(target=lambda: asyncio.run(uv.serve(sockets=[sock])), daemon=True)
     thread.start()
