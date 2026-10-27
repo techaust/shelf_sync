@@ -5,6 +5,9 @@
 // - the first focus: Cancel when the action is destructive, otherwise the confirm button (as the approved mockup);
 // - Esc fires "cancel": it is turned into the owner's Cancel (the React state closes the dialog), and ignored while
 //   the confirmed action is being sent, so a half-sent action is never dismissed;
+// - a second Esc closes a native dialog even when "cancel" was prevented (Chrome's close watcher). So "close" is
+//   watched too: while React still wants it open and the action is being sent, it opens again; otherwise React is
+//   told (onCancel), so its state matches what is on screen;
 // - on close the focus goes back to the button that opened the dialog, or to a fallback when that is gone.
 
 export interface Focusable {
@@ -12,12 +15,14 @@ export interface Focusable {
   readonly isConnected?: boolean;
 }
 
+type DialogEvent = { preventDefault(): void };
+
 export interface DialogElement {
   readonly open: boolean;
   showModal(): void;
   close(): void;
-  addEventListener(type: "cancel", listener: (event: { preventDefault(): void }) => void): void;
-  removeEventListener(type: "cancel", listener: (event: { preventDefault(): void }) => void): void;
+  addEventListener(type: "cancel" | "close", listener: (event: DialogEvent) => void): void;
+  removeEventListener(type: "cancel" | "close", listener: (event: DialogEvent) => void): void;
 }
 
 export interface DialogBehaviour {
@@ -34,11 +39,24 @@ export function dialogBehaviour(
   options: { onCancel: () => void; isBusy: () => boolean; fallback?: () => Focusable | null },
 ): DialogBehaviour {
   let opener: Focusable | null = null;
-  const onCancelEvent = (event: { preventDefault(): void }) => {
+  let wanted = false; // what React wants: open between open() and close()
+  const onCancelEvent = (event: DialogEvent) => {
     event.preventDefault(); // the React state decides when it closes
     if (!options.isBusy()) options.onCancel();
   };
+  const onCloseEvent = () => {
+    // our own close(), or a late "close" from it after the dialog was opened again: nothing to do
+    if (!wanted || dialog.open) return;
+    if (options.isBusy()) {
+      dialog.showModal(); // closed by the browser while the action is sent: it stays
+      return;
+    }
+    wanted = false;
+    giveBack();
+    options.onCancel();
+  };
   dialog.addEventListener("cancel", onCancelEvent);
+  dialog.addEventListener("close", onCloseEvent);
 
   function giveBack(): void {
     const target = opener && opener.isConnected !== false ? opener : (options.fallback?.() ?? null);
@@ -46,23 +64,25 @@ export function dialogBehaviour(
     target?.focus();
   }
 
+  function shut(): void {
+    wanted = false;
+    if (!dialog.open) return;
+    dialog.close();
+    giveBack();
+  }
+
   return {
     open(first, from) {
       opener = from;
+      wanted = true;
       if (!dialog.open) dialog.showModal();
       first?.focus();
     },
-    close() {
-      if (!dialog.open) return;
-      dialog.close();
-      giveBack();
-    },
+    close: shut,
     dispose() {
       dialog.removeEventListener("cancel", onCancelEvent);
-      if (dialog.open) {
-        dialog.close();
-        giveBack();
-      }
+      dialog.removeEventListener("close", onCloseEvent);
+      shut();
     },
   };
 }

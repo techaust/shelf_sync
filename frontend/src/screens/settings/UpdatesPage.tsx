@@ -1,44 +1,30 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, ApiUnreachableError } from "../../api/client";
-import {
-  checkForUpdates,
-  getHealth,
-  getUpdates,
-  installUpdate,
-  removeGithubToken,
-  rollBack,
-  saveGithubToken,
-  UPDATES_QUERY_KEY,
-} from "../../api/settings";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import { ApiError } from "../../api/client";
+import { getUpdates, installUpdate, rollBack, UPDATES_QUERY_KEY } from "../../api/settings";
 import { useServices } from "../../app/services";
-import { Alert } from "../../components/Alert";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { pollForRestart } from "../../lib/restartPoll";
-import { Restarting, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
-import { describeUpdates, type Phase } from "./updatesModel";
-import { T, U, updatesActionError } from "./wording";
+import { checkNow, pollAnswers, removeToken, saveToken } from "./actions";
+import { type SwitchLine, switchStore } from "./switchStore";
+import { Restarting, RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
+import { describeUpdates } from "./updatesModel";
+import { U } from "./wording";
 
 /** While a check or a switch runs, the status is asked for again every two seconds. */
 const BUSY_REFRESH_MS = 2000;
 
-function actionError(error: unknown): string {
-  if (error instanceof ApiError) return updatesActionError(error.code, error.status);
-  return updatesActionError(null, null);
-}
-
 /**
  * Settings › Updates (UI-SET; SYS-06, SYS-07, SET-04): the state of updates from GET /api/updates, Check now,
- * Install (a ConfirmDialog, a "preparing" state while the server checks the files, then the restart panel, which
- * waits for the new version to answer and reloads), Roll back (a ConfirmDialog with the files-only or the database
- * wording), and the optional GitHub token.
+ * Install (a ConfirmDialog, a "preparing" state while the server checks the files, then the restart panel), Roll back
+ * (a ConfirmDialog with 13 §6's files-only or database wording), and the optional GitHub token. The switch and its
+ * restart poll live in switchStore, so leaving this page never stops them.
  */
 export function UpdatesPage() {
   const { api } = useServices();
   const queryClient = useQueryClient();
-  const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const [error, setError] = useState<string | null>(null);
+  const { phase, error: switchError } = useSyncExternalStore(switchStore.subscribe, switchStore.get, switchStore.get);
+  const [checkError, setCheckError] = useState<SwitchLine | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [rollBackOpen, setRollBackOpen] = useState(false);
   const restarting = phase.kind === "restarting";
@@ -51,82 +37,32 @@ export function UpdatesPage() {
   });
   const refresh = useCallback(() => queryClient.invalidateQueries({ queryKey: UPDATES_QUERY_KEY }), [queryClient]);
 
-  // The restart: ask /api/health until the new version (or, after a refused switch, ShelfSync again) answers.
-  const target = restarting ? phase.version : null;
-  useEffect(() => {
-    if (target === null) return;
-    return pollForRestart({
-      target,
-      health: () => getHealth(api),
-      onBack: () => window.location.reload(),
-      onLate: () => setPhase({ kind: "restarting", version: target, late: true }),
-    });
-  }, [api, target]);
-
-  if (phase.kind === "restarting") return <Restarting version={phase.version} late={phase.late} />;
+  if (phase.kind === "restarting") return <Restarting late={phase.late} back={phase.back} />;
   if (query.isPending) return <UpdatesLoading />;
-  if (query.isError) {
+  // The failure card only when there is nothing to show; a failed refresh keeps the last answer (review item 9)
+  if (query.isError && !query.data) {
     const failure = query.error;
     const text = failure instanceof ApiError && failure.status !== 401 ? U.loadRefused(failure.status) : U.loadFailed;
     return <UpdatesFailed text={text} onRetry={() => void query.refetch()} />;
   }
 
-  const updates = query.data;
-  const model = describeUpdates(updates, phase);
+  const model = describeUpdates(query.data, phase);
   const version = model.install.version;
   const previous = model.rollBack.previous;
 
   async function check() {
-    setError(null);
-    try {
-      await checkForUpdates(api);
-    } catch (failure) {
-      setError(actionError(failure));
-    }
+    setCheckError(null);
+    switchStore.clearError();
+    setCheckError(await checkNow(api));
     await refresh();
   }
 
-  /** Install or Roll back after the dialog: 202 means ShelfSync is closing; no answer at all is taken the same way
-   *  (it may have closed before the answer arrived), and the health poll finds out which version comes back. */
   async function switchTo(kind: "preparing" | "rolling_back", to: string, send: () => Promise<unknown>) {
-    setError(null);
-    setPhase({ kind, version: to });
-    try {
-      await send();
-      setPhase({ kind: "restarting", version: to, late: false });
-    } catch (failure) {
-      if (failure instanceof ApiUnreachableError) {
-        setPhase({ kind: "restarting", version: to, late: false });
-        return;
-      }
-      setPhase({ kind: "idle" });
-      await refresh();
-      if (failure instanceof ApiError && failure.code === "confirm_required") {
-        setRollBackOpen(true); // the database changed since this page was loaded: ask again, with the database wording
-        return;
-      }
-      setError(actionError(failure));
-    }
-  }
-
-  async function saveToken(value: string) {
-    try {
-      await saveGithubToken(api, value);
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.code === "invalid_request") throw new Error(T.refused);
-      if (failure instanceof ApiError) throw new Error(actionError(failure));
-      throw new Error(T.saveFailed);
-    }
+    setCheckError(null);
+    const outcome = await switchStore.run(kind, to, send, pollAnswers(api));
+    if (outcome === "restarting") return;
     await refresh();
-  }
-
-  async function removeToken() {
-    try {
-      await removeGithubToken(api);
-    } catch (failure) {
-      throw new Error(failure instanceof ApiError ? actionError(failure) : T.removeFailed);
-    }
-    await refresh();
+    if (outcome === "confirm_required") setRollBackOpen(true); // the database changed since this page loaded: ask again
   }
 
   return (
@@ -134,13 +70,20 @@ export function UpdatesPage() {
       <UpdatesView
         model={model}
         phase={phase}
-        actionError={error}
+        actionError={checkError ?? switchError}
+        stale={query.isError}
         actions={{
           onCheck: () => void check(),
           onInstall: () => setInstallOpen(true),
           onRollBack: () => setRollBackOpen(true),
-          onSaveToken: saveToken,
-          onRemoveToken: removeToken,
+          onSaveToken: async (value) => {
+            await saveToken(api, value);
+            await refresh();
+          },
+          onRemoveToken: async () => {
+            await removeToken(api);
+            await refresh();
+          },
         }}
       />
       {version ? (
@@ -170,15 +113,11 @@ export function UpdatesPage() {
           onCancel={() => setRollBackOpen(false)}
           onConfirm={() => {
             setRollBackOpen(false);
-            const confirm = model.rollBack.databaseChanged;
+            const confirm = model.rollBack.databaseChanged; // the same flag chooses the words (rollBackWords)
             void switchTo("rolling_back", previous, () => rollBack(api, confirm));
           }}
         >
-          {model.rollBack.databaseChanged && model.rollBack.backupDate ? (
-            <Alert tone="warning" title={U.rollBackDatabase(model.rollBack.backupDate)} />
-          ) : (
-            <p>{U.rollBackFiles}</p>
-          )}
+          <RollBackBody rollBack={model.rollBack} />
         </ConfirmDialog>
       ) : null}
     </>

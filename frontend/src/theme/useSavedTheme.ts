@@ -10,12 +10,41 @@ import {
 import { settingsWriter } from "../api/settingsWriter";
 import { useServices } from "../app/services";
 import type { ThemePreference } from "./theme";
-import { themeStore, useTheme } from "./useTheme";
+import { type ThemeStore, themeStore, useTheme } from "./useTheme";
 
 /** After a save, the cached App settings hold what is stored now (the answer's five values). */
 export function cacheSaved(previous: AppSettings | undefined, saved: AppSettingsSaved): AppSettings | undefined {
   return previous ? { ...previous, ...valuesOf(saved) } : previous;
 }
+
+/**
+ * The saved theme and this tab's own choices (review item 4): while a choice is still being saved, an older save's
+ * answer (or a refetch) must not put an older theme back. So a server theme applies only when no choice is pending.
+ */
+export function createThemeSync(store: Pick<ThemeStore, "set">) {
+  let pending = 0;
+  return {
+    /** A choice starts saving; returns the function that ends it (call it before the answer goes into the cache). */
+    begin(): () => void {
+      pending += 1;
+      let ended = false;
+      return () => {
+        if (ended) return;
+        ended = true;
+        pending -= 1;
+      };
+    },
+    /** The App settings arrived or changed: their theme applies, unless a choice is still being saved. */
+    fromServer(theme: ThemePreference): boolean {
+      if (pending > 0) return false;
+      store.set(theme);
+      return true;
+    },
+    pending: (): number => pending,
+  };
+}
+
+export const themeSync = createThemeSync(themeStore);
 
 /**
  * The theme as Settings › App saves it (SET-06): a choice, from the app bar or from Settings › App, applies to this
@@ -28,12 +57,15 @@ export function useSavedTheme(): { preference: ThemePreference; choose: (next: T
   const { preference, setPreference } = useTheme();
   const choose = useCallback(
     async (next: ThemePreference) => {
+      const end = themeSync.begin();
       setPreference(next);
       try {
         const saved = await settingsWriter(api).saveTheme(next);
+        end();
         queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, (old) => cacheSaved(old, saved));
         return true;
       } catch {
+        end();
         return false;
       }
     },
@@ -51,6 +83,6 @@ export function useThemeFromServer(): void {
   const { data } = useQuery({ queryKey: APP_SETTINGS_QUERY_KEY, queryFn: () => getAppSettings(api) });
   const saved = data?.theme;
   useEffect(() => {
-    if (saved) themeStore.set(saved);
+    if (saved) themeSync.fromServer(saved);
   }, [saved]);
 }

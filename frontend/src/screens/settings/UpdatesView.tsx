@@ -4,7 +4,7 @@ import { Alert } from "../../components/Alert";
 import { SecretField } from "../../components/SecretField";
 import { checkGithubToken, TOKEN_MAX_LENGTH } from "./forms";
 import type { Phase, UpdatesModel } from "./updatesModel";
-import { T, U } from "./wording";
+import { A, T, U } from "./wording";
 
 export interface UpdatesActions {
   onCheck: () => void;
@@ -52,7 +52,7 @@ export function UpdatesFailed({ text, onRetry }: { text: string; onRetry: () => 
 }
 
 /** After an accepted Install or Roll back: ShelfSync closes and opens again; the page waits, then reloads. */
-export function Restarting({ version, late }: { version: string; late: boolean }) {
+export function Restarting({ late, back }: { late: boolean; back: boolean }) {
   // The button that started it is gone: the focus moves to this panel's title, so it is read and not lost.
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => title.current?.focus(), []);
@@ -60,20 +60,61 @@ export function Restarting({ version, late }: { version: string; late: boolean }
     <section className="card restart-panel" aria-labelledby="restart-title">
       <div className="restart-panel__body" role="status">
         <span className="restart-panel__icon">
-          <RefreshCcw className="icon-lg" aria-hidden="true" />
+          {back ? (
+            <CircleCheck className="icon-lg" aria-hidden="true" />
+          ) : (
+            <RefreshCcw className="icon-lg" aria-hidden="true" />
+          )}
         </span>
         <div className="restart-panel__text">
           <h3 className="restart-panel__title" id="restart-title" ref={title} tabIndex={-1}>
-            {U.restartingTitle}
+            {back ? U.backTitle : U.restartingTitle}
           </h3>
-          <p className="muted">{U.restartingText(version)}</p>
-          {late ? <p className="restart-panel__late">{U.restartingLate}</p> : null}
+          <p className="muted num">{back ? U.backText : U.restartingText}</p>
+          {late && !back ? <p className="restart-panel__late">{U.restartingLate}</p> : null}
         </div>
       </div>
-      <div className="progress is-indeterminate" aria-hidden="true">
-        <span />
-      </div>
+      {back ? null : (
+        <div className="progress is-indeterminate" aria-hidden="true">
+          <span />
+        </div>
+      )}
     </section>
+  );
+}
+
+/**
+ * The roll back dialog's words (13 §6, the owner's decision; review items 5 and 6), chosen from `databaseChanged`
+ * alone: what `confirm_data_loss` sends. A changed database never reads "your data stays as it is"; without the
+ * backup's time the line goes without its date.
+ */
+export function rollBackWords(rollBack: UpdatesModel["rollBack"]): {
+  database: boolean;
+  text: string;
+  copyKept: string | null;
+} {
+  if (rollBack.databaseChanged)
+    return {
+      database: true,
+      text: U.rollBackDatabase(rollBack.from, rollBack.backupDate),
+      copyKept: U.rollBackCopyKept,
+    };
+  return { database: false, text: U.rollBackFiles(rollBack.from), copyKept: null };
+}
+
+export function RollBackBody({ rollBack }: { rollBack: UpdatesModel["rollBack"] }) {
+  const words = rollBackWords(rollBack);
+  return (
+    <>
+      <p>{U.rollBackRestart}</p>
+      {words.database ? (
+        <Alert tone="warning" title={<span className="num">{words.text}</span>}>
+          {words.copyKept}
+        </Alert>
+      ) : (
+        <p className="num">{words.text}</p>
+      )}
+    </>
   );
 }
 
@@ -94,11 +135,14 @@ export function UpdatesView({
   model,
   phase,
   actionError,
+  stale = false,
   actions,
 }: {
   model: UpdatesModel;
   phase: Phase;
-  actionError: string | null;
+  actionError: { tone: "info" | "danger"; text: string } | null;
+  /** A refresh failed while the page still shows the last answer (review item 9). */
+  stale?: boolean;
   actions: UpdatesActions;
 }) {
   const preparing = phase.kind === "preparing";
@@ -112,9 +156,10 @@ export function UpdatesView({
         </h3>
         {model.checked ? <span className="muted num card__meta">{model.checked}</span> : null}
       </div>
-      {actionError || model.notices.length ? (
+      {actionError || stale || model.notices.length ? (
         <div className="card-alert stack-alert">
-          {actionError ? <Alert tone="danger" title={actionError} /> : null}
+          {stale ? <Alert tone="warning" title={A.staleNotice} /> : null}
+          {actionError ? <Alert tone={actionError.tone} title={actionError.text} /> : null}
           {model.notices.map((notice) => (
             <Alert
               key={notice.key}
@@ -139,6 +184,7 @@ export function UpdatesView({
               type="button"
               className="btn is-primary"
               aria-disabled={!model.install.enabled || undefined}
+              aria-describedby={model.install.why ? `up-notice-${model.install.why}` : undefined}
               aria-busy={preparing || undefined}
               onClick={() => {
                 if (model.install.enabled) actions.onInstall();
@@ -207,7 +253,7 @@ export function UpdatesView({
           ) : null}
         </div>
         <div className="card__section">
-          {model.token.set ? null : <p className="token-empty">{U.empty}</p>}
+          {model.showEmpty ? <p className="token-empty">{U.empty}</p> : null}
           <SecretField
             id="up-token"
             text={T}

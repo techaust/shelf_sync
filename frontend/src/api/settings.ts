@@ -5,6 +5,7 @@
 
 import type { ApiClient } from "./client";
 import type { components } from "./schema";
+import { SESSION_STATUS_PATH } from "./session";
 
 type Schemas = components["schemas"];
 export type Updates = Schemas["UpdatesResponse"];
@@ -47,7 +48,22 @@ export const saveAppSettings = (api: ApiClient, values: AppSettingsValues) =>
   api.send<AppSettingsSaved>("PUT", APP_SETTINGS_PATH, values);
 export const resetAccessToken = (api: ApiClient) => api.send("POST", RESET_TOKEN_PATH);
 
-export const getHealth = (api: ApiClient) => api.get<Health>(HEALTH_PATH);
+export const getHealth = (api: ApiClient, signal?: AbortSignal) => api.get<Health>(HEALTH_PATH, signal);
+
+export type SessionCheck = "signed_in" | "signed_out" | "unknown";
+
+/** Is this tab's sign-in still good on the copy that answers? 204: yes; 401: no (a new copy started, and sessions
+ *  live in memory); anything else, or no answer: unknown. A plain request, so it never signs the tab out by itself. */
+export async function sessionCheck(api: ApiClient, signal?: AbortSignal): Promise<SessionCheck> {
+  try {
+    const response = await api.request("GET", SESSION_STATUS_PATH, undefined, signal);
+    if (response.status === 204) return "signed_in";
+    if (response.status === 401) return "signed_out";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 /** The five saved values of a GET or PUT answer, as a PUT body (unknown fields are refused by the API). */
 export function valuesOf(settings: AppSettingsValues): AppSettingsValues {

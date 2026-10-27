@@ -2,17 +2,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { ApiError } from "../../api/client";
-import { APP_SETTINGS_QUERY_KEY, type AppSettings, getAppSettings, resetAccessToken } from "../../api/settings";
+import { APP_SETTINGS_QUERY_KEY, type AppSettings, getAppSettings } from "../../api/settings";
 import { settingsWriter } from "../../api/settingsWriter";
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { cacheSaved, useSavedTheme } from "../../theme/useSavedTheme";
 import { AppFailed, AppLoading, type AppResult, AppView } from "./AppView";
-import { type AppForm, type AppFormErrors, checkAppForm, formFrom, savedLine } from "./forms";
+import { resetAccess, saveApp } from "./actions";
+import { type AppForm, type AppFormErrors, checkAppForm, formFrom } from "./forms";
 import { A } from "./wording";
 
 /** The form, started from the stored settings; a save puts what was saved back into it. */
-function AppSettingsForm({ stored }: { stored: AppSettings }) {
+function AppSettingsForm({ stored, stale }: { stored: AppSettings; stale: boolean }) {
   const { api, session } = useServices();
   const queryClient = useQueryClient();
   const { preference, choose } = useSavedTheme();
@@ -39,31 +40,22 @@ function AppSettingsForm({ stored }: { stored: AppSettings }) {
     setErrors({});
     setSaving(true);
     setResult(null);
-    try {
-      const saved = await settingsWriter(api).save(checked.values);
+    const { saved, result: line } = await saveApp(settingsWriter(api), checked.values);
+    if (saved) {
       queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, (old) => cacheSaved(old, saved));
       setForm(formFrom(saved));
-      setResult(savedLine(saved));
-    } catch (failure) {
-      setResult({
-        tone: "danger",
-        text: failure instanceof ApiError ? A.saveRefused(failure.status) : A.saveFailed,
-        note: null,
-      });
-    } finally {
-      setSaving(false);
     }
+    setResult(line);
+    setSaving(false);
   }
 
   async function reset() {
     setResetting(true);
     setResetError(null);
-    try {
-      await resetAccessToken(api);
-      // The old sign-in is gone (every session ended, the cookie removed): this tab shows the signed-out state.
-      session.set({ kind: "signed_out" });
-    } catch (failure) {
-      setResetError(failure instanceof ApiError ? A.resetRefused(failure.status) : A.resetFailed);
+    // On 204 the old sign-in is gone (every session ended, the cookie removed): the tab shows the signed-out state.
+    const failed = await resetAccess(api, session);
+    if (failed) {
+      setResetError(failed);
       setResetting(false);
     }
   }
@@ -78,6 +70,7 @@ function AppSettingsForm({ stored }: { stored: AppSettings }) {
         saving={saving}
         result={result}
         themeFailed={themeFailed}
+        stale={stale}
         handlers={{
           onTheme: (theme) => {
             setThemeFailed(false);
@@ -124,11 +117,12 @@ export function AppPage() {
   const { api } = useServices();
   const query = useQuery({ queryKey: APP_SETTINGS_QUERY_KEY, queryFn: () => getAppSettings(api) });
   if (query.isPending) return <AppLoading />;
-  if (query.isError) {
+  // The failure card only when there is nothing to show; a failed refresh keeps the form (review item 9)
+  if (query.isError && !query.data) {
     const failure = query.error;
     const text = failure instanceof ApiError && failure.status !== 401 ? A.loadRefused(failure.status) : A.loadFailed;
     return <AppFailed text={text} onRetry={() => void query.refetch()} />;
   }
   // Not keyed by the data: a theme chosen in the app bar updates the stored copy, and must not reset the form.
-  return <AppSettingsForm stored={query.data} />;
+  return <AppSettingsForm stored={query.data} stale={query.isError} />;
 }

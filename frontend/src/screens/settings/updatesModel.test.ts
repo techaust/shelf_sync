@@ -27,8 +27,11 @@ const base: Updates = {
 };
 const at = "2026-10-28T09:30:00Z";
 const ok: LastCheck = { at, outcome: "ok", detail: null };
+/** The token's expiry is a day: shown as "[<iso>]"; "now" is fixed, so "in N days" is exact. */
+const day: DateFormat = (iso) => (iso ? `[${iso}]` : null);
+const NOW = new Date("2026-10-28T09:30:00Z");
 const view = (over: Partial<Updates>, phase?: Parameters<typeof describeUpdates>[1]) =>
-  describeUpdates({ ...base, ...over }, phase, date);
+  describeUpdates({ ...base, ...over }, phase, date, day, NOW);
 
 describe("describeUpdates: the states", () => {
   it("empty: never checked, no token; Check now works, nothing else is said", () => {
@@ -64,7 +67,7 @@ describe("describeUpdates: the states", () => {
   it("ready: Install 0.3.0 and restart", () => {
     const m = view({ last_check: ok, available: { version: "0.3.0", ready: true } });
     expect(m.status.text).toBe("Version 0.3.0 is ready to install.");
-    expect(m.install).toEqual({ shown: true, enabled: true, version: "0.3.0" });
+    expect(m.install).toEqual({ shown: true, enabled: true, version: "0.3.0", why: null });
   });
 
   it("checking: Check now shows it runs and is off", () => {
@@ -97,7 +100,7 @@ describe("describeUpdates: the states", () => {
 
   it("a ready update in a build without a key can't be installed", () => {
     const m = view({ key_available: false, available: { version: "0.3.0", ready: true } });
-    expect(m.install).toEqual({ shown: true, enabled: false, version: "0.3.0" });
+    expect(m.install).toEqual({ shown: true, enabled: false, version: "0.3.0", why: "no-key" });
   });
 
   it("a switch under way: said once, and everything waits", () => {
@@ -133,9 +136,16 @@ describe("describeUpdates: the states", () => {
       enabled: true,
       reason: null,
       previous: "0.1.4",
+      from: "0.2.0",
       databaseChanged: false,
       backupDate: null,
     });
+  });
+
+  it("the optional-token line: shown with no token, never in a development copy", () => {
+    expect(view({}).showEmpty).toBe(true);
+    expect(view({ token: { set: true, expires_at: null, notice: false } }).showEmpty).toBe(false);
+    expect(view({ development: true }).showEmpty).toBe(false);
   });
 
   it("roll back with a database change: the backup's date for the dialog", () => {
@@ -157,9 +167,9 @@ describe("describeUpdates: the states", () => {
     expect(m.rollBack.reason).toBe("The backup needed to roll back isn't there.");
   });
 
-  it("the token: saved with its expiry; the notice from 14 days before replaces it", () => {
+  it("the token: saved with its expiry date; the notice from 14 days before replaces it, with 'in N days'", () => {
     const later = view({ token: { set: true, expires_at: "2026-12-29T00:00:00Z", notice: false } });
-    expect(later.token).toEqual({ set: true, expires: "<2026-12-29T00:00:00Z>" });
+    expect(later.token).toEqual({ set: true, expires: "[2026-12-29T00:00:00Z]" });
     expect(later.notices).toEqual([]);
     const soon = view({ token: { set: true, expires_at: "2026-11-06T00:00:00Z", notice: true } });
     expect(soon.token.expires).toBeNull();
@@ -167,10 +177,16 @@ describe("describeUpdates: the states", () => {
       {
         key: "token-expiry",
         tone: "warning",
-        title: "Your GitHub token expires on <2026-11-06T00:00:00Z>. Make a new one before then.",
+        title: "Your GitHub token expires in 9 days, on [2026-11-06T00:00:00Z]. Make a new one before then.",
         body: null,
       },
     ]);
+    const tomorrow = view({ token: { set: true, expires_at: "2026-10-29T00:00:00Z", notice: true } });
+    expect(tomorrow.notices[0]?.title).toContain("expires in 1 day, on");
+    const past = view({ token: { set: true, expires_at: "2026-10-27T00:00:00Z", notice: true } });
+    expect(past.notices[0]?.title).toBe(
+      "Your GitHub token expires on [2026-10-27T00:00:00Z]. Make a new one before then.",
+    );
   });
 
   it("a good last switch is a quiet line with its time; a bad one is a notice with its time", () => {
@@ -323,6 +339,9 @@ describe("13 section 3: Updates API errors", () => {
   it("every other code, and no answer at all, has a general line with no detail from the request", () => {
     for (const code of ERROR_CODES) expect(updatesActionError(code, 500)).toMatch(/\S/);
     expect(updatesActionError("internal", 500)).toBe("ShelfSync refused that (HTTP 500), so nothing was changed.");
-    expect(updatesActionError(null, null)).toBe("ShelfSync didn't answer, so nothing was changed.");
+    // no answer is never stated as an outcome (lead wording, review item 16)
+    expect(updatesActionError(null, null)).toBe(
+      "ShelfSync didn't answer, so that may not have happened. Reload this page to check.",
+    );
   });
 });

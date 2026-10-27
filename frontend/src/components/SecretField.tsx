@@ -17,10 +17,37 @@ export interface SecretFieldText {
   removedDone: string;
 }
 
+/** Where the typed value lives: the input element itself (uncontrolled), never React state or a value attribute. */
+export interface SecretInput {
+  value: string;
+}
+
+/**
+ * One Save (review item 10): the value is read from the input, checked and sent; the input is emptied only once the
+ * save is accepted, and kept (to correct it) after a refusal or no answer. Resolves with the line to show, or null.
+ */
+export async function submitSecret(
+  field: SecretInput,
+  check: (value: string) => string | null,
+  onSave: (value: string) => Promise<void>,
+): Promise<{ saved: boolean; error: string | null }> {
+  const typed = field.value;
+  const refused = check(typed);
+  if (refused) return { saved: false, error: refused };
+  try {
+    await onSave(typed);
+  } catch (failure) {
+    return { saved: false, error: failure instanceof Error ? failure.message : String(failure) };
+  }
+  field.value = "";
+  return { saved: true, error: null };
+}
+
 /**
  * SecretField (05 section 5; 06 section 3): a secret that is stored, never shown. The page never holds a stored
  * value, masked or not: it shows only "saved" or "not set" (and the expiry, when known) from the API. A new value is
- * typed into a password input, sent once, and the input is emptied after the save. Save and Remove.
+ * typed into a password input, sent once, and the input is emptied after the save. Save and Remove. The input is
+ * uncontrolled (review item 11): what is typed is never in React state or in the input's value attribute.
  *
  * `check` refuses a value of the wrong shape before it is sent; `onSave` and `onRemove` resolve once the API has
  * answered and the status above is current, and reject with the line to show.
@@ -47,7 +74,6 @@ export function SecretField({
   onRemove: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
   const [pending, setPending] = useState<"save" | "remove" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState("");
@@ -66,27 +92,20 @@ export function SecretField({
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (pending || locked) return;
-    const refused = check(value);
-    if (refused) {
-      setError(refused);
-      input.current?.focus();
-      return;
-    }
+    const field = input.current;
+    if (pending || locked || !field) return;
     setPending("save");
     setError(null);
     setDone("");
-    try {
-      await onSave(value);
-      setValue("");
+    const result = await submitSecret(field, check, onSave);
+    setPending(null);
+    if (result.saved) {
       setEditing(false);
       setDone(text.savedDone);
       focusNext.current = "replace";
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-      input.current?.focus();
-    } finally {
-      setPending(null);
+    } else {
+      setError(result.error);
+      field.focus();
     }
   }
 
@@ -98,7 +117,7 @@ export function SecretField({
     try {
       await onRemove();
       setEditing(false);
-      setValue("");
+      if (input.current) input.current.value = "";
       setDone(text.removedDone);
       focusNext.current = "input";
     } catch (failure) {
@@ -173,12 +192,10 @@ export function SecretField({
             spellCheck={false}
             maxLength={maxLength}
             placeholder={text.placeholder}
-            value={value}
             aria-invalid={error ? true : undefined}
             aria-describedby={described}
             disabled={locked}
-            onChange={(event) => {
-              setValue(event.target.value);
+            onChange={() => {
               if (error) setError(null);
             }}
           />
@@ -198,7 +215,6 @@ export function SecretField({
               onClick={() => {
                 if (pending) return;
                 setEditing(false);
-                setValue("");
                 setError(null);
                 focusNext.current = "replace";
               }}

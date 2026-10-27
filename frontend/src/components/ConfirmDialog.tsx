@@ -43,6 +43,7 @@ export function ConfirmDialog({
   const behaviour = useRef<DialogBehaviour | null>(null);
   const latest = useRef({ onCancel, busy });
   latest.current = { onCancel, busy };
+  const shown = useRef(false); // what the dialog was last told: open or closed
 
   useEffect(() => {
     const element = dialog.current;
@@ -55,18 +56,23 @@ export function ConfirmDialog({
     behaviour.current = made;
     return () => {
       behaviour.current = null;
+      shown.current = false;
       made.dispose();
     };
   }, []);
 
+  // Open and close only on a change of `open` (review item 17): a change of `danger` while open moves nothing.
+  const startOnCancel = useRef(danger);
+  startOnCancel.current = danger;
   useEffect(() => {
     const made = behaviour.current;
-    if (!made) return;
+    if (!made || open === shown.current) return;
+    shown.current = open;
     if (open) {
       const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      made.open(danger ? cancel.current : confirm.current, opener);
+      made.open(startOnCancel.current ? cancel.current : confirm.current, opener);
     } else made.close();
-  }, [open, danger]);
+  }, [open]);
 
   const wait = () => {
     if (!busy) onCancel();
@@ -81,7 +87,7 @@ export function ConfirmDialog({
     >
       <div className="confirm-dialog__inner">
         <div className="confirm-dialog__head">
-          <h2 className="confirm-dialog__title" id={`${id}-title`}>
+          <h2 className="confirm-dialog__title num" id={`${id}-title`}>
             {title}
           </h2>
           <button type="button" className="btn is-ghost is-icon" aria-label="Close" onClick={wait}>

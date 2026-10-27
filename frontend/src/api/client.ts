@@ -93,8 +93,9 @@ export interface ApiClientOptions {
 }
 
 export interface ApiClient {
-  request(method: HttpMethod, path: string, body?: unknown): Promise<Response>;
-  get<T>(path: string): Promise<T>;
+  /** `signal` ends a request that waits too long (the restart poll's health and session checks). */
+  request(method: HttpMethod, path: string, body?: unknown, signal?: AbortSignal): Promise<Response>;
+  get<T>(path: string, signal?: AbortSignal): Promise<T>;
   send<T = void>(method: Exclude<HttpMethod, "GET" | "HEAD">, path: string, body?: unknown): Promise<T>;
 }
 
@@ -114,7 +115,7 @@ async function errorCode(response: Response): Promise<ErrorCode | null> {
 export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   const doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
 
-  async function request(method: HttpMethod, path: string, body?: unknown): Promise<Response> {
+  async function request(method: HttpMethod, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
     if (!API_PATH.test(path)) throw new Error(`Not an API path: ${path.slice(0, 80)}`);
     const headers: Record<string, string> = { Accept: "application/json" };
     if (isWrite(method)) headers[CSRF_HEADER] = CSRF_VALUE;
@@ -127,6 +128,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       redirect: "error",
       referrerPolicy: "no-referrer",
     };
+    if (signal) init.signal = signal;
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
@@ -139,8 +141,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     }
   }
 
-  async function checked(method: HttpMethod, path: string, body?: unknown): Promise<Response> {
-    const response = await request(method, path, body);
+  async function checked(method: HttpMethod, path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+    const response = await request(method, path, body, signal);
     if (response.ok) return response;
     const code = await errorCode(response);
     if (response.status === 401 && code === "signed_out") options.onSignedOut?.();
@@ -149,8 +151,8 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
   return {
     request,
-    async get<T>(path: string): Promise<T> {
-      const response = await checked("GET", path);
+    async get<T>(path: string, signal?: AbortSignal): Promise<T> {
+      const response = await checked("GET", path, undefined, signal);
       return (await response.json()) as T;
     },
     async send<T = void>(method: Exclude<HttpMethod, "GET" | "HEAD">, path: string, body?: unknown): Promise<T> {

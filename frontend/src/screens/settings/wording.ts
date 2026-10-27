@@ -45,17 +45,26 @@ export const U = {
   rollBack: "Roll back app",
   installText: "ShelfSync will close and open again. This takes about a minute.",
   rollBackTitle: (v: string) => `Roll back to ${v}?`,
-  rollBackFiles: "ShelfSync will close and open again. Your data stays as it is.",
-  rollBackDatabase: (date: string) =>
-    `The database goes back to how it was on ${date}, so changes made since the update are lost. A copy of the current data is kept in the backups folder.`,
+  // The roll back dialog: 13 §6's rows, tied to the owner's decision of 2026-10-26 (11), which win over 13 §3's
+  // proposed dialog lines (lead, m1b.4 review item 6). `v` is the version rolled back from (the installed one).
+  rollBackRestart: "ShelfSync will close and open again.", // 13 §3
+  rollBackFiles: (v: string) =>
+    `${v} didn't change the database, so your data stays as it is. You can install ${v} again from Settings › Updates.`,
+  /** `date` null: the backup's time isn't known, so the line goes without it (lead, review item 5). */
+  rollBackDatabase: (v: string, date: string | null) =>
+    `${v} changed the database. ShelfSync restores the backup taken just before the update${date ? `, on ${date}` : ""}. Changes made since then are lost and can't be brought back. You can install ${v} again from Settings › Updates.`,
+  rollBackCopyKept: "A copy of the current data is kept in the backups folder.", // 13 §3
   rollBackConfirm: "Roll back",
   cancel: "Cancel",
-  // proposed (m1b.4): the Install dialog's title, the "preparing" line, the restart panel's line and its late line
+  // proposed (m1b.4): the Install dialog's title, the "preparing" line, the restart panel's lines and its late line
   installTitle: (v: string) => `Install ShelfSync ${v}?`,
   preparing: (v: string) => `Checking the files of ${v} before it's installed.`,
   restartingTitle: "ShelfSync is restarting", // the brief's words (m1b.4 section 1)
-  restartingText: (v: string) => `This tab reloads when ShelfSync ${v} answers.`,
+  restartingText: "When ShelfSync is back, it opens in a new tab.",
   restartingLate: "ShelfSync hasn't answered yet. If it doesn't open by itself, open it from the Start menu.",
+  // proposed (m1b.4 review item 1): a new copy answers, so this tab's sign-in is gone and the switcher opened a new one
+  backTitle: "ShelfSync is back",
+  backText: "It opened in a new tab, signed in. You can close this one.",
   // proposed (m1b.4): GET /api/updates got no answer, or a refusal
   loadFailed: "ShelfSync didn't answer, so the update status can't be shown.",
   loadRefused: (status: number) => `ShelfSync refused to show the update status (HTTP ${status}).`,
@@ -80,11 +89,15 @@ export const T = {
   savedDone: "Token saved.",
   removedDone: "Token removed.",
   refused: "That isn't a fine-grained GitHub token (it starts with github_pat_).",
-  expires: (date: string) => `Your GitHub token expires on ${date}. Make a new one before then.`,
+  /** 13 §3, with the mockup's "in N days" (review item 20); the date only. */
+  expires: (date: string, days: number | null) =>
+    days !== null && days >= 1
+      ? `Your GitHub token expires in ${days} ${days === 1 ? "day" : "days"}, on ${date}. Make a new one before then.`
+      : `Your GitHub token expires on ${date}. Make a new one before then.`,
   expiresOn: (date: string) => `Expires on ${date}.`, // proposed (m1b.4): the saved token's expiry, when GitHub said
-  // proposed (m1b.4)
-  saveFailed: "ShelfSync didn't answer, so the token wasn't saved.",
-  removeFailed: "ShelfSync didn't answer, so the token wasn't removed.",
+  // proposed (m1b.4; lead wording, review item 16: no answer is never stated as an outcome)
+  saveFailed: "ShelfSync didn't answer, so the token may not have been saved. Reload this page to check.",
+  removeFailed: "ShelfSync didn't answer, so the token may not have been removed. Reload this page to check.",
 };
 
 /** 13 §3 "Update check results" (`last_check.outcome`); `v` is the version found, when known. */
@@ -192,11 +205,20 @@ const API_ERRORS: Partial<Record<ErrorCode, string>> = {
   too_soon: "A check ran a moment ago. Try again in a minute.",
 };
 
-/** The line for a refused or unanswered Updates action. Proposed (m1b.4): the two general lines. */
+/** 13 §3 `busy`: shown the same way from GET /api/updates and from a refused action (review item 15). */
+export const BUSY_LINE = API_ERRORS.busy ?? "";
+
+/** The line for a refused or unanswered Updates action. Proposed (m1b.4): the two general lines; an unanswered
+ *  request never states its outcome (lead wording, review item 16). */
 export function updatesActionError(code: ErrorCode | null, status: number | null): string {
   if (code && Object.hasOwn(API_ERRORS, code)) return API_ERRORS[code] ?? "";
-  if (status === null) return "ShelfSync didn't answer, so nothing was changed.";
+  if (status === null) return "ShelfSync didn't answer, so that may not have happened. Reload this page to check.";
   return `ShelfSync refused that (HTTP ${status}), so nothing was changed.`;
+}
+
+/** The tone of an action's line: "An update is already under way." is information, like the GET state (item 19). */
+export function updatesActionTone(code: ErrorCode | null): "info" | "danger" {
+  return code === "busy" ? "info" : "danger";
 }
 
 // ---------- Settings › App (mockup; 13 §6 for the reset) ----------
@@ -223,9 +245,12 @@ export const A = {
   portNext: "The new port is used after the next start.",
   savedNotApplied:
     "Settings saved, but Windows wasn't changed: Start with Windows couldn't be set. Save again to try once more.",
-  saveFailed: "ShelfSync didn't answer, so nothing was saved.",
+  // lead wording (review item 16): no answer is never stated as an outcome
+  saveFailed: "ShelfSync didn't answer, so the settings may not have been saved. Reload this page to check.",
   saveRefused: (status: number) => `ShelfSync refused the settings (HTTP ${status}), so nothing was saved.`,
-  themeFailed: "The theme applies to this tab, but ShelfSync didn't save it.",
+  themeFailed: "The theme applies to this tab, but it may not have been saved. Reload this page to check.",
+  // proposed (review item 9): a refresh failed while the page still shows what it had
+  staleNotice: "ShelfSync didn't answer just now, so this may be out of date.",
   loadFailed: "ShelfSync didn't answer, so the app settings can't be shown.",
   loadRefused: (status: number) => `ShelfSync refused to show the app settings (HTTP ${status}).`,
   // mockup and 13 §6
@@ -236,6 +261,6 @@ export const A = {
   resetDialogLead: "ShelfSync makes a new access token and the old one stops working.",
   resetConfirm: "Reset access token",
   // proposed (m1b.4)
-  resetFailed: "ShelfSync didn't answer, so the access token wasn't reset.",
+  resetFailed: "ShelfSync didn't answer, so the reset may not have happened. Reload this page to check.", // lead
   resetRefused: (status: number) => `ShelfSync refused the reset (HTTP ${status}), so the access token is unchanged.`,
 };

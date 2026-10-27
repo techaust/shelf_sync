@@ -121,6 +121,7 @@ export function AppView({
   saving,
   result,
   themeFailed,
+  stale = false,
   handlers,
 }: {
   form: AppForm;
@@ -130,6 +131,8 @@ export function AppView({
   saving: boolean;
   result: AppResult | null;
   themeFailed: boolean;
+  /** A refresh failed while the form still shows the last answer (review item 9). */
+  stale?: boolean;
   handlers: AppHandlers;
 }) {
   return (
@@ -139,6 +142,11 @@ export function AppView({
           {A.cardTitle}
         </h3>
       </div>
+      {stale ? (
+        <div className="card-alert">
+          <Alert tone="warning" title={A.staleNotice} />
+        </div>
+      ) : null}
       <form className="app-form" onSubmit={handlers.onSave} noValidate aria-labelledby="app-title">
         <div className="card__body form-stack">
           <fieldset className="radio-list is-inline">

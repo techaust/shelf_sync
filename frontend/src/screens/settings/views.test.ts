@@ -2,7 +2,7 @@
 // (ConfirmDialog, SecretField, Switch) as markup: the unit tests run in Node with no DOM, so the views are rendered
 // to static HTML (react-dom/server). Behaviour that needs a browser (focus, the dialog's top layer) is in
 // dialog.test.ts with fakes, and was checked by hand in the built-in browser pane (run file section 4).
-import { createElement as h } from "react";
+import { type ComponentProps, type FunctionComponent, createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import { Switch } from "../../components/Switch";
 import { AppView } from "./AppView";
 import { formFrom } from "./forms";
 import { SETTINGS_PAGES, Settings } from "./Settings";
-import { Restarting, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
+import { Restarting, RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
 import { type DateFormat, describeUpdates, type Phase } from "./updatesModel";
 import { A, LATER, T, U } from "./wording";
 
@@ -42,7 +42,11 @@ const actions = {
   onRemoveToken: vi.fn(async () => undefined),
 };
 const decode = (html: string) => html.replaceAll("&#x27;", "'").replaceAll("&quot;", '"').replaceAll("&amp;", "&");
-function updates(over: Partial<Updates>, phase: Phase = { kind: "idle" }, actionError: string | null = null) {
+function updates(
+  over: Partial<Updates>,
+  phase: Phase = { kind: "idle" },
+  actionError: { tone: "info" | "danger"; text: string } | null = null,
+) {
   const model = describeUpdates({ ...base, ...over }, phase, date);
   return decode(renderToStaticMarkup(h(UpdatesView, { model, phase, actionError, actions })));
 }
@@ -104,18 +108,40 @@ describe("Settings › Updates", () => {
     const html = updates(
       { last_check: { ...ok, outcome: "token_refused" }, token: { set: true, expires_at: null, notice: false } },
       { kind: "idle" },
-      "A check ran a moment ago. Try again in a minute.",
+      { tone: "danger", text: "A check ran a moment ago. Try again in a minute." },
     );
     expect(html).toContain("GitHub refused the token. Check it, or remove it to check without one.");
     expect(html).toContain("A check ran a moment ago. Try again in a minute.");
     expect(html.match(/role="alert"/g)?.length).toBe(2);
   });
 
-  it("development copy: the reason, and Check now off and described by it", () => {
+  it("busy after Check now is information, not an error (review item 19)", () => {
+    const html = updates({}, { kind: "idle" }, { tone: "info", text: "An update is already under way." });
+    expect(html).toMatch(/class="alert is-info" role="status"[\s\S]*An update is already under way\./);
+    expect(html).not.toContain('role="alert"');
+  });
+
+  it("a failed refresh keeps the page and says it may be out of date (review item 9)", () => {
+    const model = describeUpdates({ ...base, last_check: ok }, { kind: "idle" }, date);
+    const html = decode(
+      renderToStaticMarkup(h(UpdatesView, { model, phase: { kind: "idle" }, actionError: null, stale: true, actions })),
+    );
+    expect(html).toContain(A.staleNotice);
+    expect(html).toContain("ShelfSync 0.2.0 is up to date.");
+  });
+
+  it("development copy: the reason, Check now off and described by it, and no optional-token line", () => {
     const html = updates({ development: true });
     expect(html).toContain('id="up-notice-development"');
     expect(html).toContain(U.development);
     expect(html).toMatch(/aria-disabled="true" aria-describedby="up-notice-development"/);
+    expect(html).not.toContain(U.empty); // review item 13
+  });
+
+  it("a ready update in a build without a key: Install off, described by the no-key notice (review item 14)", () => {
+    const html = updates({ key_available: false, available: { version: "0.3.0", ready: true } });
+    expect(html).toContain('id="up-notice-no-key"');
+    expect(html).toMatch(/aria-disabled="true" aria-describedby="up-notice-no-key"/);
   });
 
   it("roll back without its backup: off, with the reason beside it", () => {
@@ -125,11 +151,36 @@ describe("Settings › Updates", () => {
   });
 
   it("restarting: the panel, the line and, when late, the Start menu line", () => {
-    const html = decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: false })));
+    const html = decode(renderToStaticMarkup(h(Restarting, { late: false, back: false })));
     expect(html).toContain("ShelfSync is restarting");
-    expect(html).toContain("This tab reloads when ShelfSync 0.3.0 answers.");
+    expect(html).toContain('<p class="muted num">When ShelfSync is back, it opens in a new tab.</p>');
+    expect(html).toContain("progress is-indeterminate");
     expect(html).not.toContain(U.restartingLate);
-    expect(decode(renderToStaticMarkup(h(Restarting, { version: "0.3.0", late: true })))).toContain(U.restartingLate);
+    expect(decode(renderToStaticMarkup(h(Restarting, { late: true, back: false })))).toContain(U.restartingLate);
+  });
+
+  it("back in a new tab: this one can be closed; the progress stops", () => {
+    const html = decode(renderToStaticMarkup(h(Restarting, { late: true, back: true })));
+    expect(html).toContain("ShelfSync is back");
+    expect(html).toContain("It opened in a new tab, signed in. You can close this one.");
+    expect(html).not.toContain("progress");
+    expect(html).not.toContain(U.restartingLate);
+  });
+
+  it("the roll back dialog body: the restart line, then 13 §6's words in tabular figures", () => {
+    const rollBack = describeUpdates(
+      { ...base, previous: "0.1.4", can_roll_back: true },
+      { kind: "idle" },
+      date,
+    ).rollBack;
+    const files = decode(renderToStaticMarkup(h(RollBackBody, { rollBack })));
+    expect(files).toContain("<p>ShelfSync will close and open again.</p>");
+    expect(files).toContain('<p class="num">0.2.0 didn');
+    const changed = decode(renderToStaticMarkup(h(RollBackBody, { rollBack: { ...rollBack, databaseChanged: true } })));
+    expect(changed).toContain('class="alert is-warning"');
+    expect(changed).toContain('<span class="num">0.2.0 changed the database.');
+    expect(changed).toContain("A copy of the current data is kept in the backups folder.");
+    expect(changed).not.toContain("stays as it is");
   });
 });
 
@@ -229,22 +280,44 @@ describe("the shared parts", () => {
     expect(saved).not.toMatch(/•|\*\*\*/); // not even a mask
     const notSet = decode(renderToStaticMarkup(h(SecretField, { ...props, set: false })));
     expect(notSet).toContain("Not set");
-    expect(notSet).toMatch(/<input[^>]*type="password"[^>]*maxLength="300"[^>]*value=""/);
+    expect(notSet).toMatch(/<input[^>]*type="password"[^>]*maxLength="300"/);
     expect(notSet).not.toContain(">Remove</button>");
+  });
+
+  it("SecretField: the password input is uncontrolled, so a typed value never becomes its value attribute", () => {
+    const html = renderToStaticMarkup(
+      h(SecretField, {
+        id: "tok",
+        text: T,
+        maxLength: 300,
+        set: false,
+        check: () => null,
+        onSave: vi.fn(async () => undefined),
+        onRemove: vi.fn(async () => undefined),
+      }),
+    );
+    const input = /<input[^>]*id="tok"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(input).toContain('type="password"');
+    expect(input).not.toMatch(/\svalue=/); // React writes a value attribute only for a controlled (or defaultValue) input
   });
 
   it("ConfirmDialog: a native dialog named by its title; the destructive button is is-danger", () => {
     const html = decode(
       renderToStaticMarkup(
-        h(ConfirmDialog, {
-          open: false,
-          title: A.resetDialogTitle,
-          confirmLabel: A.resetConfirm,
-          danger: true,
-          onConfirm: vi.fn(),
-          onCancel: vi.fn(),
-          children: h("p", null, A.resetDialogLead),
-        }),
+        // the child goes in as createElement's third argument; the component's type is cast to say so, because its
+        // props declare children as required and createElement fills them from that argument
+        h(
+          ConfirmDialog as FunctionComponent<Omit<ComponentProps<typeof ConfirmDialog>, "children">>,
+          {
+            open: false,
+            title: A.resetDialogTitle,
+            confirmLabel: A.resetConfirm,
+            danger: true,
+            onConfirm: vi.fn(),
+            onCancel: vi.fn(),
+          },
+          h("p", null, A.resetDialogLead),
+        ),
       ),
     );
     expect(html).toMatch(/^<dialog class="confirm-dialog" aria-labelledby="(.+)-title" aria-describedby="\1-body"/);

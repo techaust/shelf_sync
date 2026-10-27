@@ -4,28 +4,42 @@
 import { describe, expect, it, vi } from "vitest";
 import { type DialogElement, dialogBehaviour, type Focusable } from "./dialog";
 
-type CancelListener = (event: { preventDefault(): void }) => void;
+type Listener = (event: { preventDefault(): void }) => void;
+type EventName = "cancel" | "close";
 
+/** A fake <dialog>. close() fires "close" as the browser does (here at once; in a browser a task later). */
 function fakeDialog() {
-  const listeners = new Set<CancelListener>();
+  const listeners: Record<EventName, Set<Listener>> = { cancel: new Set(), close: new Set() };
+  const fire = (type: EventName) => {
+    const event = { defaultPrevented: false, preventDefault: () => (event.defaultPrevented = true) };
+    for (const listener of [...listeners[type]]) listener(event);
+    return event;
+  };
   const dialog = {
     open: false,
     showModal: vi.fn(() => {
       dialog.open = true;
     }),
     close: vi.fn(() => {
+      if (!dialog.open) return;
       dialog.open = false;
+      fire("close");
     }),
-    addEventListener: (_type: "cancel", listener: CancelListener) => listeners.add(listener),
-    removeEventListener: (_type: "cancel", listener: CancelListener) => listeners.delete(listener),
+    addEventListener: (type: EventName, listener: Listener) => listeners[type].add(listener),
+    removeEventListener: (type: EventName, listener: Listener) => listeners[type].delete(listener),
     /** What the browser does on Esc while a modal dialog is open: a cancelable "cancel" event. */
     pressEscape() {
-      const event = { defaultPrevented: false, preventDefault: () => (event.defaultPrevented = true) };
-      for (const listener of listeners) listener(event);
-      if (!event.defaultPrevented) dialog.open = false;
+      const event = fire("cancel");
+      if (!event.defaultPrevented) dialog.close();
       return event;
     },
-    listeners,
+    /** A second Esc in Chrome: the dialog closes even though "cancel" was prevented (its close watcher). */
+    browserCloses() {
+      fire("cancel");
+      dialog.open = false;
+      fire("close");
+    },
+    listeners: { size: () => listeners.cancel.size + listeners.close.size },
   };
   return dialog satisfies DialogElement & Record<string, unknown>;
 }
@@ -103,8 +117,43 @@ describe("dialogBehaviour", () => {
     const behaviour = dialogBehaviour(dialog, { onCancel, isBusy: () => false });
     behaviour.open(null, focusable("opener", log));
     behaviour.dispose();
-    expect(dialog.listeners.size).toBe(0);
+    expect(dialog.listeners.size()).toBe(0);
     expect(dialog.open).toBe(false);
+    expect(log).toEqual(["opener"]);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("our own close never reports a Cancel", () => {
+    const dialog = fakeDialog();
+    const onCancel = vi.fn();
+    const behaviour = dialogBehaviour(dialog, { onCancel, isBusy: () => false });
+    behaviour.open(null, null);
+    behaviour.close();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("a second Esc that closes the native dialog while the action is sent: it opens again", () => {
+    const dialog = fakeDialog();
+    const onCancel = vi.fn();
+    const behaviour = dialogBehaviour(dialog, { onCancel, isBusy: () => true });
+    behaviour.open(null, null);
+    dialog.browserCloses();
+    expect(dialog.open).toBe(true);
+    expect(dialog.showModal).toHaveBeenCalledTimes(2);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("a browser close while nothing is sent: React is told (Cancel) and the focus goes back", () => {
+    const dialog = fakeDialog();
+    const log: string[] = [];
+    const onCancel = vi.fn();
+    const behaviour = dialogBehaviour(dialog, { onCancel, isBusy: () => false });
+    behaviour.open(null, focusable("opener", log));
+    dialog.browserCloses();
+    expect(dialog.open).toBe(false);
+    expect(onCancel).toHaveBeenCalled();
+    expect(log).toEqual(["opener"]);
+    behaviour.close(); // React then closes it too: nothing more happens
     expect(log).toEqual(["opener"]);
   });
 });

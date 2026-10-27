@@ -1,10 +1,15 @@
-// After an accepted Install or Roll back (202), ShelfSync closes and the switcher starts the other version (SYS-06,
-// SYS-07). The page asks GET /api/health (no session needed) every few seconds and reloads when:
-// - the version it switched to answers; or
-// - ShelfSync answers again after it was seen gone, with any version (the switch kept the old one, or changed
-//   nothing): after the reload the page shows the last switch's result from GET /api/updates.
-// An answer from the old copy before it closed is not a restart, so it is never reloaded on. After `lateAfterMs` the
-// page says so once (onLate) and keeps asking. Timers come from `clock`, so the tests use a fake one.
+// After an accepted Install or Roll back (202), ShelfSync closes and the switcher starts the other version, then opens
+// a new signed-in tab (SYS-06, SYS-07). Sessions live in memory, so this tab can't stay signed in across the restart.
+// Every few seconds the page asks GET /api/health (no session needed), each question ended after `timeoutMs`; when
+// ShelfSync answers, GET /api/session/status says which copy it is:
+// - 401: a new copy (any version, also a quick restart that brought the old version back) → "new_tab": this tab
+//   stops and says a new signed-in tab has opened;
+// - 204: the copy this tab signed in to is still running. Once it no longer reports a switch under way (the switch
+//   changed nothing), → "reload", and the page shows the result. While it does, the asking goes on.
+// After `lateAfterMs` the page says so once (onLate, its own timer) and keeps asking. Timers come from `clock`, so the
+// tests use fake ones.
+
+import type { SessionCheck } from "../api/settings";
 
 export interface HealthAnswer {
   app: string;
@@ -14,70 +19,87 @@ export interface HealthAnswer {
 export interface Clock {
   setTimeout(callback: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
-  now(): number;
 }
+
+export type RestartOutcome = "reload" | "new_tab";
 
 export interface RestartPollOptions {
   target: string;
-  /** Resolves with ShelfSync's answer; rejects (or answers something else) while it is gone. */
-  health: () => Promise<HealthAnswer>;
-  onBack: () => void;
+  /** ShelfSync's answer; rejects (or answers something else) while it is gone. */
+  health: (signal: AbortSignal) => Promise<HealthAnswer>;
+  session: (signal: AbortSignal) => Promise<SessionCheck>;
+  /** True while the copy that answers still reports a switch under way (GET /api/updates `busy`). */
+  stillSwitching: (signal: AbortSignal) => Promise<boolean>;
+  onBack: (outcome: RestartOutcome) => void;
   onLate?: () => void;
   clock?: Clock;
   everyMs?: number;
   lateAfterMs?: number;
+  timeoutMs?: number;
 }
 
 export const POLL_EVERY_MS = 2000;
 export const LATE_AFTER_MS = 3 * 60 * 1000;
+export const ASK_TIMEOUT_MS = 3000;
 
-const realClock: Clock = {
+export const realClock: Clock = {
   setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms),
   clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
-  now: () => Date.now(),
 };
 
 /** Starts asking; returns a function that stops it. */
 export function pollForRestart(options: RestartPollOptions): () => void {
   const clock = options.clock ?? realClock;
   const every = options.everyMs ?? POLL_EVERY_MS;
-  const lateAfter = options.lateAfterMs ?? LATE_AFTER_MS;
-  const started = clock.now();
+  const timeout = options.timeoutMs ?? ASK_TIMEOUT_MS;
   let stopped = false;
-  let seenGone = false;
-  let saidLate = false;
-  let handle: unknown = null;
+  let next: unknown = null;
+  const late = clock.setTimeout(() => {
+    if (!stopped) options.onLate?.();
+  }, options.lateAfterMs ?? LATE_AFTER_MS);
 
-  const schedule = () => {
-    if (!stopped) handle = clock.setTimeout(tick, every);
-  };
+  function stop(): void {
+    stopped = true;
+    if (next !== null) clock.clearTimeout(next);
+    clock.clearTimeout(late);
+  }
+
+  /** One question with its own time limit; a question that runs out counts as no answer. */
+  async function ask<T>(question: (signal: AbortSignal) => Promise<T>): Promise<T | null> {
+    const controller = new AbortController();
+    const timer = clock.setTimeout(() => controller.abort(), timeout);
+    try {
+      return await question(controller.signal);
+    } catch {
+      return null;
+    } finally {
+      clock.clearTimeout(timer);
+    }
+  }
+
+  function finish(outcome: RestartOutcome): void {
+    stop();
+    options.onBack(outcome);
+  }
 
   async function tick(): Promise<void> {
     if (stopped) return;
-    let answer: HealthAnswer | null = null;
-    try {
-      const body = await options.health();
-      answer = body && body.app === "shelfsync" && typeof body.version === "string" ? body : null;
-    } catch {
-      answer = null;
-    }
+    const answer = await ask(options.health);
     if (stopped) return;
-    if (answer === null) seenGone = true;
-    else if (answer.version === options.target || seenGone) {
-      stopped = true;
-      options.onBack();
-      return;
+    if (answer && answer.app === "shelfsync" && typeof answer.version === "string") {
+      const session = await ask(options.session);
+      if (stopped) return;
+      if (session === "signed_out") return finish("new_tab");
+      if (session === "signed_in") {
+        if (answer.version === options.target) return finish("reload");
+        const switching = await ask(options.stillSwitching);
+        if (stopped) return;
+        if (switching === false) return finish("reload");
+      }
     }
-    if (!saidLate && clock.now() - started >= lateAfter) {
-      saidLate = true;
-      options.onLate?.();
-    }
-    schedule();
+    next = clock.setTimeout(tick, every);
   }
 
-  schedule();
-  return () => {
-    stopped = true;
-    if (handle !== null) clock.clearTimeout(handle);
-  };
+  next = clock.setTimeout(tick, every);
+  return stop;
 }
