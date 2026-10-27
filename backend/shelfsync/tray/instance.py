@@ -221,5 +221,6 @@ else:
 def default_instance_lock(paths: DataPaths | None = None) -> InstanceLock:
     """The mutex and the data-folder lock file together (SYS-03, M1b.1). `paths` is the data folder the caller already
     resolved; with no argument it is resolved here."""
+    mutex = WindowsInstanceLock()  # first: off Windows this refuses before the data folder is looked up
     data = paths if paths is not None else resolve_data_paths()
-    return CombinedInstanceLock(WindowsInstanceLock(), WindowsFileLock(data.instance_lock))
+    return CombinedInstanceLock(mutex, WindowsFileLock(data.instance_lock))
