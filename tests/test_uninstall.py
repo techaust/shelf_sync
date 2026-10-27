@@ -86,13 +86,29 @@ def test_a_data_folder_that_is_itself_a_link_is_left_alone_and_reported(
     link = tmp_path / "ShelfSync"
     if not make_link(link, real):
         pytest.skip("this account can't make directory links")
-    assert (
-        uninstall.remove_data(DataPaths(link), MemorySecretStore(), FakeInstanceLock(set()))
-        == uninstall.EXIT_INCOMPLETE
-    )
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    taken: set[str] = set()
+    assert uninstall.remove_data(DataPaths(link), store, FakeInstanceLock(taken)) == uninstall.EXIT_INCOMPLETE
     assert "ShelfSync-real" in capsys.readouterr().out
     assert (real / "file.txt").exists()
     assert uninstall.is_link(link)
+    assert store.get(INSTALL_TOKEN_NAME) is None  # the stored tokens go even though the data behind the link stays
+    assert taken == set()  # the lock taken through the link was let go
+
+
+def test_a_live_link_data_folder_still_takes_the_lock_and_refuses_while_it_runs(tmp_path: Path) -> None:
+    """SYS-08: a live link takes the lock through it as before: held means exit 4 and nothing removed."""
+    real = tmp_path / "ShelfSync-real"
+    real.mkdir()
+    link = tmp_path / "ShelfSync"
+    if not make_link(link, real):
+        pytest.skip("this account can't make directory links")
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    code = uninstall.remove_data(DataPaths(link), store, FakeInstanceLock({"x"}, "x"))
+    assert code == uninstall.EXIT_RUNNING
+    assert store.get(INSTALL_TOKEN_NAME) == "value"
 
 
 class StuckStore(MemorySecretStore):
@@ -271,7 +287,7 @@ def test_a_dangling_link_as_the_data_folder_is_reported_not_called_running(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """SYS-08: the link check comes before the lock: a junction to a folder that is gone can't hold a lock file, and
-    that must read as a link left alone (exit 1), never as "ShelfSync is running" (exit 4)."""
+    that must read as a link left alone (exit 1), never as "ShelfSync is running" (exit 4); the secrets still go."""
     gone = tmp_path / "gone"
     gone.mkdir()
     link = tmp_path / "ShelfSync"
@@ -284,7 +300,7 @@ def test_a_dangling_link_as_the_data_folder_is_reported_not_called_running(
     assert uninstall.remove_data(DataPaths(link), store, broken) == uninstall.EXIT_INCOMPLETE
     out = capsys.readouterr().out
     assert "link" in out and "running" not in out
-    assert store.get(INSTALL_TOKEN_NAME) == "value"  # nothing was removed
+    assert store.get(INSTALL_TOKEN_NAME) is None  # the stored tokens are removed even though the folder is dangling
 
 
 def test_a_dangling_link_in_place_of_the_lock_file_is_still_removed(tmp_path: Path) -> None:

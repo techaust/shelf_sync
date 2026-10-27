@@ -191,15 +191,18 @@ Check (Is-Link (Join-Path $behind "inner")) "the link inside the target is untou
 Finish-Uninstalled
 
 # ---- 2b. a switch killed between its two renames: `current` is missing, `current.old` and `current.next` are left over ----
-function Plant-KilledSwitch([string]$target) {
+# `current.old` is the version that was running; `current.next` points at the NEW version's folder (which exists, as it
+# does when a real switch is killed).
+function Plant-KilledSwitch([string]$old, [string]$next) {
     $cur = Join-Path $script:install "current"
     if (Test-Path $cur) { cmd /c rmdir "`"$cur`"" | Out-Null }   # removes the junction only
-    New-Junction (Join-Path $script:install "current.old") $target
-    New-Junction (Join-Path $script:install "current.next") $target
+    if (-not (Test-Path $next)) { New-Item -ItemType Directory -Force $next | Out-Null; Set-Content (Join-Path $next "marker.txt") "new" }
+    New-Junction (Join-Path $script:install "current.old") $old
+    New-Junction (Join-Path $script:install "current.next") $next
 }
 New-Scenario "recover"
 Check ((Install $Setup) -eq 0) "install exits 0"
-Plant-KilledSwitch (Join-Path $script:install "versions\$Version")
+Plant-KilledSwitch (Join-Path $script:install "versions\$Version") (Join-Path $script:install "versions\0.0.7")
 Check (-not (Test-Path (Join-Path $script:install "current"))) "current is missing and current.old and current.next are planted"
 Check ((Install $Setup) -eq 0) "running Setup again recovers (exit 0)"
 $cur = Join-Path $script:install "current"
@@ -266,7 +269,7 @@ if ($NewerSetup -ne "") {
     New-Scenario "recover-upgrade"
     Check ((Install $Setup) -eq 0) "install $Version exits 0"
     Set-ItemProperty $uninstallKey -Name DisplayVersion -Value "0.0.0"
-    Plant-KilledSwitch (Join-Path $script:install "versions\$Version")
+    Plant-KilledSwitch (Join-Path $script:install "versions\$Version") (Join-Path $script:install "versions\$NewerVersion")
     Check ((Install $NewerSetup) -eq 0) "upgrade over a killed switch exits 0"
     $cur = Get-Item (Join-Path $script:install "current") -Force
     Check ((Is-Link $cur.FullName) -and (@($cur.Target)[0] -like "*versions\$NewerVersion")) "current points at $NewerVersion"
@@ -288,6 +291,30 @@ if ($RemoveData) {
     Check (-not (Test-Path $script:data)) "the data folder is gone"
     Check (Test-Path (Join-Path $script:outside "keep.txt")) "the file behind a junction in the data folder survived"
     Finish-Uninstalled
+
+    # "Remove my data" after a killed switch: `current` is missing, so the data is removed with current.old's Python.
+    New-Scenario "remove-data-killed-switch"
+    Check ((Install $Setup) -eq 0) "install exits 0"
+    New-Item -ItemType Directory -Force (Join-Path $script:data "logs") | Out-Null
+    Set-Content (Join-Path $script:data "shelfsync.db") "db"
+    Plant-KilledSwitch (Join-Path $script:install "versions\$Version") (Join-Path $script:install "versions\0.0.7")
+    Check (-not (Test-Path (Join-Path $script:install "current"))) "current is missing"
+    Check ((Uninstall @("/REMOVEDATA")) -eq 0) "uninstall with /REMOVEDATA exits 0"
+    Check (-not (Test-Path $script:data)) "the data folder was removed through current.old's Python"
+    Finish-Uninstalled
+
+    # No Python at all (current, current.old and current.next are gone): nothing is removed, and the data stays.
+    New-Scenario "remove-data-no-python"
+    Check ((Install $Setup) -eq 0) "install exits 0"
+    New-Item -ItemType Directory -Force (Join-Path $script:data "logs") | Out-Null
+    Set-Content (Join-Path $script:data "shelfsync.db") "db"
+    $cur = Join-Path $script:install "current"
+    cmd /c rmdir "`"$cur`"" | Out-Null
+    Check ((Uninstall @("/REMOVEDATA")) -eq 0) "uninstall exits 0 (the notice says nothing was removed)"
+    Check (Test-Path (Join-Path $script:data "shelfsync.db")) "the data is still there: nothing was removed"
+    Check (-not (Test-Path (Join-Path $script:install "versions"))) "the program was still removed"
+    Finish-Uninstalled
+    Remove-Item $script:data -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Remove-Item Env:SHELFSYNC_DATA_DIR -ErrorAction SilentlyContinue

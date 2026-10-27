@@ -121,18 +121,19 @@ def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: Instan
     if not looks_like_data_folder(paths.root):
         _say(f"Refused: {paths.root} doesn't look like ShelfSync's data folder.")
         return EXIT_REFUSED
-    if is_link(paths.root):
-        # Checked before the lock: a dangling junction can't hold a lock file, and that must never read as "running".
-        _say(f"{paths.root} is a link to {link_target(paths.root)}; it was left alone, and nothing else was removed.")
-        return EXIT_INCOMPLETE
-    try:
-        instance = lock if lock is not None else default_instance_lock(paths)
-        free = instance.acquire()
-    except OSError:
-        free = False  # can't tell: treat it as running, touch nothing
-    if not free:
-        _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
-        return EXIT_RUNNING
+    link = is_link(paths.root)
+    instance: InstanceLock | None = None
+    if not (link and not paths.root.exists()):
+        # A live link takes the lock through it, as a plain folder does. A dangling one can't hold a lock file, so the
+        # lock is skipped: that must never read as "running".
+        try:
+            instance = lock if lock is not None else default_instance_lock(paths)
+            free = instance.acquire()
+        except OSError:
+            free = False  # can't tell: treat it as running, touch nothing
+        if not free:
+            _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
+            return EXIT_RUNNING
     try:
         problems = 0
         try:
@@ -143,12 +144,19 @@ def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: Instan
         for name in failed_secrets:
             _say(f"Couldn't remove the Credential Manager entry {name}.")
             problems += 1
+        if link:
+            _say(
+                f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone."
+                " The stored sign-in token was removed where possible."
+            )
+            return EXIT_INCOMPLETE
         for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
             _say(f"Couldn't remove {name} in {paths.root}.")
             problems += 1
         return EXIT_OK if problems == 0 else EXIT_INCOMPLETE
     finally:
-        instance.release()  # a second release is harmless
+        if instance is not None:
+            instance.release()  # a second release is harmless
 
 
 def service_name(text: str) -> str:

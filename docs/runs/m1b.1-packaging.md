@@ -292,6 +292,17 @@ All of §5's findings are fixed in `8beabd4`. Re-run after the fixes (all with `
 
 Tests added: `test_uninstall.py` (dangling link before lock, `lexists`, no fallback service), `test_packaging_build.py` (subjects that don't parse completely, real-looking subjects), `test_release_files.py` (the script guards, the planted switch), and in `test-installer.ps1` the "recover", "keep-current" (registry says 0.0.3 while `current` points at the running version: that one is kept) and "recover-upgrade" scenarios.
 
+### Review round 3 (APPROVE) and the item 5 regression
+| Id | Where | Finding | Fix |
+|---|---|---|---|
+| M1 | `uninstall.py` | With the link check first, a data folder that is a link no longer had its Credential Manager entries removed | The link check stays first, then: a live link takes the lock through it (exit 4 if held, nothing removed); a dangling one skips the lock; in both cases `remove_secrets` runs, the link line is printed and the exit is 1. Tests assert the secrets are gone for a live and a dangling link, and that a held live link refuses. `STR_DATA_PARTIAL` is now true for it (data behind a link is left in place; the stored token was removed where possible) |
+| L1 | nsi `GetLinkVersion` | Used `$R2` whatever `GetFinalPathNameByHandleW` returned | Only when `0 < $R4 < 1024` |
+| L2 | nsi swap | With no `current` to begin with, a failed final rename said `STR_LINK_FAILED` | `STR_RESTORE_FAILED` (exit 9: the install has no `current`, run the installer again) |
+| L3 | nsi uninstall | "Remove my data" used only `current\python.exe` | Falls back to `current.old\python.exe`, then `current.next\python.exe`; if none exists the new `STR_DATA_NOTHING` says nothing was removed (data and token included) and the program is still removed |
+| L4 | `test-installer.ps1` | `Plant-KilledSwitch` pointed both leftovers at one folder | `current.old` is the running version, `current.next` is the new version's folder (it exists). New scenarios "remove-data-killed-switch" (data removed with `current.old`'s Python) and "remove-data-no-python" (nothing removed, data kept, program removed). The exit-9 path is **not** exercised: forcing the final rename of the freshly made `current.next` to fail isn't cheap, so it is checked as text only |
+
+Re-run: ruff check and format clean (89 files); mypy no issues (40 files); bandit no issues; `pytest` **799 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py` and `smoke.py` passed; four Setups compiled; local rehearsal with `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r4.log`). The notice texts were not seen (silent runs).
+
 ## 6. Integration notes
 _(lead)_
 

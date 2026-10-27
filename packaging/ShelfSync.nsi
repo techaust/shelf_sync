@@ -55,7 +55,8 @@ ManifestDPIAware true
 !define STR_DATA_TITLE "Remove my data"
 !define STR_DATA_TEXT "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."
 !define STR_DATA_CHECK "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
-!define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Delete what is left of this folder yourself:"
+!define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. The stored sign-in token was removed where possible. Delete what is left yourself if you want it gone; this is the data folder:"
+!define STR_DATA_NOTHING "ShelfSync couldn't find its own program to remove your data with, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
@@ -260,7 +261,8 @@ Function GetLinkVersion
   ${AndIf} $R1 != 0
     System::Call 'kernel32::GetFinalPathNameByHandleW(p R1, w .R2, i 1024, i 0) i .R4'
     System::Call 'kernel32::CloseHandle(p R1)'
-    ${If} $R2 != ""
+    ${If} $R4 > 0
+    ${AndIf} $R4 < 1024
       ${GetFileName} "$R2" $R3
     ${EndIf}
   ${EndIf}
@@ -380,9 +382,13 @@ Section "ShelfSync" SecMain
         SetErrorLevel 9
         Abort
       ${EndIf}
+      MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
+      SetErrorLevel 7
+      Abort
     ${EndIf}
-    MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
-    SetErrorLevel 7
+    ; There was no `current` to put back (a killed switch, or a first install): the install has none now. Say so.
+    MessageBox MB_OK|MB_ICONSTOP "${STR_RESTORE_FAILED}" /SD IDOK
+    SetErrorLevel 9
     Abort
   ${EndIf}
   RMDir "$INSTDIR\current.old"
@@ -480,15 +486,27 @@ Section "Uninstall"
   ; 2. "Remove my data": the app's own module removes the Credential Manager entries it owns and the data folder, from
   ;    the installed Python and before any program file goes. A failure is reported; the program is still removed.
   ;    --service keeps a throwaway build (SUFFIX) away from the real ShelfSync Credential Manager service.
-  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 part is left.
+  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 part is left
+  ;    (the tokens are removed even when the data folder is a link and its data is left). 99 here: no Python was found.
   ${If} $RemoveData == 1
-    StrCpy $3 1
+    ; After a killed switch `current` may be missing: fall back to `current.old`, then `current.next`.
+    StrCpy $4 ""
     ${If} ${FileExists} "$INSTDIR\current\python.exe"
-      nsExec::ExecToLog `"$INSTDIR\current\python.exe" -m shelfsync.uninstall --remove-data --service ShelfSync${SUFFIX}`
+      StrCpy $4 "$INSTDIR\current\python.exe"
+    ${ElseIf} ${FileExists} "$INSTDIR\current.old\python.exe"
+      StrCpy $4 "$INSTDIR\current.old\python.exe"
+    ${ElseIf} ${FileExists} "$INSTDIR\current.next\python.exe"
+      StrCpy $4 "$INSTDIR\current.next\python.exe"
+    ${EndIf}
+    StrCpy $3 99
+    ${If} $4 != ""
+      nsExec::ExecToLog `"$4" -m shelfsync.uninstall --remove-data --service ShelfSync${SUFFIX}`
       Pop $3
     ${EndIf}
     Call un.GetDataDir
-    ${If} $3 == 3
+    ${If} $3 == 99
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOTHING}" /SD IDOK
+    ${ElseIf} $3 == 3
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOT_OURS}$\r$\n$0" /SD IDOK
     ${ElseIf} $3 == 4
       MessageBox MB_OK|MB_ICONSTOP "${STR_RUNNING_UNINSTALL}" /SD IDOK

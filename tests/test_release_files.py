@@ -139,7 +139,7 @@ def test_every_external_command_is_started_by_full_path_and_the_stale_guards_exi
     )
     assert NSI.count("Call IsRunning") == 2 and NSI.count("Call un.IsRunning") == 2
     assert "${STR_OLDER}" in NSI.split("FindFirst $2 $3")[1]
-    assert "!define STR_DATA_NOT_OURS" in NSI and "${If} $3 == 3" in NSI
+    assert "!define STR_DATA_NOT_OURS" in NSI and "${ElseIf} $3 == 3" in NSI
     assert "--service ShelfSync${SUFFIX}" in NSI
 
 
@@ -154,6 +154,25 @@ def test_round_2_guards_are_in_the_installer_script() -> None:
     section = NSI.split('Section "Uninstall"')[1]
     assert 'RMDir "$INSTDIR\\current.old"' in section
     assert "GetFinalPathNameByHandleW" in NSI and "$CurrentVersion" in NSI and "$OldVersion" in NSI
+
+
+def test_round_3_guards_are_in_the_installer_script() -> None:
+    """Review round 3: the final path is used only with a real length, a missing `current` with a failed rename says so,
+    and "Remove my data" falls back to `current.old` then `current.next`, or says nothing was removed."""
+    assert "${If} $R4 > 0" in NSI and "${AndIf} $R4 < 1024" in NSI
+    tail = NSI.split('Rename "$INSTDIR\\current.next" "$INSTDIR\\current"')[1].split("RMDir")[0:6]
+    assert "STR_RESTORE_FAILED" in "".join(tail)
+    section = NSI.split('Section "Uninstall"')[1]
+    first = section.index('"$INSTDIR\\current\\python.exe"')
+    assert (
+        first
+        < section.index('"$INSTDIR\\current.old\\python.exe"')
+        < section.index('"$INSTDIR\\current.next\\python.exe"')
+    )
+    assert "${If} $3 == 99" in section and "!define STR_DATA_NOTHING" in NSI
+    script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
+    assert "remove-data-killed-switch" in script and "remove-data-no-python" in script
+    assert "function Plant-KilledSwitch([string]$old, [string]$next)" in script
 
 
 def test_the_installer_script_plants_a_killed_switch() -> None:
