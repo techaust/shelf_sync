@@ -14,7 +14,11 @@
 Unicode true
 RequestExecutionLevel user
 ManifestDPIAware true
-SetCompressor /SOLID lzma
+!ifdef FAST
+  SetCompressor zlib ; test builds only (release.yml's extra Setups), never the release
+!else
+  SetCompressor /SOLID lzma
+!endif
 
 !ifndef VERSION
   !error "Pass /DVERSION=<X.Y.Z>"
@@ -42,7 +46,9 @@ SetCompressor /SOLID lzma
 !define STR_RUNNING_SETUP "ShelfSync is running. Quit it from its tray icon, then run this installer again."
 !define STR_RUNNING_UNINSTALL "ShelfSync is running. Quit it from its tray icon, then run the uninstaller again."
 !define STR_OLDER "This installer is ShelfSync ${VERSION}, but a newer ShelfSync is already installed. Installing an older version could damage your data, so the installer stopped. Download the newest installer, or uninstall ShelfSync first."
-!define STR_LINK_FAILED "The installer couldn't switch ShelfSync to the new version. Nothing else was changed. Close any window showing the ShelfSync folder and run the installer again."
+!define STR_LINK_FAILED "The installer couldn't switch ShelfSync to the new version. The version you had installed was left as it was. Close any window showing the ShelfSync folder and run the installer again."
+!define STR_UNSAFE "ShelfSync stopped removing files because it found a link in its program folder that it couldn't remove safely. Nothing outside the program folder was touched. This is what is left:"
+!define STR_DATA_NOT_OURS "ShelfSync left this folder alone because it doesn't look like ShelfSync's own data folder:"
 !define STR_FINISH_RUN "Open ShelfSync"
 !define STR_DATA_TITLE "Remove my data"
 !define STR_DATA_TEXT "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."
@@ -138,25 +144,87 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
 !insertmacro DefineIsRunning ""
 !insertmacro DefineIsRunning "un."
 
-; Remove every link (junction or symlink) inside a folder, the link itself only, so no later recursive delete can
-; follow one out of the folder (04-A V40). `dir /AL` lists reparse points; `rmdir` on a link removes only the link.
-!macro DefineUnlinkAll un
-  Function ${un}UnlinkAll
+; A recursive delete that never follows a link (04-A V40: NSIS 3.13's own `RMDir /r` does, checked on this PC). Every
+; entry, the top folder included, is asked for its attributes first (GetFileAttributesW does not follow a link):
+; a reparse point (0x400) is removed itself with RMDir (a link to a folder) or Delete (a link to a file), never
+; entered; only real folders are recursed into. If anything still exists afterwards the whole delete stops and
+; reports it. In: the path on the stack. Out: "0" if it is gone, "1" if something is left.
+!macro DefineDeleteTree un
+  Function ${un}DeleteTree
     Exch $R0
-    ${If} ${FileExists} "$R0\*.*"
-      nsExec::Exec `cmd /c for /f "delims=" %i in ('dir /AL /S /B "$R0" 2^>nul') do @rmdir "%i" 2>nul`
-      Pop $R1
+    Push $R1
+    Push $R2
+    Push $R3
+    Push $R4
+    Push $R5
+    Push $R6
+    StrCpy $R3 0
+    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1'
+    ${If} $R1 == -1
+      Goto done
     ${EndIf}
-    Pop $R0
+    IntOp $R2 $R1 & 0x10
+    IntOp $R6 $R1 & 0x400
+    ${If} $R6 != 0
+      ${If} $R2 != 0
+        RMDir "$R0"
+      ${Else}
+        Delete "$R0"
+      ${EndIf}
+      Goto verify
+    ${EndIf}
+    ${If} $R2 == 0
+      SetFileAttributes "$R0" NORMAL
+      Delete "$R0"
+      Goto verify
+    ${EndIf}
+    FindFirst $R4 $R5 "$R0\*.*"
+    ${DoWhile} $R5 != ""
+      ${If} $R5 != "."
+      ${AndIf} $R5 != ".."
+        Push "$R0\$R5"
+        Call ${un}DeleteTree
+        Pop $R6
+        ${If} $R6 != 0
+          StrCpy $R3 1
+          ${Break}
+        ${EndIf}
+      ${EndIf}
+      FindNext $R4 $R5
+    ${Loop}
+    FindClose $R4
+    ${If} $R3 == 0
+      RMDir "$R0"
+    ${EndIf}
+    verify:
+    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1'
+    ${If} $R1 != -1
+      StrCpy $R3 1
+    ${EndIf}
+    done:
+    StrCpy $R0 $R3
+    Pop $R6
+    Pop $R5
+    Pop $R4
+    Pop $R3
+    Pop $R2
+    Pop $R1
+    Exch $R0
   FunctionEnd
 !macroend
-!insertmacro DefineUnlinkAll ""
-!insertmacro DefineUnlinkAll "un."
+!insertmacro DefineDeleteTree ""
+!insertmacro DefineDeleteTree "un."
 
-!macro RemoveTreeSafely un FOLDER
+; Delete a tree or stop: tell the owner which path is left, and end with exit code 8. Nothing outside the tree was touched.
+!macro DeleteTreeOrStop un FOLDER
   Push "${FOLDER}"
-  Call ${un}UnlinkAll
-  RMDir /r "${FOLDER}"
+  Call ${un}DeleteTree
+  Pop $R9
+  ${If} $R9 != 0
+    MessageBox MB_OK|MB_ICONSTOP "${STR_UNSAFE}$\r$\n${FOLDER}" /SD IDOK
+    SetErrorLevel 8
+    Abort
+  ${EndIf}
 !macroend
 
 ; ---- installer -----------------------------------------------------------------------------------------------------
@@ -179,28 +247,81 @@ Function .onInit
       Abort
     ${EndIf}
   ${EndIf}
+
+  ; The registry can be out of step with the folders (the updater, a half-finished install): a version folder newer
+  ; than this Setup counts too. Only names that start with a digit are versions (not `.incoming-...`).
+  FindFirst $2 $3 "$INSTDIR\versions\*.*"
+  ${DoWhile} $3 != ""
+    StrCpy $4 $3 1
+    ${If} $4 S>= "0"
+    ${AndIf} $4 S<= "9"
+      ${VersionCompare} "$3" "${VERSION}" $0
+      ${If} $0 == 1
+        FindClose $2
+        MessageBox MB_OK|MB_ICONSTOP "${STR_OLDER}" /SD IDOK
+        SetErrorLevel 6
+        Abort
+      ${EndIf}
+    ${EndIf}
+    FindNext $2 $3
+  ${Loop}
+  FindClose $2
 FunctionEnd
 
 Section "ShelfSync" SecMain
   SetShellVarContext current
+  ; Checked again here: the first check was in .onInit, and ShelfSync may have been started since (while the wizard sat open).
+  Call IsRunning
+  ${If} $0 == 1
+    MessageBox MB_OK|MB_ICONSTOP "${STR_RUNNING_SETUP}" /SD IDOK
+    SetErrorLevel 5
+    Abort
+  ${EndIf}
   SetOutPath "$INSTDIR"
 
   ; The new version goes into its own folder first; `current` still points at the old one until the last moment.
-  !insertmacro RemoveTreeSafely "" "$INSTDIR\versions\${VERSION}"
+  !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\${VERSION}"
   SetOutPath "$INSTDIR\versions\${VERSION}"
   SetOverwrite on
   File /r "${BUILD_DIR}\*.*"
   SetOutPath "$INSTDIR"
 
-  ; Re-point `current`. RMDir (no /r) on a junction removes the link only, never its target.
-  RMDir "$INSTDIR\current"
-  nsExec::ExecToLog `cmd /c mklink /J "$INSTDIR\current" "$INSTDIR\versions\${VERSION}"`
+  ; Re-point `current` without ever leaving the install without one: make `current.next` first (a failure here leaves
+  ; `current` untouched), then move `current` aside, move `current.next` into place, and put `current` back if that
+  ; fails. RMDir (no /r) on a junction removes the link only, never its target.
+  RMDir "$INSTDIR\current.next"
+  RMDir "$INSTDIR\current.old"
+  nsExec::ExecToLog `"$SYSDIR\cmd.exe" /c mklink /J "$INSTDIR\current.next" "$INSTDIR\versions\${VERSION}"`
   Pop $0
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\current.next") i .r1'
   ${If} $0 != 0
+  ${OrIf} $1 == -1
+    RMDir "$INSTDIR\current.next"
     MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
     SetErrorLevel 7
     Abort
   ${EndIf}
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\current") i .r1'
+  ClearErrors
+  ${If} $1 != -1
+    Rename "$INSTDIR\current" "$INSTDIR\current.old"
+    ${If} ${Errors}
+      RMDir "$INSTDIR\current.next"
+      MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
+      SetErrorLevel 7
+      Abort
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+  Rename "$INSTDIR\current.next" "$INSTDIR\current"
+  ${If} ${Errors}
+    Rename "$INSTDIR\current.old" "$INSTDIR\current"
+    RMDir "$INSTDIR\current.next"
+    MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
+    SetErrorLevel 7
+    Abort
+  ${EndIf}
+  RMDir "$INSTDIR\current.old"
 
   ; Keep the data, the version that was running (the one `current` pointed at, for "Roll back app") and the new one;
   ; remove every other version folder. A repair (the same version again) removes nothing: the rollback copy stays.
@@ -211,7 +332,7 @@ Section "ShelfSync" SecMain
       ${AndIf} $1 != ".."
       ${AndIf} $1 != "${VERSION}"
       ${AndIf} $1 != $PreviousVersion
-        !insertmacro RemoveTreeSafely "" "$INSTDIR\versions\$1"
+        !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\$1"
       ${EndIf}
       FindNext $0 $1
     ${Loop}
@@ -281,18 +402,32 @@ FunctionEnd
 Section "Uninstall"
   SetShellVarContext current
   SetOutPath "$TEMP"
+  Call un.IsRunning
+  ${If} $0 == 1
+    MessageBox MB_OK|MB_ICONSTOP "${STR_RUNNING_UNINSTALL}" /SD IDOK
+    SetErrorLevel 5
+    Abort
+  ${EndIf}
 
   ; 1. (refused in un.onInit while ShelfSync runs.)
   ; 2. "Remove my data": the app's own module removes the Credential Manager entries it owns and the data folder, from
   ;    the installed Python and before any program file goes. A failure is reported; the program is still removed.
+  ;    --service keeps a throwaway build (SUFFIX) away from the real ShelfSync Credential Manager service.
+  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 part is left.
   ${If} $RemoveData == 1
     StrCpy $3 1
     ${If} ${FileExists} "$INSTDIR\current\python.exe"
-      nsExec::ExecToLog `"$INSTDIR\current\python.exe" -m shelfsync.uninstall --remove-data`
+      nsExec::ExecToLog `"$INSTDIR\current\python.exe" -m shelfsync.uninstall --remove-data --service ShelfSync${SUFFIX}`
       Pop $3
     ${EndIf}
-    ${If} $3 != 0
-      Call un.GetDataDir
+    Call un.GetDataDir
+    ${If} $3 == 3
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOT_OURS}$\r$\n$0" /SD IDOK
+    ${ElseIf} $3 == 4
+      MessageBox MB_OK|MB_ICONSTOP "${STR_RUNNING_UNINSTALL}" /SD IDOK
+      SetErrorLevel 5
+      Abort
+    ${ElseIf} $3 != 0
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK
     ${EndIf}
   ${EndIf}
@@ -301,8 +436,8 @@ Section "Uninstall"
   RMDir "$INSTDIR\current"
   RMDir "$INSTDIR\current.next"
 
-  ; 4. versions\: every link inside is removed itself first, so the recursive delete can't follow one out.
-  !insertmacro RemoveTreeSafely "un." "$INSTDIR\versions"
+  ; 4. versions\: deleted by DeleteTree, which removes every link itself and never follows one (V40).
+  !insertmacro DeleteTreeOrStop "un." "$INSTDIR\versions"
 
   ; 5. Shortcuts, the Run value, the AUMID key, the uninstall key, the uninstaller and the folder (only if empty:
   ;    nothing else in it is ours to delete).

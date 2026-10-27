@@ -195,7 +195,7 @@ def test_the_developer_entry_says_so_when_already_running_and_exits_0(
 ) -> None:
     """SYS-03: `python -m shelfsync` while ShelfSync runs: no second server, exit 0."""
     taken = {"ShelfSync"}
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(taken))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock(taken))
     monkeypatch.setattr(server, "install_output_guards", lambda: None)
     with caplog.at_level("WARNING", logger="shelfsync.server"):
         assert server.main() == server.EXIT_OK
@@ -208,7 +208,7 @@ def test_a_failing_default_lock_is_a_plain_exit_code_not_a_traceback(
 ) -> None:
     """SYS-03 (review 4): `default_instance_lock()` is inside the start-up try."""
 
-    def refuse() -> FakeInstanceLock:
+    def refuse(paths: object = None) -> FakeInstanceLock:
         raise OSError("CreateMutexW failed (Windows error 87)")
 
     monkeypatch.setattr(server, "default_instance_lock", refuse)

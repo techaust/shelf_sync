@@ -103,13 +103,21 @@ jobs:
 
       # Install silently, check the layout, shortcuts and keys, plant a junction inside versions\<v> that points outside
       # the program folder, uninstall silently (waiting for it, the _?= rule) and check the folder is gone and the file
-      # behind the junction survived (04-A V39, V40). Then install again and uninstall with /REMOVEDATA. This runner is
-      # throwaway: the run may delete ShelfSync's own Credential Manager entries.
-      - name: Install, check, plant the sentinel, uninstall
+      # behind the junction survived (04-A V39, V40). Also: "ShelfSync is running" (exit 5), links in the way of every
+      # delete (a version folder that is a junction, `versions` itself, a junction that can't be removed), an upgrade and
+      # its prune, a repair, and an older Setup refused (exit 6). The two extra Setups are the same folder compiled as
+      # 0.0.1 and 99.0.0 with a fast compressor (/DFAST); they are test files and are never released. Then install again
+      # and uninstall with /REMOVEDATA. This runner is throwaway: the run may delete ShelfSync's own Credential Manager
+      # entries.
+      - name: Install, check, plant the sentinels, upgrade, uninstall
         shell: pwsh
         run: |
           $v = "${{ steps.version.outputs.version }}"
-          ./packaging/test-installer.ps1 -Setup "$PWD\build\ShelfSync-Setup-$v.exe" -Version $v -Root (Join-Path $env:RUNNER_TEMP "installtest") -RemoveData
+          foreach ($extra in "0.0.1", "99.0.0") {
+            & $env:NSIS_MAKENSIS /DFAST "/DVERSION=$extra" "/DBUILD_DIR=$PWD\build\ShelfSync-$v" "/DOUTFILE=$env:RUNNER_TEMP\Setup-$extra.exe" packaging\ShelfSync.nsi
+            if ($LASTEXITCODE -ne 0) { throw "makensis failed for the $extra test Setup" }
+          }
+          ./packaging/test-installer.ps1 -Setup "$PWD\build\ShelfSync-Setup-$v.exe" -Version $v -Root (Join-Path $env:RUNNER_TEMP "installtest") -OlderSetup "$env:RUNNER_TEMP\Setup-0.0.1.exe" -NewerSetup "$env:RUNNER_TEMP\Setup-99.0.0.exe" -NewerVersion 99.0.0 -RemoveData
           if ($LASTEXITCODE -ne 0) { throw "the installer checks failed" }
 
       # The manifest step is a placeholder: m1b.2's update/manifest.py writes manifest.json from build/files.txt and the

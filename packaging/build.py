@@ -136,6 +136,17 @@ def parse_files_txt(text: str) -> list[FileEntry]:
     return entries
 
 
+_RDN = re.compile(r'(?:^|,\s*)([A-Za-z]+)=("(?:[^"]|"")*"|[^,]*)')
+
+
+def subject_fields(subject: str) -> dict[str, str]:
+    """A certificate subject (`CN=..., O=..., L=...`) as {attribute: exact value}; a quoted value loses its quotes."""
+    fields: dict[str, str] = {}
+    for key, value in _RDN.findall(subject):
+        fields.setdefault(key.upper(), value[1:-1].replace('""', '"') if value.startswith('"') else value.strip())
+    return fields
+
+
 def check_signatures(records: Sequence[dict[str, str | None]], expected_files: Iterable[str]) -> None:
     """`records` is what PowerShell's Get-AuthenticodeSignature reported: Path, Status and the signer's Subject. Every
     file in `expected_files` must be Valid and signed by a trusted publisher."""
@@ -147,7 +158,8 @@ def check_signatures(records: Sequence[dict[str, str | None]], expected_files: I
         if found.get("Status") != "Valid":
             raise BuildError(f"{relative}: signature is {found.get('Status')}, not Valid")
         subject = found.get("Subject") or ""
-        if not any(f"O={signer}" in subject or f"CN={signer}" in subject for signer in TRUSTED_SIGNERS):
+        fields = subject_fields(subject)
+        if not any(fields.get(key) in TRUSTED_SIGNERS for key in ("CN", "O")):
             raise BuildError(f"{relative}: signed by an unexpected publisher ({subject})")
 
 

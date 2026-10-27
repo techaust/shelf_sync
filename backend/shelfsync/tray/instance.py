@@ -13,11 +13,17 @@ leaves no stale lock. The installer and uninstaller also try to open the file to
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import Protocol
 
-from shelfsync.paths import resolve_data_paths
+from shelfsync.paths import DataPaths, resolve_data_paths
 from shelfsync.platform.sockets import current_user_sid
+
+# A sharing violation on instance.lock may be a copy that is just closing (a quick restart): look again for about a
+# second before deciding another copy runs. A folder where the file should be is refused at once.
+LOCK_RETRY_SECONDS = 1.0
+_RETRY_STEP_SECONDS = 0.1
 
 
 def mutex_name(sid: str) -> str:
@@ -84,29 +90,6 @@ class CombinedInstanceLock:
         self._held = False
 
 
-class FakeFileLock:
-    """Stand-in for the lock file: locks sharing one `taken` set behave like one data folder."""
-
-    def __init__(self, taken: set[str] | None = None, path: str = "instance.lock") -> None:
-        self._taken = taken if taken is not None else set()
-        self._path = path
-        self._held = False
-
-    def acquire(self) -> bool:
-        if self._held:
-            return True
-        if self._path in self._taken:
-            return False
-        self._taken.add(self._path)
-        self._held = True
-        return True
-
-    def release(self) -> None:
-        if self._held:
-            self._taken.discard(self._path)
-            self._held = False
-
-
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -171,30 +154,37 @@ if sys.platform == "win32":
         """`instance.lock` opened with share mode 0: no other process (or session) can open it while this one holds
         the handle. The file is empty; its only use is being open."""
 
-        def __init__(self, path: Path) -> None:
+        def __init__(self, path: Path, retry_seconds: float = LOCK_RETRY_SECONDS) -> None:
             self._path = path
+            self._retry_seconds = retry_seconds
             self._handle: int | None = None
 
         def acquire(self) -> bool:
             if self._handle is not None:
                 return True
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            handle = _kernel32.CreateFileW(
-                str(self._path),
-                _GENERIC_READ_WRITE,
-                0,
-                None,
-                _OPEN_ALWAYS,
-                _FILE_ATTRIBUTE_NORMAL | _FILE_FLAG_OPEN_REPARSE_POINT,
-                None,
-            )
-            if handle is None or handle == _INVALID_HANDLE:
+            deadline = time.monotonic() + self._retry_seconds
+            while True:
+                handle = _kernel32.CreateFileW(
+                    str(self._path),
+                    _GENERIC_READ_WRITE,
+                    0,
+                    None,
+                    _OPEN_ALWAYS,
+                    _FILE_ATTRIBUTE_NORMAL | _FILE_FLAG_OPEN_REPARSE_POINT,
+                    None,
+                )
+                if handle is not None and handle != _INVALID_HANDLE:
+                    self._handle = handle
+                    return True
                 error = ctypes.get_last_error()
-                if error in (_ERROR_SHARING_VIOLATION, _ERROR_LOCK_VIOLATION, _ERROR_ACCESS_DENIED):
+                if error == _ERROR_ACCESS_DENIED:  # a folder where the file should be: fail closed, no retry
                     return False
-                raise OSError(f"The lock file couldn't be opened (Windows error {error})")
-            self._handle = handle
-            return True
+                if error not in (_ERROR_SHARING_VIOLATION, _ERROR_LOCK_VIOLATION):
+                    raise OSError(f"The lock file couldn't be opened (Windows error {error})")
+                if time.monotonic() >= deadline:
+                    return False  # held by another copy
+                time.sleep(_RETRY_STEP_SECONDS)  # the other copy may be closing right now (a quick restart)
 
         def release(self) -> None:
             if self._handle is not None:
@@ -206,7 +196,7 @@ else:
     class WindowsFileLock:
         """The lock file needs Windows' share modes; elsewhere this refuses to be used."""
 
-        def __init__(self, path: Path) -> None:
+        def __init__(self, path: Path, retry_seconds: float = 0.0) -> None:
             raise OSError("The data-folder lock is available on Windows only")
 
         def acquire(self) -> bool:
@@ -228,6 +218,8 @@ else:
             raise OSError("not available")
 
 
-def default_instance_lock() -> InstanceLock:
-    """The mutex and the data-folder lock file together (SYS-03, M1b.1)."""
-    return CombinedInstanceLock(WindowsInstanceLock(), WindowsFileLock(resolve_data_paths().instance_lock))
+def default_instance_lock(paths: DataPaths | None = None) -> InstanceLock:
+    """The mutex and the data-folder lock file together (SYS-03, M1b.1). `paths` is the data folder the caller already
+    resolved; with no argument it is resolved here."""
+    data = paths if paths is not None else resolve_data_paths()
+    return CombinedInstanceLock(WindowsInstanceLock(), WindowsFileLock(data.instance_lock))

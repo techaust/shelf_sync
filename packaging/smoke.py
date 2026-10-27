@@ -84,6 +84,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     build = load_build()
+    folder_python = arguments.folder.resolve() / "python.exe"
+    # python314._pth puts the interpreter in isolated mode: neither PYTHONPATH nor the working folder is on sys.path,
+    # so nothing loads from wherever a shortcut or the Run key happens to start it.
+    probe = subprocess.run(  # nosec B603
+        [str(folder_python), "-c", "import sys; print(sys.flags.isolated, sys.flags.safe_path)"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    if probe.stdout.split() != ["1", "True"]:
+        sys.stderr.write(f"The built Python isn't isolated (isolated, safe_path = {probe.stdout.strip()})\n")
+        return 1
     folder: Path = arguments.folder.resolve()
     before = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
 

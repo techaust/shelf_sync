@@ -155,6 +155,8 @@ def test_valid_signatures_from_a_trusted_publisher_pass() -> None:
         record(r"D:\b\python.exe", status="NotSigned", subject=None),
         record(r"D:\b\python.exe", status="HashMismatch"),
         record(r"D:\b\python.exe", subject="CN=Somebody Else"),
+        record(r"D:\b\python.exe", subject="CN=Evil, O=Not Python Software Foundation Inc"),
+        record(r"D:\b\python.exe", subject="CN=Python Software Foundation Fake, O=Evil"),
     ],
 )
 def test_an_unsigned_altered_or_foreign_file_fails_the_check(bad: dict[str, str | None]) -> None:
@@ -219,3 +221,9 @@ def test_a_non_build_folder_that_has_files_is_never_cleared(tmp_path: Path, monk
     with pytest.raises(build.BuildError, match="was not cleared"):
         build.build(precious, None, None)
     assert (precious / "keep.txt").exists()
+
+
+def test_a_subject_is_read_attribute_by_attribute_not_as_text() -> None:
+    """SYS-01: exact values; a quoted value with a comma is one value."""
+    fields = build.subject_fields('CN="Python Software Foundation, Inc.", O=Python Software Foundation, L=Beaverton')
+    assert fields == {"CN": "Python Software Foundation, Inc.", "O": "Python Software Foundation", "L": "Beaverton"}

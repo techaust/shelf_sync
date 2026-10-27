@@ -14,7 +14,8 @@ shutdown-stall.txt" (the old process still holds the file). Only `shelfsync.laun
 that builds a real guard (from the data folder `run_application` resolved); a guard that can't be armed is logged and
 the shut-down goes on without it.
 
-A second launch (the mutex is taken) opens a new signed-in tab in the running copy and exits; see `second_launch`.
+A second launch (the mutex is taken) opens a new signed-in tab in the running copy and exits (see `second_launch`);
+started with `--background` it exits quietly instead.
 """
 
 import argparse
@@ -78,7 +79,9 @@ class TrayServe:
 
     def add_quit_guard(self, guard: Callable[[], bool]) -> None:
         """Hook for M5: `guard()` returns False while an upload is running, and Quit then waits. None exist yet.
-        A guard runs on the tray's loop thread and must never wait on it."""
+        A guard may run on the tray's thread (the menu's Quit) or on a server thread (the updater calls
+        `app.state.request_quit` from a request handler), so it must be thread-safe and must never block on the
+        server's event loop or on the tray's."""
         self._before_quit.append(guard)
 
     # --- the menu's actions -------------------------------------------------------------------------------------
@@ -213,7 +216,8 @@ def main(
 ) -> int:
     """`python -m shelfsync.launcher [--background]`. `argv` defaults to `sys.argv[1:]`. `make_exit_guard(paths)`
     builds the safety exit from the data folder that `run_application` resolved; it is None in tests: a real armed
-    guard would end pytest. With `--background` the first copy opens no tab; a second launch always opens one."""
+    guard would end pytest. With `--background` the first copy opens no tab and a second launch does nothing;
+    without it a second launch opens a signed-in tab."""
     arguments = parse_arguments(argv)
     logs.install_output_guards()
     toasts = notifier if notifier is not None else default_notifier()
@@ -225,6 +229,10 @@ def main(
         return TrayServe(paths, toasts, opener, open_first_tab=not arguments.background, exit_guard=guard)
 
     def second(paths: DataPaths) -> int:
+        if arguments.background:
+            # Signing in to Windows while ShelfSync already runs (a second logon session, say): nothing to show, so
+            # no tab and no sound. Shortcuts have no flag and still open a tab.
+            return 0
         store = secrets if secrets is not None else default_secret_store()
         # A handler that never rotates or prunes: this short-lived process must not rename the running copy's log
         # file or delete its older files (it doesn't know the retention setting either).

@@ -334,7 +334,7 @@ def test_main_first_copy_wires_the_log_failure_notice_and_runs(
     from shelfsync import logs
     from shelfsync.tray.instance import FakeInstanceLock
 
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(set()))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock(set()))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     served: list[bool] = []
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: served.append(True))
@@ -357,7 +357,7 @@ def test_main_second_launch_goes_to_second_launch_and_not_to_the_server(
     from shelfsync import logs
     from shelfsync.tray.instance import FakeInstanceLock
 
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock({"ShelfSync"}))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock({"ShelfSync"}))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     asked: list[DataPaths] = []
 
@@ -440,7 +440,7 @@ def test_a_log_file_that_cant_be_opened_doesnt_stop_the_second_launch(
     from shelfsync import logs
     from shelfsync.tray.instance import FakeInstanceLock
 
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock({"ShelfSync"}))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock({"ShelfSync"}))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     (data_paths.logs / logs.LOG_FILE_NAME).mkdir(parents=True)  # a folder where the log file should be
     ran: list[int] = []

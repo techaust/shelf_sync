@@ -17,7 +17,6 @@ from shelfsync.platform.shell import FakeShell
 from shelfsync.tray import launcher
 from shelfsync.tray.instance import (
     CombinedInstanceLock,
-    FakeFileLock,
     FakeInstanceLock,
     WindowsFileLock,
     default_instance_lock,
@@ -30,7 +29,7 @@ from tests.test_launcher import Running, wait_for
 
 def _first_tab_flag(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> bool:
     seen: list[bool] = []
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(set()))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock(set()))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: seen.append(self._open_first_tab))
     code = launcher.main(argv, notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore())
@@ -112,7 +111,7 @@ def test_tray_serve_request_quit_returns_true_with_no_guard(data_paths: DataPath
 
 
 def _combined(mutex_taken: set[str], file_taken: set[str]) -> CombinedInstanceLock:
-    return CombinedInstanceLock(FakeInstanceLock(mutex_taken), FakeFileLock(file_taken))
+    return CombinedInstanceLock(FakeInstanceLock(mutex_taken), FakeInstanceLock(file_taken, "instance.lock"))
 
 
 def test_both_free_the_lock_is_won_and_both_are_held_until_release() -> None:

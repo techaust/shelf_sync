@@ -148,7 +148,7 @@ def test_main_passes_the_data_folder_run_application_resolved_to_the_guard_facto
     from shelfsync.platform.shell import FakeShell
     from shelfsync.tray.instance import FakeInstanceLock
 
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(set()))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock(set()))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     built: list[DataPaths] = []
     guard = FakeGuard()
@@ -180,7 +180,7 @@ def test_in_process_main_never_arms_a_real_guard(data_paths: DataPaths, monkeypa
         pytest.fail("a real faulthandler timer was scheduled")
 
     monkeypatch.setattr(faulthandler, "dump_traceback_later", forbidden)
-    monkeypatch.setattr(server, "default_instance_lock", lambda: FakeInstanceLock(set()))
+    monkeypatch.setattr(server, "default_instance_lock", lambda paths=None: FakeInstanceLock(set()))
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     guards: list[Any] = []
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: guards.append(self._exit_guard))

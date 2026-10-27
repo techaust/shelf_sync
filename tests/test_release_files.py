@@ -87,7 +87,7 @@ def test_the_installer_is_per_user_and_writes_the_contract_keys() -> None:
 def test_no_plugin_beyond_the_builtin_ones_is_used() -> None:
     """Supply chain: MUI2, nsDialogs, nsExec, LogicLib, FileFunc, WordFunc only."""
     plugins = set(re.findall(r"^\s*(\w+)::", NSI, re.MULTILINE))
-    assert plugins <= {"nsExec", "nsDialogs"}
+    assert plugins <= {"nsExec", "nsDialogs", "System"}
     assert "!addplugindir" not in NSI.lower()
 
 
@@ -97,15 +97,17 @@ def test_uninstall_order_is_current_first_then_links_then_versions() -> None:
     order = [
         section.index("shelfsync.uninstall --remove-data"),
         section.index('RMDir "$INSTDIR\\current"'),
-        section.index('!insertmacro RemoveTreeSafely "un." "$INSTDIR\\versions"'),
+        section.index('!insertmacro DeleteTreeOrStop "un." "$INSTDIR\\versions"'),
         section.index('Delete "$SMPROGRAMS'),
         section.index("DeleteRegValue HKCU"),
         section.index("DeleteRegKey HKCU"),
         section.index('RMDir "$INSTDIR"'),
     ]
     assert order == sorted(order)
-    assert "RMDir /r" not in section  # only through the macro that unlinks first
-    assert "UnlinkAll" in NSI and "dir /AL" in NSI
+    code = [line for line in NSI.splitlines() if not line.lstrip().startswith(";")]
+    assert not any("RMDir /r" in line for line in code)  # NSIS's own recursive delete follows junctions (V40)
+    assert "GetFileAttributesW" in NSI and "& 0x400" in NSI  # DeleteTree tests every entry, the top one included
+    assert "dir /AL" not in NSI  # no listing of links that misses the top folder
 
 
 def test_data_is_kept_unless_the_box_is_ticked() -> None:
@@ -125,3 +127,22 @@ def test_the_smoke_test_reports_what_changed() -> None:
     after = {"a": (1, "x"), "b": (2, "CHANGED"), "d": (4, "w")}
     assert smoke.changes(before, after) == ["added: d", "removed: c", "changed: b"]
     assert smoke.changes(before, dict(before)) == []
+
+
+def test_every_external_command_is_started_by_full_path_and_the_stale_guards_exist() -> None:
+    r"""Review round 1: `$SYSDIR\cmd.exe`, `current.next` first, the running check again inside both sections, the
+    version-folder guard, a separate notice for a folder that isn't ShelfSync's, a throwaway service for suffixed
+    builds."""
+    assert "cmd /c" not in NSI.replace(r'"$SYSDIR\cmd.exe" /c', "")
+    assert NSI.index(r'mklink /J "$INSTDIR\current.next"') < NSI.index(
+        r'Rename "$INSTDIR\current.next" "$INSTDIR\current"'
+    )
+    assert NSI.count("Call IsRunning") == 2 and NSI.count("Call un.IsRunning") == 2
+    assert "${STR_OLDER}" in NSI.split("FindFirst $2 $3")[1]
+    assert "!define STR_DATA_NOT_OURS" in NSI and "${If} $3 == 3" in NSI
+    assert "--service ShelfSync${SUFFIX}" in NSI
+
+
+def test_the_workflow_builds_the_extra_setups_for_the_upgrade_and_older_checks() -> None:
+    """Review round 1 (LOW 11): exit 6, the prune and the running refusal run in CI."""
+    assert "/DFAST" in RELEASE and "-OlderSetup" in RELEASE and "-NewerSetup" in RELEASE

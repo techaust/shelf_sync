@@ -48,7 +48,6 @@ def toast_text_fields(message: str) -> list[str | None]:
 
 
 _toaster: Any = None
-_toaster_aumid: str | None = None
 _toaster_lock = threading.Lock()
 
 
@@ -62,14 +61,13 @@ def toast_aumid(installed: bool, registered: bool) -> str | None:
 def show_toast(fields: list[str | None], *, notifier_aumid: str | None = None) -> None:
     """Show one toast through windows-toasts (Windows only). An installed copy passes `TecHaust.ShelfSync` as the
     `notifierAUMID` (see `platform/aumid.py`); `notifier_aumid` is for the Windows tests, which use throwaway ids."""
-    global _toaster, _toaster_aumid
+    global _toaster
     from windows_toasts import InteractableWindowsToaster, Toast
 
     with _toaster_lock:
         if _toaster is None:
             chosen = notifier_aumid or toast_aumid(is_installed_copy(), aumid.is_registered())
             _toaster = InteractableWindowsToaster(APP_NAME, notifierAUMID=chosen)
-            _toaster_aumid = chosen
         toaster = _toaster
     toaster.show_toast(Toast(fields))
 
