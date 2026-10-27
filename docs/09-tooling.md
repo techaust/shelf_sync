@@ -86,6 +86,6 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 - **Python, dev:** uv (hash-locked dependencies), ruff, mypy, pytest, pytest-cov, pytest-benchmark, hypothesis, respx, moto[server], bandit, pip-audit.
 - **UI, run time:** react, react-dom, react-router, @tanstack/react-query, @tanstack/react-virtual, @radix-ui/* (incl. Toast), lucide-react.
 - **UI, dev:** vite, typescript, tailwindcss, @biomejs/biome, vitest, @playwright/test, @axe-core/playwright, openapi-typescript.
-- **Build:** NSIS; the Python 3.12 embeddable package (SHA-256 pinned).
+- **Build:** NSIS; the Python 3.14 embeddable package (SHA-256 pinned).
 - **Brand (dev-only, P3.3):** chosen by the designer with the owner's yes; TecHaust's pipeline (sharp for rasters, a font-outline library) is the reference.
 - Exact pins are recorded in [04 §2](04-architecture.md) at M1a.
