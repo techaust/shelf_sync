@@ -79,13 +79,16 @@ def _raise_conflict(error: sqlite3.IntegrityError) -> None:
 
 def list_live(connection: sqlite3.Connection) -> list[StoreRow]:
     """The stores that aren't removed, oldest first."""
-    rows = connection.execute(f"SELECT {_COLUMNS} FROM store WHERE removed_at IS NULL ORDER BY id").fetchall()
+    rows = connection.execute(
+        f"SELECT {_COLUMNS} FROM store WHERE removed_at IS NULL ORDER BY id"  # nosec B608  # a fixed column list
+    ).fetchall()
     return [_row(row) for row in rows]
 
 
 def get_store(connection: sqlite3.Connection, store_id: int) -> StoreRow | None:
     row = connection.execute(
-        f"SELECT {_COLUMNS} FROM store WHERE id = ? AND removed_at IS NULL", (store_id,)
+        f"SELECT {_COLUMNS} FROM store WHERE id = ? AND removed_at IS NULL",  # nosec B608  # a fixed column list
+        (store_id,),
     ).fetchone()
     return None if row is None else _row(row)
 
@@ -117,7 +120,8 @@ def insert_store(
     except sqlite3.IntegrityError as error:
         _raise_conflict(error)
         raise  # not reached: _raise_conflict always raises
-    assert cursor.lastrowid is not None  # an INSERT always has one
+    if cursor.lastrowid is None:  # an INSERT always has one
+        raise sqlite3.DatabaseError("the insert gave no row id")
     return cursor.lastrowid
 
 
@@ -133,7 +137,9 @@ def update_store(connection: sqlite3.Connection, store_id: int, changes: Mapping
     values = list(changes.values())
     try:
         cursor = connection.execute(
-            f"UPDATE store SET {', '.join(assignments)} WHERE id = ? AND removed_at IS NULL", (*values, store_id)
+            # the column names come from EDITABLE_COLUMNS (checked above) and the values are bound
+            f"UPDATE store SET {', '.join(assignments)} WHERE id = ? AND removed_at IS NULL",  # nosec B608
+            (*values, store_id),
         )
     except sqlite3.IntegrityError as error:
         _raise_conflict(error)

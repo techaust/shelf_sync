@@ -517,7 +517,14 @@ def test_a_good_test_answers_with_the_numbers_and_saves_them_on_the_store() -> N
     body = response.json()
     assert response.status_code == 200
     assert body["ok"] is True and body["state"] == "connected" and body["reason"] is None
-    assert (body["http_status"], body["latency_ms"], body["wc_version"], body["wp_version"], body["downloadable_count"]) == (
+    numbers = (
+        body["http_status"],
+        body["latency_ms"],
+        body["wc_version"],
+        body["wp_version"],
+        body["downloadable_count"],
+    )
+    assert numbers == (
         200, 182, "9.4.1", "6.7.1", 42,
     )  # fmt: skip
     assert body["tested_at"].endswith("Z") and body["warning"] is None and body["detail"] is None

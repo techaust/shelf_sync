@@ -26,7 +26,8 @@ PRODUCTS = "/wp-json/wc/v3/products"
 
 
 def system_status(version: str = "9.4.1", wp: str = "6.7.1") -> httpx.Response:
-    """What `system_status?_fields=environment` answers (WooCommerce REST docs: `environment.version`, `.wp_version`)."""
+    """What `system_status?_fields=environment` answers (WooCommerce REST docs: `environment.version` and
+    `environment.wp_version`)."""
     return httpx.Response(200, json={"environment": {"version": version, "wp_version": wp}})
 
 

@@ -238,7 +238,8 @@ class StoreService:
                     self._credentials.discard(store_id)
                 raise
             row = get_store(connection, store_id)
-        assert row is not None  # just committed
+        if row is None:  # can't happen: the row was just committed
+            raise StoreError(404, "not_found")
         _log.info("Store %s was added", row.code)
         return self._view(row)
 
@@ -275,7 +276,8 @@ class StoreService:
                 self._restore(store_id, saved_old)
                 raise
             updated = get_store(connection, store_id)
-        assert updated is not None
+        if updated is None:  # can't happen: the row was just updated
+            raise StoreError(404, "not_found")
         return self._view(updated)
 
     def set_keys(self, store_id: int, consumer_key: str, consumer_secret: str) -> None:

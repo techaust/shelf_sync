@@ -4,6 +4,7 @@ junction."""
 
 import argparse
 import secrets
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from shelfsync import uninstall
+from shelfsync.db.migrate import migrate
 from shelfsync.paths import DataPaths
 from shelfsync.platform.secrets import OWNED_SECRET_NAMES, MemorySecretStore, SecretStoreError
 from shelfsync.secure.token import INSTALL_TOKEN_NAME
@@ -21,7 +23,9 @@ def make_data(tmp_path: Path) -> DataPaths:
     root = tmp_path / "ShelfSync"
     for folder in ("logs", "backups", "tmp"):
         (root / folder).mkdir(parents=True)
-    (root / "shelfsync.db").write_text("db", encoding="utf-8")
+    database = sqlite3.connect(root / "shelfsync.db")  # a real, empty database: the stores table is read from it
+    migrate(database)
+    database.close()
     (root / "logs" / "shelfsync.log").write_text("log", encoding="utf-8")
     return DataPaths(root)
 
@@ -176,7 +180,7 @@ def test_main_needs_the_flag_and_uses_the_resolved_data_folder(data_paths: DataP
         uninstall.main([], store=MemorySecretStore(), lock=FakeInstanceLock(set()))
     assert stop.value.code == 2
     data_paths.root.mkdir(parents=True)
-    (data_paths.root / "shelfsync.db").write_text("db", encoding="utf-8")
+    sqlite3.connect(data_paths.root / "shelfsync.db").close()  # an empty database: no stores table yet
     assert uninstall.main(["--remove-data"], store=MemorySecretStore(), lock=FakeInstanceLock(set())) == 0
     assert not data_paths.root.exists()
 

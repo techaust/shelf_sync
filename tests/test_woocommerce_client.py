@@ -16,6 +16,7 @@ from shelfsync.apply.woocommerce import (
     GetOnlyTransport,
     NonGetRefused,
     ReadOutcome,
+    ReadRefused,
     WooClient,
     health_for,
     run_read_test,
@@ -125,7 +126,7 @@ REASONS: list[tuple[str, dict[str, object], str, str, int | None]] = [
     ("418", {"status": httpx.Response(418)}, "bad_response", "unreachable", 418),
     ("no environment", {"status": httpx.Response(200, json={"theme": {}})}, "bad_response", "unreachable", 200),
     ("a list", {"status": httpx.Response(200, json=[1])}, "bad_response", "unreachable", 200),
-    ("no version", {"status": httpx.Response(200, json={"environment": {"wp_version": "6.7"}})}, "bad_response", "unreachable", 200),
+    ("no version", {"status": httpx.Response(200, json={"environment": {"wp_version": "6.7"}})}, "bad_response", "unreachable", 200),  # noqa: E501
     ("odd version", {"status": system_status("<b>9</b>")}, "bad_response", "unreachable", 200),
     ("401", {"status": wp_error(401, "woocommerce_rest_cannot_view")}, "keys_refused", "refused", 401),
     ("forbidden", {"status": wp_error(403, "woocommerce_rest_cannot_view")}, "forbidden", "refused", 403),
@@ -242,10 +243,9 @@ def test_a_slow_body_stops_at_the_deadline() -> None:
         return system_status()
 
     woo.status = slow
-    with WooClient(STORE_URL, KEY, SECRET, transport=woo.transport, monotonic=woo.time.monotonic) as client:
-        # the response arrives after the deadline, before its body is read
-        with pytest.raises(Exception, match="timeout"):
-            client.get(SYSTEM_STATUS, {}, deadline=woo.time.now + 60.0)
+    client = WooClient(STORE_URL, KEY, SECRET, transport=woo.transport, monotonic=woo.time.monotonic)
+    with client, pytest.raises(ReadRefused, match="timeout"):  # the answer arrives after the deadline
+        client.get(SYSTEM_STATUS, {}, deadline=woo.time.now + 60.0)
 
 
 # ---- GET only and HTTPS only ----------------------------------------------------------------------------------------
@@ -269,7 +269,7 @@ def test_the_transport_refuses_any_method_but_get(method: str) -> None:
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
 def test_a_client_that_is_asked_to_write_cannot(method: str) -> None:
-    """Contract: the client's own httpx client, whatever calls it, cannot send a write; and the class offers no write."""
+    """Contract: the client's own httpx client, whatever calls it, cannot send a write; and the class offers none."""
     woo = FakeWoo()
     client = WooClient(STORE_URL, KEY, SECRET, transport=woo.transport)
     with pytest.raises(NonGetRefused):
