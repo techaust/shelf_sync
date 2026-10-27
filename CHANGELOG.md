@@ -2,6 +2,7 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-27 [#13](https://github.com/techaust/shelf_sync/pull/13) chore(python): M1b.0 move to Python 3.14; M1a closed; M1b decisions [NFR-7, SYS-06]
 - 2026-10-27 [#12](https://github.com/techaust/shelf_sync/pull/12) fix(tray): M1a.5 Quit always exits [UI-TRAY, SYS-02, SYS-03]
 - 2026-10-27 [#11](https://github.com/techaust/shelf_sync/pull/11) docs: end of day 2026-10-27 (CLAUDE.md, roadmap, 04-A, handovers, status)
 - 2026-10-27 [#10](https://github.com/techaust/shelf_sync/pull/10) docs: end of day 2026-10-27

@@ -1,6 +1,6 @@
-Status: open
+Status: merged (PR #13)
 Tier: B ([12 §2](../12-models-and-usage.md): the runtime move touches every backend part, but no Tier A logic changes)
-Usage: (lead fills from `node tools/model-audit.mjs`)
+Usage: `builder claude-sonnet-5-5/medium` (no 09 §3 skill fits; Context7 for the 3.14 docs), two rounds; `reviewer claude-opus-5-5/high` [`code-review`], with one read-only `general-purpose` helper started by `code-review` (the 12 §3 exception). From `node tools/model-audit.mjs 2026-10-27`
 
 # M1b.0: Move to Python 3.14
 
@@ -98,4 +98,4 @@ _(lead, 2026-10-27)_
 - CI: not run yet (the first push shows whether setup-python's 3.14.8 works).
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Ready to push with the owner's yes, as one PR with today's record (`docs/m1a-closed`). After the merge: m1b.1 and m1b.2 briefs (m1b.2's final brief at Opus high).
+_(lead, 2026-10-27)_ Merged as PR #13 (`8fd9c62`) after green CI: both jobs set up CPython 3.14.8 through setup-python, and 704 tests passed on Linux. Nothing left in this task. The leftover worktree folder `.claude/worktrees/agent-a3ab7c793b83446b9` couldn't be deleted (a file in use); git no longer tracks it.
