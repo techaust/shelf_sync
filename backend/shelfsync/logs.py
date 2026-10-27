@@ -2,22 +2,26 @@
 
 import json
 import logging
+import os
+import re
 import sys
 import threading
 import time
 import warnings
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Final
 
 from shelfsync.clock import to_iso
+from shelfsync.paths import remove_entry
 from shelfsync.secure.redact import redact as _redact
 
 LOG_FILE_NAME = "shelfsync.log"
 CTRL_C_LINE = "Stopped with Ctrl+C."
+MAX_LOG_RETENTION_DAYS = 365  # the settings limit; also the retention in force until the settings are read
 
 
 def redact(text: str) -> str:
@@ -110,7 +114,7 @@ class RedactingFileHandler(TimedRotatingFileHandler):
     """The log file handler. A failed write (bad arguments) is reported as one fixed line instead of the stdlib's
     dump of the message and arguments. A rollover that Windows refuses (the old file is open in another program)
     keeps logging into the current file and tries again at the next rollover time, instead of losing every later
-    line."""
+    line. After each rollover the rotated files older than the retention are pruned (`prune_logs`)."""
 
     def handleError(self, record: logging.LogRecord) -> None:
         _report_write_failure()
@@ -123,13 +127,74 @@ class RedactingFileHandler(TimedRotatingFileHandler):
                 self.stream = self._open()
             self.rolloverAt = self.computeRollover(int(time.time()))
             _report_write_failure()
+            return
+        prune_logs(Path(self.baseFilename).parent, self.backupCount)
+
+
+# `TimedRotatingFileHandler` names a rotated file `<base>.<YYYY-MM-DD>` for "midnight" rotation: the UTC date of the
+# day the file holds. Only a name of exactly this shape is ever pruned.
+_ROTATED_NAME = re.compile(rf"^{re.escape(LOG_FILE_NAME)}\.(\d{{4}})-(\d{{2}})-(\d{{2}})$")
+_prune_log = logging.getLogger("shelfsync.logs.prune")
+
+
+def prune_logs(logs_dir: Path, retention_days: int, today: date | None = None) -> list[str]:
+    """Delete the rotated log files (`shelfsync.log.<date>`) whose day is more than `retention_days` before today (UTC),
+    whatever their count (the handler's `backupCount` counts files, not days; LOG-01). Returns the names removed.
+
+    Never the current file, never a name the handler doesn't write, never a folder; a link with such a name is
+    removed itself, not followed (`paths.remove_entry`). An error is logged and the file skipped. Refuses fewer than 1
+    day (ValueError): a 0 would delete every rotated file."""
+    if retention_days < 1:
+        raise ValueError("The log retention must be at least 1 day.")
+    cutoff = (today if today is not None else datetime.now(UTC).date()) - timedelta(days=retention_days)
+    removed: list[str] = []
+    try:
+        entries = list(logs_dir.iterdir())
+    except OSError as error:
+        _prune_log.warning("Couldn't list the logs folder (%s)", type(error).__name__)
+        return removed
+    for entry in entries:
+        match = _ROTATED_NAME.match(entry.name)
+        if match is None:
+            continue
+        try:
+            day = date(int(match[1]), int(match[2]), int(match[3]))
+        except ValueError:  # 2026-13-45: not a date, so not one of ours
+            continue
+        if day >= cutoff:
+            continue
+        try:
+            if entry.is_dir() and not (entry.is_symlink() or os.path.isjunction(entry)):
+                continue  # the handler writes files only
+            remove_entry(entry)
+        except OSError as error:
+            _prune_log.warning("Couldn't remove an old log file (%s)", type(error).__name__)
+            continue
+        removed.append(entry.name)
+    return removed
+
+
+def set_log_retention(handler: TimedRotatingFileHandler, retention_days: int) -> list[str]:
+    """Keep `retention_days` of logs from now on and prune at once, under the handler's lock (a rollover can't run
+    half-way through). Returns the names removed. Refuses fewer than 1 day (ValueError)."""
+    if retention_days < 1:
+        raise ValueError("The log retention must be at least 1 day.")
+    handler.acquire()
+    try:
+        handler.backupCount = retention_days
+        return prune_logs(Path(handler.baseFilename).parent, retention_days)
+    finally:
+        handler.release()
 
 
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:
     """Send every log record (ShelfSync's and uvicorn's) to logs\\shelfsync.log; return the handler.
 
-    Rotation at UTC midnight keeps `retention_days` rotated files. uvicorn's loggers have no handlers of their own
-    here (the server is started with log_config=None) and propagate to the root logger, where this handler sits.
+    Rotation at UTC midnight keeps `retention_days` rotated files (and `prune_logs` removes older ones by date). It
+    doesn't prune here: callers pass `MAX_LOG_RETENTION_DAYS` until the settings are read, then `set_log_retention`
+    lowers it (a lower retention at start-up must never delete files the owner's setting keeps).
+    uvicorn's loggers have no handlers of their own here (the server is started with log_config=None) and
+    propagate to the root logger, where this handler sits.
     """
     handler = RedactingFileHandler(
         logs_dir / LOG_FILE_NAME, when="midnight", utc=True, backupCount=retention_days, encoding="utf-8"

@@ -2,6 +2,10 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-27 [#17](https://github.com/techaust/shelf_sync/pull/17) fix(release): one release script for CI and the PC; NSIS brand paths relative to the script [SYS-01]
+- 2026-10-27 [#16](https://github.com/techaust/shelf_sync/pull/16) feat(update): M1b.2 signed in-app updates, backup before migrations, Updates API [SYS-06, SYS-07, SET-04]
+- 2026-10-27 [#15](https://github.com/techaust/shelf_sync/pull/15) feat(packaging): M1b.1 per-user installer, embedded-Python build, release workflow [SYS-01, SYS-04, SYS-08]
+- 2026-10-27 [#14](https://github.com/techaust/shelf_sync/pull/14) docs: end of day 2026-10-27 (status, CLAUDE.md, roadmap, 04, CHANGELOG #13)
 - 2026-10-27 [#13](https://github.com/techaust/shelf_sync/pull/13) chore(python): M1b.0 move to Python 3.14; M1a closed; M1b decisions [NFR-7, SYS-06]
 - 2026-10-27 [#12](https://github.com/techaust/shelf_sync/pull/12) fix(tray): M1a.5 Quit always exits [UI-TRAY, SYS-02, SYS-03]
 - 2026-10-27 [#11](https://github.com/techaust/shelf_sync/pull/11) docs: end of day 2026-10-27 (CLAUDE.md, roadmap, 04-A, handovers, status)

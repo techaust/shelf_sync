@@ -14,11 +14,19 @@ from fastapi import FastAPI
 
 from shelfsync import messages
 from shelfsync.api.app import create_app
+from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError
-from shelfsync.db.settings import DEFAULTS, get_all_settings
-from shelfsync.logs import configure_logging, install_output_guards, remove_logging, report_ctrl_c
+from shelfsync.db.settings import get_all_settings
+from shelfsync.logs import (
+    MAX_LOG_RETENTION_DAYS,
+    configure_logging,
+    install_output_guards,
+    remove_logging,
+    report_ctrl_c,
+    set_log_retention,
+)
 from shelfsync.paths import (
     DataPaths,
     UiMissingError,
@@ -28,6 +36,7 @@ from shelfsync.paths import (
     ui_dir,
     write_runtime_json,
 )
+from shelfsync.platform.autostart import RunKey, is_installed_copy
 from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT
@@ -156,6 +165,8 @@ def _start(
     handler: TimedRotatingFileHandler,
     secrets: SecretStore,
     on_settings: OnSettings | None = None,
+    run_key: RunKey | None = None,
+    installed: Callable[[], bool] = is_installed_copy,
 ) -> int:
     # Only the one running copy gets here (the instance lock is held), so a runtime.json that exists is a leftover
     # of a copy that didn't exit cleanly: it isn't ours and must not point a second launch at a dead port.
@@ -167,10 +178,11 @@ def _start(
     try:
         migrate_with_backup(connection, paths)  # SYS-07: a backup first when migrations are pending
         settings = get_all_settings(connection)
+        checked = stored_app_settings(connection)  # a hand-edited value falls back to its default, as GET shows
     finally:
         connection.close()
-    preferred = settings["port"]
-    handler.backupCount = int(settings["log_retention_days"])
+    preferred = checked["port"]
+    set_log_retention(handler, checked["log_retention_days"])  # LOG-01: also prunes files past the retention
     if on_settings is not None:
         on_settings(settings)
 
@@ -191,7 +203,14 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, install_token, ui_dir=ui, updates=build_update_service(paths, secrets)), sock)
+        app = create_app(
+            port,
+            install_token,
+            ui_dir=ui,
+            updates=build_update_service(paths, secrets),
+            app_settings=AppSettingsService(lambda: connect(paths.database), port, handler, run_key, installed),
+        )
+        serve(app, sock)
     finally:
         sock.close()
         paths.runtime_json.unlink(missing_ok=True)  # clean exit: nothing left to point a second launch at
@@ -205,27 +224,29 @@ def run(
     retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
     secrets: SecretStore | None = None,
     on_settings: OnSettings | None = None,
+    run_key: RunKey | None = None,
+    installed: Callable[[], bool] = is_installed_copy,
 ) -> int:
     """Start ShelfSync; return the exit code. `serve` and `secrets` are replaceable for tests (`secrets` defaults to
     Credential Manager); `on_settings` is called with the settings once they are read (the launcher applies Start
-    with Windows there).
+    with Windows there); `run_key` and `installed` reach the Settings > App service (tests pass a fake Run key).
 
-    The caller holds the single-instance lock (`run_application`). Logging is set up first (with the default
-    retention, adjusted once the settings are read), so every start-up failure is logged. A failure is also sent to
+    The caller holds the single-instance lock (`run_application`). Logging is set up first (keeping up to 365 days,
+    lowered once the settings are read), so every start-up failure is logged. A failure is also sent to
     the notifier in plain words and gets its own exit code.
     """
     handler: TimedRotatingFileHandler | None = None
     try:
         try:
             create_data_folders(paths)
-            handler = configure_logging(paths.logs, int(DEFAULTS["log_retention_days"]))
+            handler = configure_logging(paths.logs, MAX_LOG_RETENTION_DAYS)
         except OSError:
             # No log exists yet, so the notice must not point to one.
             _log.exception("start-up stopped: the data folder or the log file couldn't be used")
             notifier.notify(messages.START_FAILED_DATA_FOLDER)
             return EXIT_START_FAILED
         store = secrets if secrets is not None else default_secret_store()
-        return _start(paths, notifier, serve, retry_seconds, handler, store, on_settings)
+        return _start(paths, notifier, serve, retry_seconds, handler, store, on_settings, run_key, installed)
     except ServerStoppedError:
         _log.exception("the server stopped unexpectedly")
         notifier.notify(messages.SERVER_STOPPED)

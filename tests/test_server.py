@@ -224,3 +224,69 @@ def test_real_uvicorn_serves_health_on_the_handed_over_socket() -> None:
         uv.should_exit = True
         thread.join(timeout=10)
         sock.close()
+
+
+def test_the_settings_service_gets_the_bound_port_the_run_key_and_installed(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SET-06: restart_needed compares with the port really bound; an injected fake Run key reaches the PUT path."""
+    from shelfsync.platform.autostart import FakeRunKey
+
+    real = server.AppSettingsService
+    seen: dict[str, object] = {}
+
+    def spy(connect: object, bound_port: int, handler: object, run_key: object, installed: object) -> object:
+        seen.update(port=bound_port, run_key=run_key, installed=installed)
+        return real(connect, bound_port, handler, run_key, installed)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(server, "AppSettingsService", spy)
+    key = FakeRunKey()
+    with held([47615]):
+        code = server.run(data_paths, FakeNotifier(), RecordingServe(), 0.0, run_key=key, installed=lambda: True)
+    assert code == server.EXIT_OK
+    assert seen["port"] == 47616
+    assert seen["run_key"] is key
+    assert callable(seen["installed"])
+
+
+def test_logging_starts_with_the_longest_retention_until_the_settings_are_read(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOG-01: a lower default must never delete files the owner's setting keeps."""
+    from shelfsync import logs
+
+    seen: list[int] = []
+    real = logs.configure_logging
+
+    def spy(folder: Path, retention_days: int) -> object:
+        seen.append(retention_days)
+        return real(folder, retention_days)
+
+    monkeypatch.setattr(server, "configure_logging", spy)
+    assert start(data_paths)[0] == server.EXIT_OK
+    assert seen == [logs.MAX_LOG_RETENTION_DAYS] == [365]
+
+
+def test_a_stored_retention_that_is_not_valid_falls_back_at_start_up(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOG-01, SET-06: a hand-edited 0 neither stops the start nor deletes every rotated log; the default is used."""
+    from shelfsync import logs
+    from shelfsync.db.connection import connect
+    from shelfsync.db.migrate import migrate
+
+    data_paths.root.mkdir(parents=True, exist_ok=True)
+    connection = connect(data_paths.database)
+    migrate(connection)
+    connection.execute("INSERT INTO setting (key, value_json) VALUES ('log_retention_days', '0')")
+    connection.close()
+    seen: list[int] = []
+    real = logs.set_log_retention
+
+    def spy(handler: object, retention_days: int) -> None:
+        seen.append(retention_days)
+        real(handler, retention_days)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(server, "set_log_retention", spy)
+    assert start(data_paths)[0] == server.EXIT_OK
+    assert seen == [30]
