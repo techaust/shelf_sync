@@ -232,9 +232,9 @@ def install_wheels(site_packages: Path, work: Path) -> None:
     requirements = work / "requirements.txt"
     run(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--format", "requirements-txt",
          "--output-file", str(requirements)])  # fmt: skip
-    run(["uv", "pip", "install", "--target", str(site_packages), "--require-hashes", "--only-binary", ":all:",
-         "--no-deps", "--python-platform", "windows", "--python-version", "3.14", "--no-compile-bytecode",
-         "--no-installer-metadata", "-r", str(requirements)])  # fmt: skip
+    run(["uv", "pip", "install", "--python", sys.executable, "--target", str(site_packages), "--require-hashes",
+         "--only-binary", ":all:", "--no-deps", "--python-platform", "windows", "--python-version", "3.14",
+         "--no-compile-bytecode", "--no-installer-metadata", "-r", str(requirements)])  # fmt: skip
 
 
 def run(command: list[str], cwd: Path = REPO) -> None:

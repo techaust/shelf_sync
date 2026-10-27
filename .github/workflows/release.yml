@@ -1,0 +1,157 @@
+name: Release
+
+# A tag v<X.Y.Z> builds, tests and makes a DRAFT release (04 section 8, SYS-01, 06 section 6). workflow_dispatch builds and
+# tests only and keeps the build as a workflow artifact: no release is made. Nothing here uses a secret and nothing is
+# signed (the owner signs the manifest offline, ADR 0002).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# uv uses the Python that setup-python installed and never downloads one.
+env:
+  UV_PYTHON_DOWNLOADS: never
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, smoke-test and installer-test
+    runs-on: windows-2025
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Get the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.19"
+          enable-cache: false
+
+      - name: Install Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.19.0"
+
+      # The version is pyproject.toml's; on a tag it must equal the tag (build.py checks it again).
+      - name: Read the version
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -I -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "pyproject.toml's version '$version' isn't X.Y.Z" }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "The tag $env:GITHUB_REF_NAME doesn't match the version v$version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install the locked UI packages
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build the UI
+        run: npm run build
+        working-directory: frontend
+
+      # NSIS isn't installed on the runner (04-A V50). Its portable zip has no published checksum; the SHA-256 below was
+      # pinned from the first download (04 section 2.1, V37), and the build stops on any other file.
+      - name: Download NSIS 3.13 and check its SHA-256
+        shell: pwsh
+        run: |
+          $expected = "ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8"
+          $zip = Join-Path $env:RUNNER_TEMP "nsis-3.13.zip"
+          Invoke-WebRequest -Uri "https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/nsis-3.13.zip/download" -OutFile $zip -UserAgent "curl/8"
+          $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "nsis-3.13.zip has SHA-256 $actual, not the pinned $expected" }
+          Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "nsis")
+          $makensis = Join-Path $env:RUNNER_TEMP "nsis\nsis-3.13\makensis.exe"
+          & $makensis -VERSION
+          "NSIS_MAKENSIS=$makensis" >> $env:GITHUB_ENV
+
+      - name: Build the folder, the zip and files.txt
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { python -I packaging/build.py --tag $env:GITHUB_REF_NAME } else { python -I packaging/build.py }
+          if ($LASTEXITCODE -ne 0) { throw "build.py failed" }
+
+      # The built folder's own python.exe answers /api/health with the right version, serves ui/index.html, and the
+      # folder is unchanged afterwards (04-A V38, V47).
+      - name: Smoke-test the built folder
+        run: python -I packaging/smoke.py "build/ShelfSync-${{ steps.version.outputs.version }}" --version "${{ steps.version.outputs.version }}" --real-secrets
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          & $env:NSIS_MAKENSIS "/DVERSION=$v" "/DBUILD_DIR=$PWD\build\ShelfSync-$v" "/DOUTFILE=$PWD\build\ShelfSync-Setup-$v.exe" packaging\ShelfSync.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+
+      # Install silently, check the layout, shortcuts and keys, plant a junction inside versions\<v> that points outside
+      # the program folder, uninstall silently (waiting for it, the _?= rule) and check the folder is gone and the file
+      # behind the junction survived (04-A V39, V40). Then install again and uninstall with /REMOVEDATA. This runner is
+      # throwaway: the run may delete ShelfSync's own Credential Manager entries.
+      - name: Install, check, plant the sentinel, uninstall
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          ./packaging/test-installer.ps1 -Setup "$PWD\build\ShelfSync-Setup-$v.exe" -Version $v -Root (Join-Path $env:RUNNER_TEMP "installtest") -RemoveData
+          if ($LASTEXITCODE -ne 0) { throw "the installer checks failed" }
+
+      # The manifest step is a placeholder: m1b.2's update/manifest.py writes manifest.json from build/files.txt and the
+      # lead wires it in at integration (the owner signs it offline, 06 section 6). Nothing is signed here.
+
+      - name: Keep the build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shelfsync-build-${{ steps.version.outputs.version }}
+          path: |
+            build/ShelfSync-Setup-${{ steps.version.outputs.version }}.exe
+            build/shelfsync-${{ steps.version.outputs.version }}-win64.zip
+            build/files.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    name: Make the draft release
+    # Tags only: workflow_dispatch never makes a release.
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    # Only this job may write, and it runs no repository code: it downloads the build and attaches it to a DRAFT.
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download the build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --name "shelfsync-build-${{ needs.build.outputs.version }}" --dir assets
+          if ($LASTEXITCODE -ne 0) { throw "couldn't download the build artifact" }
+          Get-ChildItem assets
+
+      - name: Create the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ needs.build.outputs.version }}"
+          gh release create "$env:GITHUB_REF_NAME" --repo "${{ github.repository }}" --draft --verify-tag --title "ShelfSync $v" --notes "Draft: unsigned. The manifest and its signature are added by the owner before this is published." "assets/ShelfSync-Setup-$v.exe" "assets/shelfsync-$v-win64.zip"
+          if ($LASTEXITCODE -ne 0) { throw "couldn't create the draft release" }
