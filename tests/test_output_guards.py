@@ -46,8 +46,8 @@ def guards() -> Iterator[None]:
 
 
 @contextmanager
-def file_log(folder: Path) -> Iterator[Path]:
-    handler = logs.configure_logging(folder, retention_days=1)
+def file_log(folder: Path, retention_days: int = 1) -> Iterator[Path]:
+    handler = logs.configure_logging(folder, retention_days=retention_days)
     try:
         yield folder / logs.LOG_FILE_NAME
     finally:
@@ -539,7 +539,7 @@ def test_the_rotating_handler_on_the_same_old_file_would_have_rotated_it(tmp_pat
     log_file = tmp_path / logs.LOG_FILE_NAME
     log_file.write_text('{"message": "from the running copy"}\n', encoding="utf-8")
     _age(log_file, 3)
-    with file_log(tmp_path):
+    with file_log(tmp_path, retention_days=10):  # long enough that the age pruning (LOG-01) keeps the rotated file
         logging.getLogger("shelfsync.launcher").warning("second launch")
     assert len(list(tmp_path.iterdir())) == 2  # the old file was renamed away
 

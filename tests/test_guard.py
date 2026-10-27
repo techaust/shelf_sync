@@ -252,6 +252,7 @@ def test_route_table_every_api_route_outside_the_exemption_table_refuses_without
     """SYS-03: walks the route table, so a route added in a later milestone is checked without anyone remembering to."""
     routes = _api_routes(any_harness.app)
     assert ("GET", "/api/health") in routes
+    assert {("GET", "/api/settings/app"), ("PUT", "/api/settings/app")} <= set(routes)  # SET-06 (m1b.3)
     client = any_harness.client()
     checked = 0
     for method, path in routes:

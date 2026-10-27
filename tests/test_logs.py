@@ -4,6 +4,7 @@ import json
 import logging
 import logging.handlers
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -70,14 +71,15 @@ def test_redaction_hook_sees_every_message(
 
 
 def test_rotation_keeps_the_set_number_of_files(tmp_path: Path, handler: logging.Handler) -> None:
-    for day in range(1, 9):  # eight old rotated files; the handler keeps 3
-        (tmp_path / f"{logs.LOG_FILE_NAME}.2026-01-0{day}").write_text("{}\n")
+    today = datetime.now(UTC).date()
+    old = [(today - timedelta(days=age)).isoformat() for age in range(2, 10)]  # eight old rotated files; keeps 3
+    for day in old:
+        (tmp_path / f"{logs.LOG_FILE_NAME}.{day}").write_text("{}\n")
     logging.getLogger("shelfsync.test").info("today")
     assert isinstance(handler, logging.handlers.TimedRotatingFileHandler)
     handler.doRollover()
     rotated = sorted(p.name for p in tmp_path.glob(f"{logs.LOG_FILE_NAME}.*"))
     assert len(rotated) == 3
     # the newest three survive: the file just rotated, and the two newest old ones
-    assert f"{logs.LOG_FILE_NAME}.2026-01-08" in rotated
-    assert f"{logs.LOG_FILE_NAME}.2026-01-07" in rotated
-    assert not (tmp_path / f"{logs.LOG_FILE_NAME}.2026-01-01").exists()
+    assert f"{logs.LOG_FILE_NAME}.{old[0]}" in rotated
+    assert f"{logs.LOG_FILE_NAME}.{old[-1]}" not in rotated

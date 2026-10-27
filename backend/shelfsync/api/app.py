@@ -14,6 +14,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from shelfsync import __version__
+from shelfsync.api.app_settings import AppSettingsService, make_app_settings_router
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
@@ -93,6 +94,7 @@ def create_app(
     *,
     ui_dir: Path | None,
     updates: UpdateService | None = None,
+    app_settings: AppSettingsService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -101,7 +103,8 @@ def create_app(
     tickets (tests pass their own). `ui_dir` (required, so no caller gets the real frontend/dist by accident) holds the
     built UI; None serves the API only (most tests). `updates` is the update service (M1b.2); the default is the
     "development, updates off" service, which makes no network call. The app starts it when the server starts and
-    stops it when the server stops (the lifespan below).
+    stops it when the server stops (the lifespan below). `app_settings` is the Settings > App service (SET-06); the
+    default keeps the settings in memory, with no log handler and no real Run key.
     """
     service = updates if updates is not None else UpdateService.development()
 
@@ -143,6 +146,9 @@ def create_app(
     app.include_router(make_session_router(sessions, install_token))
     app.include_router(make_updates_router(service))
     app.include_router(make_secrets_router(service))
+    app.include_router(
+        make_app_settings_router(app_settings if app_settings is not None else AppSettingsService.development())
+    )
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

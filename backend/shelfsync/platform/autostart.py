@@ -2,21 +2,23 @@
 
 The value is named `ShelfSync` and holds the quoted path of the installed `pythonw.exe`, `-m shelfsync.launcher` and
 `--background` (sign-in starts ShelfSync in the tray with no browser tab; shortcuts have no flag and open a tab).
-Turning the setting off removes the value. It is written only by an installed copy (running from
-`%LOCALAPPDATA%\\Programs\\ShelfSync\\current\\`): a development run never touches the owner's Run key.
+Turning the setting off removes the value. It is written only by an installed copy (`update.layout.installed_root`,
+the one test: the Python sits in `<root>\\versions\\<v>\\`): a development run never touches the owner's Run key. The
+value always names `<root>\\current\\pythonw.exe`, so an update needs no new value.
 """
 
 import logging
-import os
 import sys
-from pathlib import Path, PureWindowsPath
+from pathlib import PureWindowsPath
 from typing import Protocol
+
+from shelfsync.update.layout import installed_root
 
 _log = logging.getLogger("shelfsync.autostart")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "ShelfSync"
-INSTALL_SUBFOLDER = Path("Programs") / "ShelfSync" / "current"
+CURRENT_FOLDER_NAME = "current"
 
 
 class RunKey(Protocol):
@@ -96,21 +98,10 @@ else:
             raise AutostartError("The Run key is available on Windows only")
 
 
-def install_folder() -> Path | None:
-    """`%LOCALAPPDATA%\\Programs\\ShelfSync\\current`, or None when LOCALAPPDATA is unknown."""
-    local = os.environ.get("LOCALAPPDATA")
-    return Path(local) / INSTALL_SUBFOLDER if local else None
-
-
 def is_installed_copy(executable: str | None = None) -> bool:
-    """True when the running Python is the installed one: its path (not resolved: `current` is a junction) is inside
-    `%LOCALAPPDATA%\\Programs\\ShelfSync\\current\\`."""
-    folder = install_folder()
-    if folder is None:
-        return False
-    path = os.path.normcase(os.path.abspath(executable or sys.executable))
-    base = os.path.normcase(os.path.abspath(folder)) + os.sep
-    return path.startswith(base)
+    """True when the running Python is the installed one (`installed_root`: in `<root>\\versions\\<v>\\`, `<v>` this
+    code's own version). Reached through the `current` junction or not makes no difference."""
+    return installed_root(executable) is not None
 
 
 BACKGROUND_FLAG = "--background"
@@ -118,8 +109,15 @@ BACKGROUND_FLAG = "--background"
 
 def launcher_command(executable: str | None = None, *, background: bool = False) -> str:
     """`"<...>\\pythonw.exe" -m shelfsync.launcher`, the path quoted, from the running interpreter's own folder.
-    The Run value passes `background=True`: signing in to Windows starts ShelfSync in the tray with no browser tab."""
-    folder = PureWindowsPath(executable or sys.executable).parent  # a Windows path on every platform (the Run value)
+    The Run value passes `background=True`: signing in to Windows starts ShelfSync in the tray with no browser tab.
+    An installed copy (and no `executable` given) names `<root>\\current`, never the version folder it runs from."""
+    root = installed_root() if executable is None else None
+    # a Windows path on every platform (the Run value)
+    folder = (
+        PureWindowsPath(root) / CURRENT_FOLDER_NAME
+        if root is not None
+        else PureWindowsPath(executable or sys.executable).parent
+    )
     command = f'"{folder / "pythonw.exe"}" -m shelfsync.launcher'
     return f"{command} {BACKGROUND_FLAG}" if background else command
 
