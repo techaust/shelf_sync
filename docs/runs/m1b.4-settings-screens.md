@@ -236,6 +236,25 @@ _(designer, 2026-10-28; worktree head before: 30eeaca)_ "Test" names the test th
 | 19 | Low | A 409 busy after Check now (or after a switch) uses the info tone, as the GET state does | `actions.test.ts`; `switchStore.test.ts`; `views.test.ts` |
 | 20 | Low | The token's expiry shows the date only. The notice reads "Your GitHub token expires in N days, on <date>. Make a new one before then." ("1 day"; past or today falls back to 13's "expires on <date>") | `updatesModel.test.ts`; pane |
 | 21 | Low | No chunk split, as asked. The build's main chunk is now 510.6 kB (the 500 kB advice) | none |
+| R1 | Med (re-review) | While the switch store is `restarting`, a 401 "signed_out" from any request goes to the store (`claimSignedOut`, wired through `boot(…, claimSignedOut)` in `main.tsx`). The store stops the poll and marks the panel "back: new tab", instead of `session.set`. The shell shows the restart panel on every screen except Settings › Updates (`shellTakesOver`, `RestartScreen` in AppShell). The App-settings queries (AppShell's theme sync, Settings › App) are paused while restarting, and a theme choice applies to the tab but isn't sent | `boot.test.ts` (a 401 during restarting: still signed in, panel back; when idle: signed out as always); `switchStore.test.ts` (`claimSignedOut`); `views.test.ts` (`shellTakesOver`, `RestartScreen`); pane, on the Dashboard: the restart panel, then "ShelfSync is back", and no lock panel |
+| R2 | Low | A 204 with the target version answering means the new tab signed in and the cookie is shared, so the outcome is `running`. The panel says "ShelfSync <v> is running. You can close this tab, or keep using it." (lead wording), and the shell no longer takes over. Only the old version (not busy) reloads | `restartPoll.test.ts`; `switchStore.test.ts`; `views.test.ts` |
+| R3 | Low | The 3-minute fallback starts the poll with `mustSeeGone`. The old copy answering, not busy, counts as "nothing changed" only after ShelfSync was seen gone once. A 401, or the target version answering, ends the wait as before | `restartPoll.test.ts`; `switchStore.test.ts` |
+| R4 | Low | The waiting line is now "When ShelfSync is back, it opens in a new tab, or this one reloads." (lead wording) | `views.test.ts` |
+| R5 | Low | An expired token (days ≤ 0) reads "Your GitHub token expired on <date>. Make a new one, or remove it to check without one." (lead wording) | `updatesModel.test.ts` |
+| R6 | Low | The exported singleton is `Omit<SwitchStore, "reset">`; the tests use their own `createSwitchStore` | typecheck |
+| R7 | Low | `stillSwitching` reads the body as the schema's `Updates` type | typecheck |
+| R8 | Low | SecretField runs the shape check before it sets pending, so a refused value never shows the busy Save. A dialog that opens again mid-send puts the focus back on its busy confirm button (`busyFocus`). `html { scrollbar-gutter: stable }` keeps the page from shifting by the scrollbar's width | `dialog.test.ts` (busy focus). Not tested: the shape-check order is component event code with no DOM in Vitest, and the scroll shift wasn't measured in the pane |
+| R9 | Optional | `actionLine(failure)` gives the tone and text once, for checkNow and `switchStore.run` | the existing `actions.test.ts` and `switchStore.test.ts` |
+
+**Run after the re-review fixes (this PC).** All through `tools/heavy.sh`:
+- `npm run lint`: passed (78 files).
+- `npm run typecheck`: passed.
+- `npm test`: 548 passed in 16 files.
+- `npm run build`: passed, with the same chunk-size warning (511.6 kB).
+
+`schema:check` and `pytest` weren't rerun: no schema or backend change.
+
+**Pane check of R1** (mocked API, server stopped after). The shots are in `.logs/shots/m1b.4/`: `rereview-shell-restarting-dashboard-light-1280.jpg` and `rereview-shell-back-dashboard-light.jpg` (the pane dropped the 1280 emulation for the second). Install was confirmed on Updates and the owner moved to the Dashboard. The shell showed "ShelfSync is restarting" there, then "ShelfSync is back / It opened in a new tab, signed in. You can close this one." No lock panel. One small thing seen: the tab title stays that of the last page shown (e.g. "Settings, ShelfSync") while the shell shows the panel.
 
 **Wording changed or added in this round (for 13; the §4 list above is otherwise current):**
 - **Roll back dialog** (13 §6, the owner's decision):
