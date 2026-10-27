@@ -13,7 +13,7 @@
 | Windows | 11 Home Single Language | 10/11 | Home has no Windows Sandbox: the clean-account test uses a second local account ([07 §7](07-testing.md)) |
 | CPU / RAM | Intel i3-1115G4, 2 cores / 4 threads; 7.8 GB | — | At most two agents at once; heavy commands queued ([12 §4](12-models-and-usage.md)); the NFR-3 targets are set for this PC |
 | Free disk | C: 77.5 GB, D: 256.5 GB | ~5 GB for the test stack and the calibration cache | OK |
-| Python | 3.12.10 | 3.12 | OK |
+| Python | 3.14.8 (3.12.10 also installed) | 3.14 (owner, 2026-10-27) | OK |
 | Node / npm | 24.19.0 / 11.17.0 | For the UI and the hook scripts | OK |
 | git / GitHub CLI | 2.55.0 / 2.101.0, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; every push, merge and settings change needs the owner's yes |
 | NSIS | not installed | Release builds (CI); locally only for M1b testing | Installed at M1b with the owner's yes |

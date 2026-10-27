@@ -197,7 +197,7 @@ flowchart LR
 <ul>
   <li><strong>Settings:</strong> Stores, Storage, Rules, Updates, Backup, App.</li>
   <li><strong>Security:</strong> <code>127.0.0.1</code> only, a per-install token that never appears in a URL (a single-use ticket is exchanged for a strict session cookie), <code>Host</code>/<code>Origin</code> checks, secrets in Windows Credential Manager, passphrase-encrypted backups, least-privilege keys, a Defender scan of every ZIP, signed updates.</li>
-  <li><strong>Built with:</strong> Python 3.12 + FastAPI + SQLite + an in-process job worker; React + TypeScript (Vite); server-sent events for live progress.</li>
+  <li><strong>Built with:</strong> Python 3.14 + FastAPI + SQLite + an in-process job worker; React + TypeScript (Vite); server-sent events for live progress.</li>
   <li><strong>Install:</strong> one per-user <code>Setup.exe</code> built with <strong>NSIS</strong> (free, zlib licence), with the official Python runtime embedded. No admin prompt.</li>
   <li><strong>The warnings money would remove:</strong> <code>Setup.exe</code> isn't code-signed, so Windows SmartScreen warns <strong>each time a newly downloaded copy is opened</strong> ("More info → Run anyway"). In-app updates show no warning. If <strong>Smart App Control</strong> were on, Windows could block the installer; it's <strong>Off</strong> on this PC and is re-checked on a clean account at M1b. A paid code-signing certificate would remove both. <strong>Optional, not used.</strong></li>
   <li><strong>Updates in the app:</strong> download, verify the signature made with the owner's offline key, install beside the current version, switch, and switch back automatically if the health check fails.</li>

@@ -134,7 +134,7 @@ ShelfSync is a **TecHaust product**: TecHaust's Patina tokens (ink, verdigris, s
 ## 9. Settings, security, build, install
 - **Settings:** Stores, Storage, Rules, Updates, Backup, App ([03 §6](03-prd.md)).
 - **Security:** `127.0.0.1` only, a per-install token that never appears in a URL (a single-use ticket is exchanged for a strict session cookie), `Host`/`Origin` checks, secrets in Windows Credential Manager, passphrase-encrypted backups, least-privilege keys, Defender scan of every ZIP, signed updates ([06](06-security.md)).
-- **Built with:** Python 3.12 + FastAPI + SQLite + an in-process job worker; React + TypeScript (Vite); server-sent events for live progress ([04](04-architecture.md)).
+- **Built with:** Python 3.14 + FastAPI + SQLite + an in-process job worker; React + TypeScript (Vite); server-sent events for live progress ([04](04-architecture.md)).
 - **Install:** one per-user `Setup.exe` built with **NSIS** (free, zlib licence), with the official Python runtime embedded (its executables are signed by the Python Software Foundation). No admin prompt.
 - **The warnings money would remove:** `Setup.exe` isn't code-signed, so Windows SmartScreen warns **each time a newly downloaded copy is opened** ("More info → Run anyway"). In-app updates are downloaded by the app, so they show no warning. If **Smart App Control** were on, Windows could block the installer with no override; it's **Off** on this PC (owner, 2026-10-25) and is re-checked on the clean account at M1b. A paid code-signing certificate would remove both. **Optional, not used.**
 - **Updates in the app:** download, verify the signature made with the owner's offline key, install beside the current version, switch, and switch back automatically if the health check fails.

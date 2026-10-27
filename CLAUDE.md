@@ -55,7 +55,7 @@ Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public durin
 - Commit identity (repo-local): `TecHaust Technologies <admin@techaust.com>`. Conventional commits citing PRD IDs, e.g. `feat(match): edition-word penalty [MAT-05]`.
 
 ## Stack (summary; full list `docs/09-tooling.md` §7, pins in `docs/04-architecture.md` §2 at M1)
-Python 3.14 (embedded, signed; moving from 3.12 in M1b, [ADR 0001](docs/adr/0001-python-fastapi-sqlite-react.md)) · FastAPI + uvicorn · SQLite (`sqlite3`, WAL, numbered SQL migrations) · httpx · boto3 · keyring · cryptography · pystray · windows-toasts · React + TypeScript + Vite · Tailwind v4 from `brand/tokens.json` · Radix UI · Lucide · Archivo + IBM Plex Mono (self-hosted) · pytest, hypothesis, respx, moto · Playwright + axe · ruff, mypy, Biome · uv (locks) · NSIS · GitHub Actions.
+Python 3.14 (embedded, signed; [ADR 0001](docs/adr/0001-python-fastapi-sqlite-react.md)) · FastAPI + uvicorn · SQLite (`sqlite3`, WAL, numbered SQL migrations) · httpx · boto3 · keyring · cryptography · pystray · windows-toasts · React + TypeScript + Vite · Tailwind v4 from `brand/tokens.json` · Radix UI · Lucide · Archivo + IBM Plex Mono (self-hosted) · pytest, hypothesis, respx, moto · Playwright + axe · ruff, mypy, Biome · uv (locks) · NSIS · GitHub Actions.
 
 ## Commands
 App (from the repo root; heavy ones through `bash tools/heavy.sh --log <name> …`):

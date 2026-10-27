@@ -32,7 +32,7 @@ One Python process holds the web server, the job worker and the tray. No separat
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | **Python 3.14** (from M1b; 3.12 until the move, [ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendment), the official Windows embeddable package (PSF-signed executables, V12) with `python314._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
+| Runtime | **Python 3.14** ([ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendment, 2026-10-27), the official Windows embeddable package (PSF-signed executables, V12) with `python314._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
 | Web | **FastAPI** on **uvicorn** (bound to `127.0.0.1`), **python-multipart** for uploads | Typed routes; OpenAPI generates the UI's TypeScript types (**openapi-typescript**) |
 | Database | **SQLite** through the standard `sqlite3` module, WAL mode, numbered SQL migrations with a small runner, foreign keys on | One file, no ORM |
 | HTTP | **httpx** (stores, GitHub), **boto3** (S3; `request_checksum_calculation="when_required"` for non-AWS endpoints, V10) | boto3 handles range reads, presigning and `ContentMD5` |
@@ -92,7 +92,7 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | | astral-sh/setup-uv | v10.3.0 `1c37ad07a6a961277cf70c0d37d6f313000f5884` | 2026-10-09 | MIT |
 | | actions/upload-artifact | v7.0.2 `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 | MIT |
 
-Local tools already on this PC (not shipped): Python 3.12.10, uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
+Local tools already on this PC (not shipped): Python 3.14.8 (owner-installed from python.org, 2026-10-27; 3.12.10 also still installed), uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
 
 ## 3. Folder structure
 ```text
