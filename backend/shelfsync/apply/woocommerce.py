@@ -183,9 +183,11 @@ class WooClient:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
                 encoding = response.headers.get("content-encoding", "identity").strip().lower()
                 if encoding not in ("", "identity"):
-                    raise ReadRefused(
-                        "bad_response"
-                    )  # we asked for none: nothing is decoded, so the cap is on wire bytes
+                    # We asked for none, so nothing is decoded and the cap is on wire bytes. An error answer keeps
+                    # its status (401, 429, 52x… are told apart by the status alone); a 200 we can't read is refused.
+                    if response.status_code != 200:
+                        return WooResponse(response.status_code, response.headers, b"")
+                    raise ReadRefused("bad_response")
                 body = b""
                 for chunk in response.iter_raw():
                     body += chunk
@@ -196,7 +198,7 @@ class WooClient:
                 return WooResponse(response.status_code, response.headers, body)
         except httpx.TimeoutException:
             raise ReadRefused("timeout") from None
-        except httpx.DecodingError:
+        except httpx.DecodingError:  # not expected (`iter_raw` decodes nothing); a sibling of TransportError
             raise ReadRefused("bad_response") from None
         except httpx.TransportError as error:
             raise ReadRefused("tls_error" if _is_tls_error(error) else "unreachable") from None

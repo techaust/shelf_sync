@@ -13,8 +13,9 @@ the request. **No response holds a consumer key or secret**: only the masks (`ck
     POST   /api/stores/{id}/test    200 StoreTestResponse (a failed test is still a 200 with `ok: false`); 409 busy,
                                     keys_missing; 404 not_found
 
-`color` is a palette key, `indigo` (GF's pair) or `teal` (PW's pair) from 05 section 2.3 (no database CHECK); the
-frontend maps each key to its light and dark colours (`frontend/src/styles/storePalette.ts`). A store id is 1 to
+`color` is a palette key, `indigo` (GF's pair) or `teal` (PW's pair) from 05 section 2.3; the table's CHECK limits
+it to these, so a new key needs a migration as well as this Literal and the frontend's palette, which maps each key to
+its light and dark colours (`frontend/src/styles/storePalette.ts`). A store id is 1 to
 2**63 - 1 (SQLite's integers are 64-bit), so a huge one is a 422, never a 500.
 """
 

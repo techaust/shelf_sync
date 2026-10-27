@@ -491,6 +491,29 @@ def test_m2_any_content_encoding_is_refused_not_decoded_and_never_a_500(body: by
         assert len(woo.requests) == 1
 
 
+@pytest.mark.parametrize(
+    ("status", "reason"), [(401, "keys_refused"), (429, "rate_limited"), (524, "cloudflare_52x"), (500, "server_error")]
+)
+def test_an_encoded_error_answer_keeps_its_reason(status: int, reason: str) -> None:
+    """Re-review: a host that compresses an error anyway is still told apart by its status."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"\x1f\x8b junk"))
+
+    assert run_read_test_for(FakeWoo(status=answer)).reason == reason
+
+
+def test_a_streamed_body_over_the_cap_with_no_length_is_refused_while_it_is_read() -> None:
+    """Re-review: the running count, the path a chunked answer with no Content-Length takes."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(200, stream=httpx.ByteStream(b"x" * (MAX_BODY_BYTES + 1)))
+        assert "content-length" not in response.headers
+        return response
+
+    assert run_read_test_for(FakeWoo(status=answer)).reason == "bad_response"
+
+
 def test_m2_identity_encoding_is_fine_and_a_decoding_error_is_a_bad_response() -> None:
     answer = httpx.Response(
         200,
