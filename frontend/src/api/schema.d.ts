@@ -104,6 +104,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get App Settings */
+        get: operations["get_app_settings_api_settings_app_get"];
+        /** Put App Settings */
+        put: operations["put_app_settings_api_settings_app_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stores": {
         parameters: {
             query?: never;
@@ -254,6 +272,66 @@ export interface components {
              * @constant
              */
             accepted: true;
+        };
+        /** AppSettingsResponse */
+        AppSettingsResponse: {
+            /** Installed */
+            installed: boolean;
+            /** Log Retention Days */
+            log_retention_days: number;
+            /** Notifications */
+            notifications: boolean;
+            /** Port */
+            port: number;
+            /** Start With Windows */
+            start_with_windows: boolean;
+            /**
+             * Theme
+             * @enum {string}
+             */
+            theme: "system" | "light" | "dark";
+        };
+        /** AppSettingsSaved */
+        AppSettingsSaved: {
+            /** Log Retention Days */
+            log_retention_days: number;
+            /** Notifications */
+            notifications: boolean;
+            /** Port */
+            port: number;
+            /** Restart Needed */
+            restart_needed: boolean;
+            /** Start With Windows */
+            start_with_windows: boolean;
+            /**
+             * Start With Windows Result
+             * @enum {string}
+             */
+            start_with_windows_result: "applied" | "not_installed" | "failed";
+            /**
+             * Theme
+             * @enum {string}
+             */
+            theme: "system" | "light" | "dark";
+        };
+        /**
+         * AppSettingsValues
+         * @description The five settings. Strict types, so `true` is never a port and `"30"` is never a number of days.
+         */
+        AppSettingsValues: {
+            /** Log Retention Days */
+            log_retention_days: number;
+            /** Notifications */
+            notifications: boolean;
+            /** Port */
+            port: number;
+            /** Start With Windows */
+            start_with_windows: boolean;
+            /**
+             * Theme
+             * @enum {string}
+             */
+            theme: "system" | "light" | "dark";
         };
         /** AvailableModel */
         AvailableModel: {
@@ -759,6 +837,59 @@ export interface operations {
             };
             /** @description Unauthorized */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_app_settings_api_settings_app_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettingsResponse"];
+                };
+            };
+        };
+    };
+    put_app_settings_api_settings_app_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSettingsValues"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSettingsSaved"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
