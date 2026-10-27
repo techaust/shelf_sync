@@ -35,7 +35,7 @@ import httpx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from shelfsync.db.backup import database_schema
+from shelfsync.db.backup import database_schema, latest_schema
 from shelfsync.paths import DataPaths
 from shelfsync.platform.junction import WindowsJunctions
 from shelfsync.platform.process import RealProcesses
@@ -58,6 +58,11 @@ OVERLAY = [
     "api/secrets.py",
     "secure/headers.py",
 ]
+# The rehearsal's own migrations carry numbers no real migration will reach, so they never collide with one the source
+# tree adds (0002_store, ...). BASE is the schema the copied source already has; NEW and BROKEN come after it.
+BASE_SCHEMA = latest_schema()
+NEW_SCHEMA = 9001
+BROKEN_SCHEMA = 9002
 MIGRATION_2 = "CREATE TABLE rehearsal_note (id INTEGER PRIMARY KEY, body TEXT NOT NULL);\n"
 MIGRATION_3_BROKEN = "CREATE TABLE half_done (id INTEGER);\nINSERT INTO table_that_does_not_exist VALUES (1);\n"
 
@@ -333,14 +338,14 @@ def main() -> int:
     links = WindowsJunctions()
     try:
         say("Building the fake versions (a copy of the embedded build each, overlaid and signed with a throwaway key)")
-        build_version(layout, args.base, "0.0.1", 1, key, key, service, {})
-        build_version(layout, args.base, "0.0.2", 2, key, key, service, {"0002_rehearsal.sql": MIGRATION_2})
+        build_version(layout, args.base, "0.0.1", BASE_SCHEMA, key, key, service, {})
+        build_version(layout, args.base, "0.0.2", NEW_SCHEMA, key, key, service, {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2})
         links.create(layout.current, layout.version_dir("0.0.1"))
 
         say("\n1. Install 0.0.1")
         app.start()
         check("0.0.1 starts and answers /api/health as 0.0.1", app.wait_version("0.0.1", 90))
-        check("the database is at schema 1", database_schema(paths.database) == 1)
+        check(f"the database is at schema {BASE_SCHEMA}", database_schema(paths.database) == BASE_SCHEMA)
         found = app.runtime()
         old_pid = found[1] if found else 0
         with app.client() as client:
@@ -358,13 +363,13 @@ def main() -> int:
         check("the switch reports updated", result is not None and result.outcome == "updated", str(result))
         check("0.0.2 is running (a new process, a new answer)", app.wait_version("0.0.2", 60, other_pid=old_pid))
         check("current points at 0.0.2", os.path.realpath(layout.current).endswith("0.0.2"))
-        check("the database moved to schema 2", database_schema(paths.database) == 2)
+        check(f"the database moved to schema {NEW_SCHEMA}", database_schema(paths.database) == NEW_SCHEMA)
         check(
             "DisplayVersion in the throwaway uninstall key is 0.0.2",
             display_version() == "0.0.2",
             str(display_version()),
         )
-        backups = sorted(paths.backups.glob("pre-migration-0001-to-0002-*.db"))
+        backups = sorted(paths.backups.glob(f"pre-migration-{BASE_SCHEMA:04d}-to-{NEW_SCHEMA:04d}-*.db"))
         check("a pre-migration backup was taken first", len(backups) == 1)
         with app.client() as client:
             status = client.get("/api/updates").json()
@@ -389,10 +394,13 @@ def main() -> int:
         result = wait_result(paths, "0.0.1", began)
         check("the switch reports rolled_back", result is not None and result.outcome == "rolled_back", str(result))
         check("0.0.1 is running again", app.wait_version("0.0.1", 60, other_pid=old_pid))
-        check("the database is back at schema 1 (the backup was restored)", database_schema(paths.database) == 1)
+        check(
+            f"the database is back at schema {BASE_SCHEMA} (the backup was restored)",
+            database_schema(paths.database) == BASE_SCHEMA,
+        )
         check("DisplayVersion is 0.0.1 again", display_version() == "0.0.1", str(display_version()))
         check(
-            "a pre-rollback snapshot of the schema-2 database was kept",
+            "a pre-rollback snapshot of the updated database was kept",
             len(list(paths.backups.glob("pre-rollback-0.0.2-*.db"))) == 1,
         )
         check(
@@ -402,7 +410,7 @@ def main() -> int:
 
         say("\n4. A tampered 0.0.3 is refused")
         # built only now: a switch prunes every version but the two it keeps, so an earlier one would be gone
-        build_version(layout, args.base, "0.0.3", 2, wrong, key, service, {"0002_rehearsal.sql": MIGRATION_2})
+        build_version(layout, args.base, "0.0.3", NEW_SCHEMA, wrong, key, service, {f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2})
         found = app.runtime()
         pid_before = found[1] if found else 0
         stage(layout, paths, "0.0.3")
@@ -411,7 +419,7 @@ def main() -> int:
         check("0.0.3 is signed by another key: install answers 409 manifest_invalid",
               wrong_key.status_code == 409 and wrong_key.json() == {"error": "manifest_invalid"},
               f"{wrong_key.status_code} {wrong_key.text}")  # fmt: skip
-        write_manifest(layout, layout.version_dir("0.0.3"), "0.0.3", 2, key)  # properly signed now ...
+        write_manifest(layout, layout.version_dir("0.0.3"), "0.0.3", NEW_SCHEMA, key)  # properly signed now ...
         (layout.version_dir("0.0.3") / "pythonw.exe").write_bytes(
             b"swapped after the download"
         )  # ... but a file changed
@@ -429,8 +437,11 @@ def main() -> int:
 
         say("\n5. A broken 0.0.4 (its second migration fails, the app exits 2) is switched back")
         build_version(
-            layout, args.base, "0.0.4", 3, key, key, service,
-            {"0002_rehearsal.sql": MIGRATION_2, "0003_broken.sql": MIGRATION_3_BROKEN},
+            layout, args.base, "0.0.4", BROKEN_SCHEMA, key, key, service,
+            {
+                f"{NEW_SCHEMA:04d}_rehearsal.sql": MIGRATION_2,
+                f"{BROKEN_SCHEMA:04d}_broken.sql": MIGRATION_3_BROKEN,
+            },
         )  # fmt: skip
         found = app.runtime()
         old_pid = found[1] if found else 0
@@ -448,8 +459,8 @@ def main() -> int:
         check("0.0.1 is running again", app.wait_version("0.0.1", 60, other_pid=old_pid))
         check("current points at 0.0.1", os.path.realpath(layout.current).endswith("0.0.1"))
         check(
-            "the database is unchanged by the failed migration (schema 1, no half-done table)",
-            database_schema(paths.database) == 1,
+            f"the database is unchanged by the failed migration (schema {BASE_SCHEMA}, no half-done table)",
+            database_schema(paths.database) == BASE_SCHEMA,
         )
         check(
             "DisplayVersion went to 0.0.4 and back: it is 0.0.1", display_version() == "0.0.1", str(display_version())

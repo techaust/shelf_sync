@@ -145,7 +145,11 @@ class WooClient:
         self._client = httpx.Client(
             transport=GetOnlyTransport(transport if transport is not None else httpx.HTTPTransport()),
             auth=httpx.BasicAuth(consumer_key, consumer_secret),
-            headers={"User-Agent": f"ShelfSync/{__version__}", "Accept": "application/json"},
+            headers={
+                "User-Agent": f"ShelfSync/{__version__}",
+                "Accept": "application/json",
+                "Accept-Encoding": "identity",
+            },
             follow_redirects=False,
             trust_env=False,
         )
@@ -174,6 +178,9 @@ class WooClient:
                     raise ReadRefused(
                         "redirected", _redirect_host(response.headers.get("location")), response.status_code
                     )
+                declared = response.headers.get("content-length", "")
+                if declared.isascii() and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+                    raise ReadRefused("bad_response")  # refused before a byte of it is read
                 body = b""
                 for chunk in response.iter_bytes():
                     body += chunk
@@ -266,18 +273,24 @@ def run_read_test(
     *,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    total_seconds: float = TOTAL_SECONDS,
 ) -> ReadOutcome:
-    """The two GETs of Test connection, `spacing_ms` apart, within 60 seconds in all. No retries. `code` is the store's
+    """The two GETs of Test connection, `spacing_ms` apart, within `total_seconds` (60) in all, checked between the
+    steps; the service also stops waiting at that limit (`StoreService.test`). No retries. `code` is the store's
     two-letter code, the only name the log line carries."""
-    outcome = _read_test(client, spacing_ms, sleep, monotonic)
+    outcome = _read_test(client, spacing_ms, sleep, monotonic, total_seconds)
     _log.info("Store %s read test: %s (HTTP %s)", code, outcome.reason or "ok", outcome.http_status)
     return outcome
 
 
 def _read_test(
-    client: WooClient, spacing_ms: int, sleep: Callable[[float], None], monotonic: Callable[[], float]
+    client: WooClient,
+    spacing_ms: int,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+    total_seconds: float,
 ) -> ReadOutcome:
-    deadline = monotonic() + TOTAL_SECONDS
+    deadline = monotonic() + total_seconds
     status: int | None = None
     wc_version: str | None = None
     wp_version: str | None = None

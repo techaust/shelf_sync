@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import brandTokens from "../../../brand/generated/tokens.css?raw";
 import uiTokens from "./generated/tokens.css?raw";
 
+// storePalette.ts is the one hand-typed-colour file: store identifier colours are store data keyed by the backend's
+// palette (05 section 2.3), never styling, and contrast.test.ts checks every pair on every surface.
 const sources = import.meta.glob(
-  ["../**/*.{ts,tsx,css}", "!../**/*.test.ts", "!./generated/**", "!../api/schema.d.ts"],
+  ["../**/*.{ts,tsx,css}", "!../**/*.test.ts", "!./generated/**", "!../api/schema.d.ts", "!./storePalette.ts"],
   {
     query: "?raw",
     import: "default",

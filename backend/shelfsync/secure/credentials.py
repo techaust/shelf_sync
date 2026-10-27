@@ -19,6 +19,7 @@ _log = logging.getLogger("shelfsync.secrets")
 CONSUMER_KEY = re.compile(r"ck_[A-Za-z0-9]{20,64}")
 CONSUMER_SECRET = re.compile(r"cs_[A-Za-z0-9]{20,64}")
 _DOTS = "••••"
+MASK_SHOWS_TAIL_FROM = 23  # a validated key has at least 23 characters (3 + 20), so four shown are never most of it
 
 
 def key_entry(store_id: int) -> str:
@@ -41,8 +42,8 @@ def mask(value: str | None) -> str | None:
     """`ck_` + four dots + the last four characters. Fixed width: the length of the value is never shown."""
     if value is None:
         return None
-    if len(value) < 12:  # can't happen for a validated value; don't show most of a short one
-        return _DOTS
+    if len(value) < MASK_SHOWS_TAIL_FROM:  # can't happen for a validated value; never show a tail of a short one
+        return f"{value[:3]}{_DOTS}"
     return f"{value[:3]}{_DOTS}{value[-4:]}"
 
 
@@ -68,7 +69,11 @@ class StoreCredentials:
         except SecretStoreError as error:
             _log.warning("The keys of a store couldn't be read (%s)", type(error).__name__)
             return None
-        return KeyPair(key, secret) if key is not None and secret is not None else None
+        if key is None or secret is None:
+            return None
+        register_secret(key)  # whatever is read for use is masked in the log from here on, whoever stored it
+        register_secret(secret)
+        return KeyPair(key, secret)
 
     def masked(self, store_id: int) -> tuple[str | None, str | None]:
         """What a screen may show: the two masks. A read failure shows both as not set."""

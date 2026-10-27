@@ -160,10 +160,12 @@ def reset_health(connection: sqlite3.Connection, store_id: int) -> None:
     )
 
 
-def save_test_result(connection: sqlite3.Connection, store_id: int, result: SavedTest) -> None:
-    connection.execute(
+def save_test_result(connection: sqlite3.Connection, store_id: int, url: str, result: SavedTest) -> bool:
+    """Save a result on the row, but only while the row still has the address that was tested: a result about an
+    address the store no longer has must never be shown. False when it wasn't saved."""
+    cursor = connection.execute(
         "UPDATE store SET health = ?, health_reason = ?, http_status = ?, latency_ms = ?, wc_version = ?, "
-        "wp_version = ?, downloadable_count = ?, tested_at = ? WHERE id = ? AND removed_at IS NULL",
+        "wp_version = ?, downloadable_count = ?, tested_at = ? WHERE id = ? AND url = ? AND removed_at IS NULL",
         (
             result.health,
             result.reason,
@@ -174,8 +176,10 @@ def save_test_result(connection: sqlite3.Connection, store_id: int, result: Save
             result.downloadable_count,
             result.tested_at,
             store_id,
+            url,
         ),
     )
+    return cursor.rowcount > 0
 
 
 def soft_delete(connection: sqlite3.Connection, store_id: int, removed_at: str) -> bool:

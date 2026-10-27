@@ -27,6 +27,7 @@ from shelfsync.db.stores import (
 from tests.update_support import data_paths
 
 NOW = "2026-10-28T09:00:00.000000Z"
+URL = "https://store-a.example"
 
 
 @pytest.fixture
@@ -156,7 +157,9 @@ def test_update_changes_only_the_named_columns_and_refuses_others(connection: sq
 def test_update_reports_a_clash_and_changing_the_url_resets_the_health(connection: sqlite3.Connection) -> None:
     one = add(connection)
     two = add(connection, "SB", "https://store-b.example")
-    save_test_result(connection, two, SavedTest("connected", None, 200, 180, "9.4.1", "6.7", 12, NOW))
+    save_test_result(
+        connection, two, "https://store-b.example", SavedTest("connected", None, 200, 180, "9.4.1", "6.7", 12, NOW)
+    )
     with pytest.raises(UrlTaken):
         update_store(connection, two, {"url": "https://store-a.example"})
     with pytest.raises(CodeTaken):
@@ -172,7 +175,7 @@ def test_update_reports_a_clash_and_changing_the_url_resets_the_health(connectio
 
 def test_a_test_result_is_saved_on_the_row_and_reset_clears_it(connection: sqlite3.Connection) -> None:
     store_id = add(connection)
-    save_test_result(connection, store_id, SavedTest("refused", "keys_refused", 401, None, None, None, None, NOW))
+    save_test_result(connection, store_id, URL, SavedTest("refused", "keys_refused", 401, None, None, None, None, NOW))
     row = get_store(connection, store_id)
     assert row is not None
     assert (row.health, row.health_reason, row.http_status, row.latency_ms, row.tested_at) == (
@@ -189,3 +192,17 @@ def test_nothing_in_the_repository_commits(connection: sqlite3.Connection) -> No
     add(connection)
     connection.execute("ROLLBACK")
     assert list_live(connection) == []
+
+
+def test_a_result_is_saved_only_while_the_row_still_has_the_address_that_was_tested(
+    connection: sqlite3.Connection,
+) -> None:
+    store_id = add(connection)
+    result = SavedTest("connected", None, 200, 180, "9.4.1", "6.7", 12, NOW)
+    update_store(connection, store_id, {"url": "https://store-moved.example"})  # changed under a running test
+    assert save_test_result(connection, store_id, URL, result) is False
+    row = get_store(connection, store_id)
+    assert row is not None and (row.health, row.tested_at) == ("unknown", None)
+    assert save_test_result(connection, store_id, "https://store-moved.example", result) is True
+    soft_delete(connection, store_id, NOW)
+    assert save_test_result(connection, store_id, "https://store-moved.example", result) is False

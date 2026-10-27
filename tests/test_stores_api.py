@@ -150,6 +150,8 @@ BAD_FIELDS: list[tuple[str, Any]] = [
     ("code", "ÉÉ"),
     ("shape", "hexagon"),
     ("color", "#4d4d99"),
+    ("color", "violet"),
+    ("color", "teal "),
     ("color", "Indigo"),
     ("color", ""),
     ("spacing_ms", 49),
@@ -182,6 +184,8 @@ BAD_FIELDS: list[tuple[str, Any]] = [
     ("url", "https://store-a.example/#x"),
     ("url", "https://store-a.example/a b"),
     ("url", "https://store-a.example/../x"),
+    ("url", "https://store-a.example/a%2Fb"),
+    ("url", "https://store-a.example/%2e%2e/x"),
     ("url", "https://store-a.example//x"),
     ("url", "https://störe-a.example"),
     ("url", "https://store-a.example:99999"),
@@ -344,7 +348,7 @@ def test_patching_a_store_that_is_not_there_is_a_404() -> None:
         404,
         {"error": "not_found"},
     )
-    assert error(client.patch("/api/stores/-1", headers=WRITE_HEADERS, json={"name": "x"}))[0] == 404
+    assert error(client.patch("/api/stores/-1", headers=WRITE_HEADERS, json={"name": "x"}))[0] == 422
     assert error(client.patch("/api/stores/abc", headers=WRITE_HEADERS, json={"name": "x"}))[0] == 422
 
 

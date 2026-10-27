@@ -45,7 +45,9 @@ def test_a_mask_is_the_prefix_four_dots_and_the_last_four_whatever_the_length() 
     assert mask("ck_" + "a" * 64) == f"ck_{DOTS}aaaa"
     assert len(mask("ck_" + "a" * 20) or "") == len(mask("ck_" + "a" * 64) or "")  # the length never shows
     assert mask(None) is None
-    assert mask("short") == DOTS  # a value too short to show any of
+    assert mask("short") == f"sho{DOTS}"  # a short value shows no tail at all
+    assert mask("ck_" + "a" * 19) == f"ck_{DOTS}"  # 22 characters: below the length that shows a tail
+    assert mask("ck_" + "a" * 20) == f"ck_{DOTS}aaaa"  # 23: the shortest valid key shows its last four
 
 
 def test_the_pair_shapes_are_checked() -> None:

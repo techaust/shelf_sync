@@ -187,6 +187,13 @@ def set_log_retention(handler: TimedRotatingFileHandler, retention_days: int) ->
         handler.release()
 
 
+def _quiet_http_loggers() -> None:
+    """httpx logs every request at INFO with its full URL (a store's address, a signed link's query). Nothing in
+    ShelfSync logs a URL, so both HTTP libraries are held at WARNING whatever else sets the level."""
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:
     """Send every log record (ShelfSync's and uvicorn's) to logs\\shelfsync.log; return the handler.
 
@@ -203,6 +210,7 @@ def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileH
     root = logging.getLogger()
     root.addHandler(handler)
     root.setLevel(logging.INFO)
+    _quiet_http_loggers()
     return handler
 
 
@@ -215,6 +223,7 @@ def configure_append_logging(logs_dir: Path) -> logging.Handler:
     root = logging.getLogger()
     root.addHandler(handler)
     root.setLevel(logging.INFO)
+    _quiet_http_loggers()
     return handler
 
 

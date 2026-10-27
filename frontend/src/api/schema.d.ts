@@ -266,8 +266,11 @@ export interface components {
         CreateStoreRequest: {
             /** Code */
             code: string;
-            /** Color */
-            color: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "indigo" | "teal";
             /** Consumer Key */
             consumer_key: string;
             /** Consumer Secret */
@@ -410,8 +413,11 @@ export interface components {
         StoreModel: {
             /** Code */
             code: string;
-            /** Color */
-            color: string;
+            /**
+             * Color
+             * @enum {string}
+             */
+            color: "indigo" | "teal";
             health: components["schemas"]["HealthModel"];
             /** Id */
             id: number;
@@ -492,7 +498,7 @@ export interface components {
             /** Code */
             code?: string | null;
             /** Color */
-            color?: string | null;
+            color?: ("indigo" | "teal") | null;
             /** Consumer Key */
             consumer_key?: string | null;
             /** Consumer Secret */

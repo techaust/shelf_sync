@@ -13,13 +13,14 @@ the request. **No response holds a consumer key or secret**: only the masks (`ck
     POST   /api/stores/{id}/test    200 StoreTestResponse (a failed test is still a 200 with `ok: false`); 409 busy,
                                     keys_missing; 404 not_found
 
-`color` is a palette key: the palette itself is not defined yet (the plan's open question 4), so for now it is only
-checked for shape (a short lowercase identifier).
+`color` is a palette key, `indigo` (GF's pair) or `teal` (PW's pair) from 05 section 2.3 (no database CHECK); the
+frontend maps each key to its light and dark colours (`frontend/src/styles/storePalette.ts`). A store id is 1 to
+2**63 - 1 (SQLite's integers are 64-bit), so a huge one is a 422, never a 500.
 """
 
 from typing import Annotated, Any, Literal, Self
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Path, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shelfsync.api.errors import ApiError, ErrorResponse
@@ -33,8 +34,9 @@ HealthState = Literal["unknown", "connected", "unreachable", "refused"]
 Name = Annotated[str, Field(min_length=1, max_length=60)]
 Button = Annotated[str, Field(min_length=1, max_length=40)]
 Code = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
-Color = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,23}$")]  # a palette key (the palette is still to be defined)
+Color = Literal["indigo", "teal"]
 Spacing = Annotated[int, Field(strict=True, ge=50, le=5000)]
+StoreId = Annotated[int, Path(ge=1, le=2**63 - 1)]
 ConsumerKey = Annotated[str, Field(pattern=r"^ck_[A-Za-z0-9]{20,64}$")]
 ConsumerSecret = Annotated[str, Field(pattern=r"^cs_[A-Za-z0-9]{20,64}$")]
 
@@ -132,7 +134,7 @@ class StoreModel(BaseModel):
     url: str
     code: str
     shape: Shape
-    color: str
+    color: Color
     spacing_ms: int
     main_button: str
     state: Literal["active", "paused"]
@@ -166,7 +168,7 @@ def to_model(view: StoreView) -> StoreModel:
         url=row.url,
         code=row.code,
         shape=row.shape,  # type: ignore[arg-type]  # the table's CHECK allows only these
-        color=row.color,
+        color=row.color,  # type: ignore[arg-type]  # written only through the API's own Literal
         spacing_ms=row.spacing_ms,
         main_button=row.main_button,
         state=row.state,  # type: ignore[arg-type]
@@ -212,7 +214,7 @@ def make_stores_router(service: StoreService) -> APIRouter:
         return to_model(view)
 
     @router.patch(f"{STORES_PATH}/{{store_id}}", response_model=StoreModel, responses=_ERRORS)
-    def update_store(store_id: int, body: UpdateStoreRequest) -> StoreModel:
+    def update_store(store_id: StoreId, body: UpdateStoreRequest) -> StoreModel:
         fields = body.model_dump(exclude_unset=True)
         key = fields.pop("consumer_key", None)
         secret = fields.pop("consumer_secret", None)
@@ -223,7 +225,7 @@ def make_stores_router(service: StoreService) -> APIRouter:
         return to_model(view)
 
     @router.put(f"{STORES_PATH}/{{store_id}}/keys", status_code=204, responses=_ERRORS)
-    def put_keys(store_id: int, body: KeysRequest) -> Response:
+    def put_keys(store_id: StoreId, body: KeysRequest) -> Response:
         try:
             service.set_keys(store_id, body.consumer_key, body.consumer_secret)
         except StoreError as error:
@@ -231,7 +233,7 @@ def make_stores_router(service: StoreService) -> APIRouter:
         return Response(status_code=204)
 
     @router.delete(f"{STORES_PATH}/{{store_id}}", status_code=204, responses=_ERRORS)
-    def delete_store(store_id: int) -> Response:
+    def delete_store(store_id: StoreId) -> Response:
         try:
             service.delete(store_id)
         except StoreError as error:
@@ -239,7 +241,7 @@ def make_stores_router(service: StoreService) -> APIRouter:
         return Response(status_code=204)
 
     @router.post(f"{STORES_PATH}/{{store_id}}/test", response_model=StoreTestResponse, responses=_ERRORS)
-    def test_store(store_id: int) -> StoreTestResponse:
+    def test_store(store_id: StoreId) -> StoreTestResponse:
         try:
             report = service.test(store_id)
         except StoreError as error:
