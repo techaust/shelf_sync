@@ -120,8 +120,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         service.start()
-        backup_service.start()
         try:
+            backup_service.start()
             yield
         finally:
             backup_service.stop()

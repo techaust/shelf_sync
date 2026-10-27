@@ -122,13 +122,26 @@ def _safety_copy(paths: DataPaths, moment: datetime) -> str | None:
     database = paths.database
     if not database.exists():
         return None
+    # The raw files (database, `-wal`, `-shm`) are copied FIRST, before anything opens the database (opening it can
+    # change the `-shm`), so a damaged database is kept exactly as it was: the restore removes the `-wal`, and
+    # committed changes may still sit in it. If any copy fails the ones made are removed and the restore doesn't start.
+    raw = _raw_copy(paths, moment)
     try:
-        return Path(take_snapshot(paths, "restore", lambda: moment).path).name
+        name = Path(take_snapshot(paths, "restore", lambda: moment).path).name
     except BackupError:
-        pass
-    # Unreadable as a database (the very case a restore is for): keep the raw files, so nothing is lost. The `-wal` and
-    # `-shm` go too: the restore removes them, and committed changes may still sit in the `-wal`. If any copy fails the
-    # ones made are removed and the restore doesn't start.
+        return raw[0].name  # unreadable as a database (the very case a restore is for): the raw copy is what is kept
+    except BaseException:
+        for leftover in raw:
+            leftover.unlink(missing_ok=True)
+        raise
+    for leftover in raw:  # a readable database has its proper snapshot; the raw copy isn't needed
+        leftover.unlink(missing_ok=True)
+    return name
+
+
+def _raw_copy(paths: DataPaths, moment: datetime) -> list[Path]:
+    """`pre-rollback-damaged-<UTC>.db` and its `-wal` and `-shm` (those that exist). BackupError if any copy fails."""
+    database = paths.database
     stamp = moment.strftime("%Y%m%dT%H%M%SZ")
     target = paths.backups / f"pre-rollback-damaged-{stamp}.db"
     made: list[Path] = []
@@ -143,7 +156,7 @@ def _safety_copy(paths: DataPaths, moment: datetime) -> str | None:
         for leftover in made:
             leftover.unlink(missing_ok=True)
         raise BackupError("backup_failed") from None
-    return target.name
+    return made
 
 
 def restore_command(

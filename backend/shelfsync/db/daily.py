@@ -128,11 +128,21 @@ def _protected(paths: DataPaths) -> set[Path]:
     return protected
 
 
-def prune(paths: DataPaths, keep: int) -> list[str]:
-    """Delete the daily backups beyond the newest `keep` (see the module text). Returns the names deleted. One that
-    can't be deleted is logged and skipped."""
+def is_wrong_clock(moment: datetime, now: datetime) -> bool:
+    """A stamp later than now plus a day: written by a wrong clock, so it is no backup made, and never outranks a real
+    one."""
+    return moment > now + FUTURE_MARGIN
+
+
+def prune(paths: DataPaths, keep: int, now: datetime | None = None) -> list[str]:
+    """Delete the daily backups beyond the newest `keep` (see the module text). Wrong-clock stamps (`is_wrong_clock`)
+    rank as the oldest, so they go first and never push out a real backup. Returns the names deleted. One that can't
+    be deleted is logged and skipped."""
     keep = max(keep, BACKUPS_KEPT_MIN)
-    found = daily_backups(paths)
+    moment_now = now if now is not None else utc_now()
+    found = sorted(
+        daily_backups(paths), key=lambda item: (not is_wrong_clock(item[0], moment_now), item[0], item[1].name)
+    )
     protected = _protected(paths)
     removed: list[str] = []
     for _, entry in found[: max(len(found) - keep, 0)]:
@@ -190,7 +200,9 @@ class DailyBackups:
     # ---- what is due ----------------------------------------------------------------------------------------------
 
     def last_backup(self) -> tuple[datetime, Path] | None:
-        found = daily_backups(self._paths)
+        """The newest real daily backup (a wrong-clock stamp doesn't count)."""
+        now = self._now()
+        found = [item for item in daily_backups(self._paths) if not is_wrong_clock(item[0], now)]
         return found[-1] if found else None
 
     def is_due(self) -> bool:
@@ -198,11 +210,8 @@ class DailyBackups:
         slot = latest_slot(now, self._local)
         if self._failed_slot == slot:
             return False  # tried for this slot and failed: the next slot (or the next start) tries again
-        limit = now + FUTURE_MARGIN
-        made = [
-            moment for moment, _ in daily_backups(self._paths) if moment <= limit
-        ]  # a wrong clock's stamp is no backup
-        return not made or made[-1] < slot
+        last = self.last_backup()
+        return last is None or last[0] < slot
 
     def next_run(self) -> datetime:
         """When the next backup will be made: now if one is due, otherwise the next 02:00 local time."""
@@ -233,6 +242,12 @@ class DailyBackups:
                     connection.close()
                 os.replace(part, final)
                 made = True
+                with contextlib.suppress(Exception):  # the setting may have been lowered while the copy ran
+                    again = self._connect()
+                    try:
+                        kept = kept_setting(again)
+                    finally:
+                        again.close()
             except Exception as error:  # whatever it was, it is logged, the slot is remembered and no .part stays
                 _log.error(
                     "The daily database backup failed (%s); it will be tried again at the next due time", _why(error)
@@ -242,11 +257,12 @@ class DailyBackups:
             finally:
                 if not made:
                     for leftover in _part_files(part):
-                        leftover.unlink(missing_ok=True)
+                        with contextlib.suppress(OSError):
+                            leftover.unlink(missing_ok=True)
             self._failed_slot = None
             _log.info("The daily database backup was made")
             try:
-                prune(self._paths, kept)  # only now: the new backup passed its check
+                prune(self._paths, kept, moment)  # only now: the new backup passed its check
             except Exception as error:  # a retention problem never fails or stops the backup
                 _log.warning("Pruning old daily backups failed: %s", type(error).__name__)
             return True
@@ -262,7 +278,7 @@ class DailyBackups:
                 kept = kept_setting(connection)
             finally:
                 connection.close()
-            return prune(self._paths, kept)
+            return prune(self._paths, kept, self._now())
         finally:
             self._lock.release()
 
@@ -283,6 +299,7 @@ class DailyBackups:
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
+            self._stop.clear()  # a stop that timed out is called off: the old loop keeps running
             return  # the previous loop is still winding down: no second one beside it
         self.clean_parts()
         self._stop.clear()

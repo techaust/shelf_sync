@@ -105,8 +105,9 @@ class BackupSettingsService:
         found = daily_backups(daily.paths)
         last_at: str | None = None
         last_bytes: int | None = None
-        if found:
-            moment, path = found[-1]
+        newest = daily.last_backup()  # the newest real one: a wrong clock's stamp isn't reported
+        if newest is not None:
+            moment, path = newest
             last_at = to_iso(moment)
             try:
                 last_bytes = path.stat().st_size

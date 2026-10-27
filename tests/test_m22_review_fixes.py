@@ -72,8 +72,8 @@ def test_l4_a_daily_stamp_in_the_future_is_no_backup_made_but_still_counts_for_r
     assert rig.daily.run_once()
     rig.keep(1)
     rig.daily.prune_now()
-    assert future.exists()  # the newest by stamp is kept
-    assert not (rig.paths.backups / daily_name(at(20))).exists()
+    assert not future.exists()  # a wrong clock's stamp ranks oldest (N1): it goes first
+    assert (rig.paths.backups / daily_name(at(20))).exists()
 
 
 def test_l4_a_stamp_within_the_margin_counts_as_made(tmp_path: Path) -> None:
