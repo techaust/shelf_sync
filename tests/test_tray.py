@@ -150,6 +150,7 @@ class FakeIcon:
     instances: ClassVar[list["FakeIcon"]] = []
     auto_ready: ClassVar[bool] = True
     stop_delay: ClassVar[float] = 0.0
+    loop_never_ends: ClassVar[bool] = False  # `stop()` and `_stop()` post a message that is never handled
 
     def __init__(self, name: str, icon: Any, title: str, menu: Any) -> None:
         self.name, self._icon, self.title, self._menu = name, icon, title, menu
@@ -159,6 +160,7 @@ class FakeIcon:
         self.setup: Callable[[Any], None] | None = None
         self.visible = False
         self.stopped_before_ready = False
+        self.reposts = 0
         self.stop_event = threading.Event()
         self.loop_daemon: bool | None = None
         self.setup_thread_daemon: bool | None = None
@@ -205,11 +207,15 @@ class FakeIcon:
         if self.setup is not None and not self.visible:
             self.stopped_before_ready = True
         # Like pystray: stopping a loop that isn't up does nothing. One that is up ends after a teardown delay.
-        if self.visible:
+        if self.visible and not FakeIcon.loop_never_ends:
             if FakeIcon.stop_delay:
                 threading.Timer(FakeIcon.stop_delay, self.stop_event.set).start()
             else:
                 self.stop_event.set()
+
+    def _stop(self) -> None:
+        """pystray's private re-post of the stop message."""
+        self.reposts += 1
 
 
 class FakeMenu:
@@ -231,6 +237,7 @@ def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.SimpleNamesp
     FakeIcon.instances = []
     FakeIcon.auto_ready = True
     FakeIcon.stop_delay = 0.0
+    FakeIcon.loop_never_ends = False
     module = types.SimpleNamespace(Icon=FakeIcon, Menu=FakeMenu, MenuItem=FakeMenuItem)
     monkeypatch.setitem(sys.modules, "pystray", module)
     yield module
@@ -271,7 +278,7 @@ def test_start_shows_the_normal_icon_with_the_menu_and_the_tooltip(fake_pystray:
         items[0].action()
         items[2].action()
         items[4].action()
-        assert calls == ["open", "logs", "quit"]
+        assert wait_for(lambda: sorted(calls) == ["logs", "open", "quit"])
     finally:
         tray.stop()
     assert icon.stopped
@@ -353,7 +360,7 @@ def test_a_menu_action_that_raises_does_not_escape(
                     item.action()
     finally:
         tray.stop()
-    assert caplog.text.count("failed (RuntimeError)") == 3
+    assert wait_for(lambda: caplog.text.count("failed (RuntimeError)") == 3)
 
 
 def test_a_missing_icon_file_is_logged_and_the_tray_stays_up(
@@ -514,7 +521,8 @@ def test_the_real_icon_stopped_straight_after_start_really_stops() -> None:
     icon = tray._icon
     assert icon is not None
     tray.stop()
-    assert wait_for(lambda: not icon._running)  # type: ignore[attr-defined]
+    assert tray._loop is not None
+    assert wait_for(lambda: not tray._loop.is_alive() if tray._loop else True)  # the loop really ended
 
 
 def test_the_loop_thread_and_pystrays_setup_thread_are_daemon(fake_pystray: types.SimpleNamespace) -> None:

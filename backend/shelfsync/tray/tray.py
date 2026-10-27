@@ -3,12 +3,20 @@
 Menu: Open ShelfSync (the default item, bold; a click on the icon runs it too), Pause everything / Resume (shown,
 greyed out until M5), View logs, a separator, Quit. Tooltip "ShelfSync".
 
-Threads: the icon's message loop runs in a daemon thread of ours (`tray-loop`) that calls `Icon.run(setup)`, so the
-main thread stays free for the launcher's wait loop (which Ctrl+C can interrupt). pystray's docs say `run()` should be
+Threads: Open and View logs run in a short daemon thread each (`tray-action-<name>`), never on the loop thread: pystray
+runs menu actions synchronously inside its WM_NOTIFY handler, so a slow `os.startfile` there would hold up the loop
+(and the stop message behind it). Quit stays inline: it only sets two events.
+
+The icon's message loop runs in a daemon thread of ours (`tray-loop`) that calls `Icon.run(setup)`, so the main
+thread stays free for the launcher's wait loop (which Ctrl+C can interrupt). pystray's docs say `run()` should be
 called from the main thread "for platform independence"; the win32 backend creates its window and loop in whichever
 thread runs it (its own `run_detached` does exactly this, in a non-daemon thread). Daemon matters: pystray starts its
 setup thread from the thread that calls `run()`, so that one is daemon too, and if the loop never comes up (or comes
 up after `stop()` gave up waiting) neither thread can keep the process, and the single-instance lock, alive.
+
+`stop()` checks its work: the loop may outlive `Icon.stop()` (it only posts a message). It joins the loop for 2 s; if
+it is still alive it logs a warning, posts the stop once more, hides the icon (so it leaves the tray even if the loop
+never ends) and joins 1 s more.
 
 Theme: pystray has no callback for a taskbar theme change, so a small thread re-reads the setting every few seconds
 and swaps the icon.
@@ -16,6 +24,7 @@ and swaps the icon.
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +77,15 @@ def _guarded(name: str, action: Callable[[], None]) -> Callable[[], None]:
     return run
 
 
+def _off_loop(name: str, action: Callable[[], None]) -> Callable[[], None]:
+    """Run `action` in its own short daemon thread, so pystray's WM_NOTIFY handler returns at once."""
+
+    def start() -> None:
+        threading.Thread(target=action, name=f"tray-action-{name}", daemon=True).start()
+
+    return start
+
+
 class Tray:
     """Owns the pystray icon. Built with callbacks, so tests and the launcher decide what each item does."""
 
@@ -85,9 +103,9 @@ class Tray:
         ready_timeout: float = READY_TIMEOUT_SECONDS,
     ) -> None:
         self._state = state
-        self._on_open = _guarded("open", on_open)
-        self._on_view_logs = _guarded("view logs", on_view_logs)
-        self._on_quit = _guarded("quit", on_quit)
+        self._on_open = _off_loop("open", _guarded("open", on_open))
+        self._on_view_logs = _off_loop("view-logs", _guarded("view logs", on_view_logs))
+        self._on_quit = _guarded("quit", on_quit)  # inline: two events, and a hung Open must not queue ahead of it
         self._light_taskbar = light_taskbar
         self._icon_size = icon_size
         self._icon_dir = icon_dir
@@ -101,6 +119,7 @@ class Tray:
         self._watcher: threading.Thread | None = None
         self._loop: threading.Thread | None = None
         self._shown: tuple[IconState, bool] | None = None
+        self._menu_paused: bool | None = None  # the paused flag the menu was last built for
         self._lock = threading.Lock()
 
     # --- pystray objects -------------------------------------------------------------------------------------
@@ -130,6 +149,7 @@ class Tray:
         import pystray
 
         self._shown = self._key()
+        self._menu_paused = self._state.paused
         image = self._image(self._shown)
         self._icon = pystray.Icon("ShelfSync", image, TOOLTIP, self._pystray_menu())
         self._state.subscribe(self.refresh)
@@ -149,8 +169,10 @@ class Tray:
             self._ready.set()
 
     def stop(self) -> None:
+        started = time.monotonic()
         self._stop.set()
-        icon, self._icon = self._icon, None
+        with self._lock:  # `refresh()` must not touch an icon that is being stopped
+            icon, self._icon = self._icon, None
         if icon is not None:
             # `Icon.stop()` before the loop is up does nothing, so wait for it to come up first. If it never does
             # (pystray's thread failed) stop anyway and carry on: the loop and setup threads are daemon, so they
@@ -167,6 +189,25 @@ class Tray:
             loop = self._loop
             if self._ready.is_set() and loop is not None and loop is not threading.current_thread():
                 loop.join(timeout=2)
+                if loop.is_alive():
+                    self._force_stop(icon, loop)
+                    return
+        if self._watcher is not None:
+            self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
+        _log.info("Tray stopped in %.1f s", time.monotonic() - started)
+
+    def _force_stop(self, icon: Any, loop: threading.Thread) -> None:
+        """The message loop didn't end in time: post the stop again, and take the icon out of the tray ourselves."""
+        _log.warning("The tray icon's message loop didn't end in 2 seconds")
+        try:
+            icon._stop()  # pystray 0.19.5 private API: posts WM_STOP again (re-run `-m windows` on every upgrade)
+        except Exception as error:
+            _log.warning("The tray icon's stop couldn't be posted again (%s)", type(error).__name__)
+        try:
+            icon.visible = False  # removes the icon from the tray even if the loop never ends
+        except Exception as error:
+            _log.warning("The tray icon couldn't be hidden (%s)", type(error).__name__)
+        loop.join(timeout=1)
         if self._watcher is not None:
             self._watcher.join(timeout=THEME_POLL_SECONDS + 1)
 
@@ -178,7 +219,9 @@ class Tray:
                 return
             key = self._key()
             # The menu first: its text (Resume) must follow the state even if the image fails.
-            icon.menu = self._pystray_menu()
+            if self._state.paused != self._menu_paused:
+                self._menu_paused = self._state.paused
+                icon.menu = self._pystray_menu()
             try:
                 image = self._image(key)
             except Exception as error:  # a missing or damaged .ico must not stop the tray
