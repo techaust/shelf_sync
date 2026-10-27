@@ -471,6 +471,7 @@ def test_the_real_uninstall_entry_is_used_only_by_an_installed_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = make_rig(tmp_path, monkeypatch, ("0.0.1", "0.0.2"), "0.0.1").paths
+    monkeypatch.setattr(switch, "_make_lock", lambda paths: FakeLock())  # the real mutex exists on Windows only
     monkeypatch.setattr(switch, "installed_root", lambda: None)
     env = switch.default_env(paths)
     assert isinstance(env.uninstall, MemoryUninstallEntry) and env.uninstall.set_display_version("0.0.2") is False
