@@ -18,6 +18,7 @@ a new backup passed its check (a failed backup prunes nothing), and at once when
 """
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -34,7 +35,7 @@ from shelfsync.db.migrate import applied_versions
 from shelfsync.db.settings import BACKUPS_KEPT_MAX, BACKUPS_KEPT_MIN, DEFAULTS, get_setting
 from shelfsync.paths import DataPaths, is_plain_file, remove_entry
 from shelfsync.update.layout import UpdatePaths
-from shelfsync.update.state import StateStore
+from shelfsync.update.state import MAX_STATE_BYTES, StateError, state_from_json
 
 _log = logging.getLogger("shelfsync.db")
 
@@ -44,7 +45,8 @@ STOP_WAIT_SECONDS = 2.0  # how long a stop waits for a backup that is running
 
 STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 _DAILY_NAME = re.compile(r"^daily-(\d{8}T\d{6}Z)\.db$")
-_DAILY_PART = re.compile(r"^daily-\d{8}T\d{6}Z\.db\.part$")
+_DAILY_PART = re.compile(r"^daily-\d{8}T\d{6}Z\.db\.part(-journal|-wal|-shm)?$")  # and SQLite's side files
+FUTURE_MARGIN = timedelta(days=1)  # a daily stamp later than now + this is a wrong clock's, not a backup made
 
 
 def daily_name(moment: datetime) -> str:
@@ -103,11 +105,20 @@ def daily_backups(paths: DataPaths) -> list[tuple[datetime, Path]]:
 
 
 def _protected(paths: DataPaths) -> set[Path]:
-    """The files `update\\state.json` names (the backup a kept version still needs), by resolved path."""
+    """The file `update\\state.json` names (the backup a kept version still needs), by path and resolved path. A
+    read-only look: nothing is set aside, removed or logged by the updater's loader; a missing, large, malformed or
+    linked file protects nothing extra (a daily name can't be a pre-migration path anyway)."""
     protected: set[Path] = set()
+    path = UpdatePaths(paths).state_json
     try:
-        record = StateStore(UpdatePaths(paths)).load().backup
-    except OSError:
+        if not is_plain_file(path):
+            return protected
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_STATE_BYTES + 1)
+        if len(raw) > MAX_STATE_BYTES:
+            return protected
+        record = state_from_json(json.loads(raw.decode("utf-8"))).backup
+    except OSError, ValueError, StateError:
         return protected
     if record is not None:
         named = Path(record.path)
@@ -139,8 +150,12 @@ def prune(paths: DataPaths, keep: int) -> list[str]:
 
 
 def kept_setting(connection: sqlite3.Connection) -> int:
-    """`db_backups_kept`, or the default if the stored value is out of range or not a number."""
-    value = get_setting(connection, "db_backups_kept")
+    """`db_backups_kept`, or the default if the stored value is out of range, not a number or not even JSON."""
+    try:
+        value = get_setting(connection, "db_backups_kept")
+    except ValueError:
+        _log.warning("The stored setting 'db_backups_kept' isn't valid; the default is used")
+        return int(DEFAULTS["db_backups_kept"])
     if type(value) is int and BACKUPS_KEPT_MIN <= value <= BACKUPS_KEPT_MAX:
         return value
     return int(DEFAULTS["db_backups_kept"])
@@ -183,8 +198,11 @@ class DailyBackups:
         slot = latest_slot(now, self._local)
         if self._failed_slot == slot:
             return False  # tried for this slot and failed: the next slot (or the next start) tries again
-        last = self.last_backup()
-        return last is None or last[0] < slot
+        limit = now + FUTURE_MARGIN
+        made = [
+            moment for moment, _ in daily_backups(self._paths) if moment <= limit
+        ]  # a wrong clock's stamp is no backup
+        return not made or made[-1] < slot
 
     def next_run(self) -> datetime:
         """When the next backup will be made: now if one is due, otherwise the next 02:00 local time."""
@@ -201,25 +219,30 @@ class DailyBackups:
             slot = latest_slot(moment, self._local)
             final = self._paths.backups / daily_name(moment)
             part = final.with_name(final.name + ".part")
+            made = False
             try:
                 self._paths.backups.mkdir(parents=True, exist_ok=True)
                 connection = self._connect()
                 try:
+                    kept = kept_setting(connection)  # before the copy: a bad stored value can't leave a .part behind
                     versions = applied_versions(connection)
                     if not versions:
                         raise BackupError("backup_failed")
                     write_checked_copy(connection, part, max(versions))
-                    kept = kept_setting(connection)
                 finally:
                     connection.close()
                 os.replace(part, final)
-            except (BackupError, OSError, sqlite3.Error) as error:
+                made = True
+            except Exception as error:  # whatever it was, it is logged, the slot is remembered and no .part stays
                 _log.error(
                     "The daily database backup failed (%s); it will be tried again at the next due time", _why(error)
                 )
                 self._failed_slot = slot
-                part.unlink(missing_ok=True)
                 return False
+            finally:
+                if not made:
+                    for leftover in _part_files(part):
+                        leftover.unlink(missing_ok=True)
             self._failed_slot = None
             _log.info("The daily database backup was made")
             try:
@@ -231,18 +254,22 @@ class DailyBackups:
     def prune_now(self) -> list[str]:
         """Apply the kept number at once (the setting was lowered): removes the oldest daily backups beyond the newest
         `db_backups_kept`. Returns the names removed."""
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return []  # a backup is running: it prunes when it is done, so a save never waits on it
+        try:
             connection = self._connect()
             try:
                 kept = kept_setting(connection)
             finally:
                 connection.close()
             return prune(self._paths, kept)
+        finally:
+            self._lock.release()
 
     # ---- start and stop -------------------------------------------------------------------------------------------
 
     def clean_parts(self) -> None:
-        """Remove `daily-*.db.part` left by a crash."""
+        """Remove `daily-*.db.part` (and its `-journal`, `-wal`, `-shm`) left by a crash."""
         try:
             entries = list(self._paths.backups.iterdir())
         except OSError:
@@ -255,6 +282,8 @@ class DailyBackups:
                     _log.warning("A leftover partial backup couldn't be removed: %s", type(error).__name__)
 
     def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return  # the previous loop is still winding down: no second one beside it
         self.clean_parts()
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="daily-backup", daemon=True)
@@ -277,6 +306,11 @@ class DailyBackups:
                 _log.warning("The daily backup check failed: %s", type(error).__name__)
             if self._stop.wait(self._interval):
                 return
+
+
+def _part_files(part: Path) -> list[Path]:
+    """The `.part` and the side files SQLite may have made beside it."""
+    return [part, *(part.with_name(part.name + suffix) for suffix in ("-journal", "-wal", "-shm"))]
 
 
 def _why(error: Exception) -> str:

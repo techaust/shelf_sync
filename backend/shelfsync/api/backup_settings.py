@@ -11,6 +11,7 @@ Lowering `db_backups_kept` removes the surplus daily backups at once (`DailyBack
 8601; the screen shows them in Windows local time with the zone name.
 """
 
+import logging
 import sqlite3
 import threading
 import uuid
@@ -32,6 +33,8 @@ from shelfsync.db.settings import (
     SNAPSHOT_DAYS_MIN,
     set_setting,
 )
+
+_log = logging.getLogger("shelfsync.api.settings")
 
 BACKUP_SETTINGS_PATH = "/api/settings/backup"
 _KEYS = ("db_backups_kept", "snapshot_retention_days")
@@ -132,9 +135,12 @@ class BackupSettingsService:
                     raise
             finally:
                 connection.close()
-            if self._daily is not None and new.db_backups_kept < before["db_backups_kept"]:
-                self._daily.prune_now()  # lowered: the surplus goes at once
-            return BackupSettingsValues(**new.model_dump())
+        if self._daily is not None and new.db_backups_kept < before["db_backups_kept"]:
+            try:
+                self._daily.prune_now()  # lowered: the surplus goes at once (skipped while a backup runs)
+            except Exception as error:  # the save is done: the next backup prunes
+                _log.warning("Pruning after the setting was lowered failed: %s", type(error).__name__)
+        return BackupSettingsValues(**new.model_dump())
 
 
 def make_backup_settings_router(service: BackupSettingsService) -> APIRouter:
