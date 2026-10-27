@@ -80,10 +80,20 @@ Low finding: in `tests/test_exit_guard.py` the stall and clean tests now run eac
 _(no screens)_
 
 ## 5. Review
-_(reviewer)_
+_(reviewer, Opus 5.5 high, `code-review`; copied in by the lead)_
+
+**SEND BACK** (at `c027d3f`):
+1. High: CI couldn't get Python 3.14.8. uv 0.12.19's download list stops at 3.14.7 for Linux, and CI has no other Python, so both jobs would fail at `uv sync --locked`. Fixed by the lead with the owner's yes: `actions/setup-python` v7.0.0 (pinned by commit) reads `.python-version` in both jobs, and the workflow sets `UV_PYTHON_DOWNLOADS: never`.
+2. Low: `tests/test_exit_guard.py` left a child's pipe open, and a stalled child alive, on failure paths. Fixed in fix round 1 (`with run_child(...)` plus `kill()` in `finally`).
+3. Low: docs still named 3.12 (09, 04, 02 and the plan page, 04-A V11 and V12, ADR 0002). Fixed by the lead on `docs/m1a-closed`.
+4. Low: the hand check drove `request_quit()` from a script, not the real tray. The lead repeats it with the owner outside Claude.
+
+Checked correct: `uv.lock` changed no package name or version (only `requires-python`, the wheel lists and two `typing-extensions` entries that only applied below 3.13); `exclude-newer` unchanged; the PEP 758 `except A, B:` rewrites catch the same exceptions; the UP037 rewrites are safe under PEP 649; nothing silenced or loosened.
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-10-27)_
+- The branch was rebased onto `docs/m1a-closed` (today's record) so they go in one PR. The lead added the setup-python step to `.github/workflows/checks.yml` (`503aec4`; YAML checked).
+- Owner's checks outside Claude: see the handover.
 
 ## 7. Handover
 _(lead)_
