@@ -77,7 +77,7 @@ def remove_entry(entry: Path) -> None:
         # A link (a symlink, or a Windows directory junction) is removed itself, never followed into its target.
         try:
             entry.unlink()
-        except (IsADirectoryError, PermissionError):
+        except IsADirectoryError, PermissionError:
             entry.rmdir()  # how Windows removes a directory junction
     elif entry.is_dir():
         shutil.rmtree(entry)

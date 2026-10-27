@@ -44,7 +44,34 @@ _(lead, Opus 5.5 medium, 2026-10-27)_
 _(Tier B: none.)_
 
 ## 3. Builder report
-_(builder)_
+_(builder, Sonnet 5.5 medium, 2026-10-27)_
+
+**Skills:** no 09 section 3 skill fits this task (pure runtime move, no AWS/boto3 code touched). Context7 (`/websites/python_zh-cn_3_14`, the 3.14 docs) used for the "What's new" check.
+
+**Files changed:** `pyproject.toml` (requires-python `==3.14.*`, ruff `py314`, mypy `3.14`; `exclude-newer*` untouched), `.python-version` (3.14.8), `uv.lock`, `backend/shelfsync/logs.py`, `paths.py`, `tray/icons.py`, `tray/second_launch.py`, `tests/test_exit_guard.py`, `test_launcher.py`, `test_tray.py`, `test_windows_keyring.py`, this file. Commit: `chore(python): move to Python 3.14 [NFR-7]`.
+
+**Commands (all with `UV_PYTHON_DOWNLOADS=never`; heavy ones via `tools/heavy.sh`):**
+- `uv lock --python 3.14.8`: resolved 79 packages. Lock diff: `requires-python` line only, plus wheel lists (more entries for 3.14 wheels: +277/-140 `url` lines). **No `name`/`version` line changed.** uv noted "fork markers disjoint with requires-python" (expected, the old 3.12 fork was replaced).
+- `uv sync --locked`: ok; `.venv\Scripts\python.exe --version` = Python 3.14.8.
+- `ruff check`: 6 errors, all UP037 (quoted annotations, now unneeded on 3.14), fixed with `--fix`. `ruff format`: 3 files reformatted: py314 target rewrites `except (A, B):` to `except A, B:` (PEP 758, valid in 3.14 when there is no `as`). Applied as the brief says; 5 sites in `paths.py`, `second_launch.py`, `test_exit_guard.py`. Both now clean.
+- `mypy` (38 files): no issues.
+- `pytest` (default, `-W default` first run): 694 passed, 10 skipped, 32 deselected; final run 1 warning only (see below). Coverage total 88 %.
+- `coverage report --include=backend/shelfsync/secure/* --fail-under=90`: 100 %. inspect/, match/, apply/ do not exist yet (CI skips them too).
+- `bandit -r backend`: 0 issues.
+- `uv export --locked ...` + `pip-audit --require-hashes --disable-pip`: "No known vulnerabilities found".
+- `pytest -m windows --no-cov -W default`: 31 passed, 1 skipped (V31 Defender, owner present only).
+- `brand/`: `npm ci` (locked, 53 packages) then `npm test`: 221 passed.
+- Hand check: real launcher code (real server, real tray, `pythonw.exe` of the 3.14.8 venv) with throwaway `SHELFSYNC_DATA_DIR`, driven by a scratch script that skips the browser tab and calls `TrayServe.request_quit()` (the tray menu can't be clicked from here): `/api/health` answered 200 `{"app":"shelfsync","version":"0.1.0"}`, exit code 0, log shows "Tray stopped in 0.1 s" and "Threads at exit: MainThread (daemon=False)". Throwaway folder removed. Not the literal `uv run pythonw -m shelfsync.launcher` command, and Quit was not clicked in the real tray menu.
+
+**What's new 3.13/3.14 checked (Context7, 3.14 docs, plus a grep of `backend/`):** asyncio `get_event_loop()` now raises without a loop, `pathlib.PurePath.as_uri()` deprecated, `ctypes.ARRAY` soft-deprecated, `email.utils.localtime(isdst)` removed. Grep of `backend/` for get_event_loop, as_uri, ctypes.ARRAY, utcnow, utcfromtimestamp, `.warn(`, set_event_loop_policy, iscoroutinefunction: no hits. I did not read the full what's-new pages for sqlite3, zipfile, threading, faulthandler (only the grep and the green tests back that).
+
+**Warnings seen:**
+- Ours, fixed: `ResourceWarning: unclosed file` (4 warnings) from `tests/test_exit_guard.py` (child process stdout pipes never closed); now closed. Not new to 3.14 necessarily, shown because of `-W default`.
+- Third-party, left: `StarletteDeprecationWarning: Using httpx with starlette.testclient` (m1b.3's). pip-audit prints `cachecontrol: Cache entry deserialization failed, entry ignored` (stale cache entries, harmless, tool's own).
+
+**Not verified:** CI on GitHub (not run); the literal tray Quit click; Windows checks outside Claude (the lead repeats them); full what's-new pages for sqlite3/zipfile/threading/faulthandler.
+
+**Suggestions for the lead:** `.github/workflows/checks.yml` has no hardcoded 3.12 (no `python-version` line; it relies on `.python-version`/setup-uv): no change needed, though confirm setup-uv can find 3.14.8 on the runner (m1b.1 should pin it). Docs still naming 3.12: `docs/09-tooling.md:16` (Python 3.12.10 row), `docs/04-architecture.md:95` (local tools), `docs/02-plan.md:137` and `docs/02-plan-appendix/plan-page.src.html:200` (then republish the plan page), `docs/04-architecture-appendix/A-stack-verification.md:22` (V11 cites `python312._pth` / 3.12 docs; re-verify for 3.14), `docs/11-decisions.md:24` (historical, leave), `CLAUDE.md:58` ("moving from 3.12" can say 3.14 now). Note the unparenthesised `except A, B:` style may surprise readers; it is the py314 formatter's output.
 
 ## 4. Designer report
 _(no screens)_

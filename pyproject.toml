@@ -2,7 +2,7 @@
 name = "shelfsync"
 version = "0.1.0"
 description = "ShelfSync by TecHaust: updates WooCommerce downloads from vendor ZIPs (localhost only)."
-requires-python = "==3.12.*"
+requires-python = "==3.14.*"
 dependencies = [
     "fastapi==0.143.0",
     "uvicorn==0.54.0",
@@ -39,7 +39,7 @@ exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py314"
 src = ["backend", "tests"]
 # Only backend/ and tests/ are ShelfSync app code. The research and doc-build scripts are not linted here.
 extend-exclude = ["docs", "tools", "brand", ".claude"]
@@ -54,7 +54,7 @@ ignore = ["RUF001"]
 "tests/**" = ["T20"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 mypy_path = "backend"
 packages = ["shelfsync"]

@@ -31,7 +31,7 @@ def nearest_size(wanted: int) -> int:
     return min(AVAILABLE_SIZES, key=lambda size: (abs(size - wanted), size))
 
 
-def load_icon(path: Path, size: int) -> "Image":
+def load_icon(path: Path, size: int) -> Image:
     """The frame of the .ico nearest `size`, as a Pillow image (pystray saves it again and Windows loads that)."""
     from PIL import Image
 

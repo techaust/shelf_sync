@@ -282,12 +282,14 @@ def test_stalled_exit_is_ended_and_dumped(tmp_path: Path) -> None:
     still_alive = control.poll() is None
     control.kill()
     control.wait()
+    control.stdout.close()
     assert still_alive, "without the guard the child should still be stuck at 3 s"
 
     child = run_child(tmp_path, "stall")
     assert child.stdout is not None and child.stdout.readline().strip() == "armed"
     started = time.monotonic()
     code = child.wait(timeout=10)
+    child.stdout.close()
     assert code == 1 and time.monotonic() - started < 3
     dump = (tmp_path / "tmp" / STALL_FILE_NAME).read_text(encoding="utf-8")
     assert "Thread 0x" in dump and "stuck" in dump  # the function name is there ...
@@ -297,7 +299,10 @@ def test_stalled_exit_is_ended_and_dumped(tmp_path: Path) -> None:
 def test_clean_exit_leaves_an_empty_stall_file_and_code_0(tmp_path: Path) -> None:
     """UI-TRAY: nothing cancels the guard; a normal exit just ends first and leaves an empty file."""
     child = run_child(tmp_path, "clean")
-    assert child.wait(timeout=10) == 0
+    code = child.wait(timeout=10)
+    assert child.stdout is not None
+    child.stdout.close()
+    assert code == 0
     assert (tmp_path / "tmp" / STALL_FILE_NAME).read_bytes() == b""
 
 
@@ -369,7 +374,7 @@ def make_link(kind: str, stall: Path, target: Path) -> None:
     else:
         try:
             os.symlink(target, stall)
-        except (OSError, NotImplementedError):
+        except OSError, NotImplementedError:
             pytest.skip("this account can't make symlinks")
 
 

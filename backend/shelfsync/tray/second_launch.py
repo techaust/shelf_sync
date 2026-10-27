@@ -55,7 +55,7 @@ def read_runtime(paths: DataPaths) -> Running | None:
     try:
         data = json.loads(paths.runtime_json.read_text(encoding="utf-8"))
         port, pid = data["port"], data["pid"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except OSError, ValueError, KeyError, TypeError:
         return None
     if type(port) is not int or type(pid) is not int or pid <= 0 or not DEFAULT_PORT <= port <= LAST_PORT:
         return None
@@ -73,7 +73,7 @@ def answers_as_shelfsync(client: httpx.Client, port: int) -> bool:
     try:
         response = client.get(f"http://127.0.0.1:{port}{HEALTH_PATH}")
         return response.status_code == 200 and response.json().get("app") == "shelfsync"
-    except (httpx.HTTPError, ValueError, AttributeError):
+    except httpx.HTTPError, ValueError, AttributeError:
         return False
 
 
@@ -150,7 +150,7 @@ def _ask_for_ticket(client: httpx.Client, port: int, secrets: SecretStore) -> st
         # No Origin (httpx sends none): the ticket route refuses any Origin.
         response = client.post(f"http://127.0.0.1:{port}{TICKET_PATH}", headers={"Authorization": f"Bearer {token}"})
         ticket = response.json().get("ticket") if response.status_code == 200 else None
-    except (httpx.HTTPError, ValueError, AttributeError):
+    except httpx.HTTPError, ValueError, AttributeError:
         ticket = None
     if not isinstance(ticket, str):
         _log.warning("Second launch: the running copy gave no ticket")
