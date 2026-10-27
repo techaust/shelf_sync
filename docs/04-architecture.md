@@ -90,6 +90,7 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | CI actions (by commit SHA) | actions/checkout | v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1` | 2026-07-20 | MIT |
 | | actions/setup-node | v7.1.0 `949feb2413d6458794dcd2491c4babbbce0c15c1` | 2026-10-08 | MIT |
 | | astral-sh/setup-uv | v10.3.0 `1c37ad07a6a961277cf70c0d37d6f313000f5884` | 2026-10-09 | MIT |
+| | actions/setup-python | v7.0.0 `5fda3b95a4ea91299a34e894583c3862153e4b97` | 2026-07-20 | MIT (owner, 2026-10-27: CI's Python 3.14.8) |
 | | actions/upload-artifact | v7.0.2 `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 | MIT |
 
 Local tools already on this PC (not shipped): Python 3.14.8 (owner-installed from python.org, 2026-10-27; 3.12.10 also still installed), uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
