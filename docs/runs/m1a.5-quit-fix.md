@@ -1,6 +1,6 @@
 Status: open
 Tier: B ([12 §2](../12-models-and-usage.md): tray, launcher); the `reviewer` also runs `security-review`, because the stall report is a new output path ([06 §3](../06-security.md))
-Usage: `analyst claude-opus-5-5/high` (no 09 §3 skill fits a read-only diagnosis): 5-h 40 → 49 %
+Usage: `analyst claude-opus-5-5/high` (no 09 §3 skill fits a read-only diagnosis): 5-h 40 → 49 %; `builder claude-sonnet-5-5/medium` (no 09 §3 skill fits; Context7 for pystray), three rounds; `reviewer claude-opus-5-5/high` [`code-review`, `security-review`] and two re-checks, with one read-only `general-purpose` helper started by `code-review` (the 12 §3 exception). From `node tools/model-audit.mjs 2026-10-27`
 
 # M1a.5: Quit always exits
 
@@ -156,10 +156,30 @@ _(builder, Sonnet 5.5)_
 _(no screens)_
 
 ## 5. Review
-_(reviewer)_
+_(reviewer, Opus 5.5 high, `code-review` + `security-review`; copied in by the lead)_
+
+**Round 1 (at `a3c90b3`): APPROVE**, no critical or high findings; 2 medium, 7 low, all fixed in fix round 1:
+1. Medium: arming the guard unprotected in `finally` could skip the tray stop and the server stop on an OSError.
+2. Medium: the real hide test only checked pystray's `visible` flag, not the `Shell_NotifyIcon(NIM_DELETE)` result.
+3. Low: an Open in its action thread could fire after Quit.
+4. Low: the forced stop's last join wasn't logged.
+5. Low: the stall file's opens followed links in `tmp\`.
+6. Low: the "lock race" test was sequential and passed on the old code.
+7. Low: two `exit_guard.py` docstrings overstated what the guard covers.
+8. Low: the launcher resolved the data folder a second time to build the guard.
+9. Low: stage 2 started after the single-instance lock was released.
+
+**Re-check 1 (at `6998018`): APPROVE.** All nine fixed; two new low points (an exclusive create after removing a leftover; catch any error when arming, and give stage 2 10 s for a crash toast) and a style note (public link helpers in `paths.py`), all fixed in fix round 2.
+
+**Re-check 2 (at `b02c6dc`): APPROVE.** All three fixed, nothing broken, no new findings. `security-review` found no vulnerability it is confident in.
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-10-27)_
+- `fix/m1a.5-quit-build` fast-forwarded onto `fix/m1a.5-quit` (the brief's branch) at `b02c6dc`; the record changes (this file, [04-A](../04-architecture-appendix/A-stack-verification.md) V31, V34–V36, [06 §3](../06-security.md), four [11](../11-decisions.md) rows) committed on top.
+- **Owner re-test, outside Claude (Windows PowerShell), 2026-10-27:** run 1: start, Open from the menu, View logs, a second start, about 2 minutes, one Quit: closed; the log shows "Stopping (Quit: yes)", "Tray stopped in 0.0 s", "Threads at exit: MainThread (daemon=False)", and `tmp\shutdown-stall.txt` is empty. Run 2: start, one Quit: closed the same way. `pytest -m windows --no-cov` outside Claude: 31 passed, 1 skipped (V31).
+- **Full checks on the branch (lead, at `b02c6dc`, inside the Claude app):** `uv sync --locked`, `ruff check`, `ruff format --check`, `mypy` (38 files), `bandit -r backend` clean; `pytest` 694 passed, 10 skipped, 32 deselected; pip-audit as CI runs it: no known vulnerabilities (`.logs/m1a.5-int-checks.log`). CI: not run yet.
+- **Not verified:** the original field stall (never reproduced); a cold crash toast's time inside stage 2's 10 s; the symlink tests until CI runs them (this account can't make symlinks).
+- **Follow-ups:** the `httpx` deprecation warning from `starlette.testclient` (seen in the Windows checks); the M1b carry-overs in the status page.
 
 ## 7. Handover
 _(lead)_
