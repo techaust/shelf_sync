@@ -112,10 +112,15 @@ def is_installed_copy(executable: str | None = None) -> bool:
     return path.startswith(base)
 
 
-def launcher_command(executable: str | None = None) -> str:
-    """`"<...>\\pythonw.exe" -m shelfsync.launcher`, the path quoted, from the running interpreter's own folder."""
+BACKGROUND_FLAG = "--background"
+
+
+def launcher_command(executable: str | None = None, *, background: bool = False) -> str:
+    """`"<...>\\pythonw.exe" -m shelfsync.launcher`, the path quoted, from the running interpreter's own folder.
+    The Run value passes `background=True`: signing in to Windows starts ShelfSync in the tray with no browser tab."""
     folder = PureWindowsPath(executable or sys.executable).parent  # a Windows path on every platform (the Run value)
-    return f'"{folder / "pythonw.exe"}" -m shelfsync.launcher'
+    command = f'"{folder / "pythonw.exe"}" -m shelfsync.launcher'
+    return f"{command} {BACKGROUND_FLAG}" if background else command
 
 
 def apply_start_with_windows(
@@ -139,7 +144,7 @@ def apply_start_with_windows(
     key = run_key if run_key is not None else WindowsRunKey()
     current = key.get(name)
     if enabled:
-        wanted = command if command is not None else launcher_command()
+        wanted = command if command is not None else launcher_command(background=True)
         if current == wanted:
             return "unchanged"
         key.set(name, wanted)

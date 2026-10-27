@@ -13,12 +13,20 @@ import uvicorn
 from fastapi import FastAPI
 
 from shelfsync import messages
-from shelfsync.api.app import UI_DIR, create_app
+from shelfsync.api.app import create_app
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError, migrate
 from shelfsync.db.settings import DEFAULTS, get_all_settings
 from shelfsync.logs import configure_logging, install_output_guards, remove_logging, report_ctrl_c
-from shelfsync.paths import DataPaths, create_data_folders, empty_tmp, resolve_data_paths, write_runtime_json
+from shelfsync.paths import (
+    DataPaths,
+    UiMissingError,
+    create_data_folders,
+    empty_tmp,
+    resolve_data_paths,
+    ui_dir,
+    write_runtime_json,
+)
 from shelfsync.platform.notify import LogNotifier, Notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT
@@ -149,6 +157,7 @@ def _start(
 ) -> int:
     # Only the one running copy gets here (the instance lock is held), so a runtime.json that exists is a leftover
     # of a copy that didn't exit cleanly: it isn't ours and must not point a second launch at a dead port.
+    ui = ui_dir()  # an installed copy without its UI stops here, before the database or any port is touched
     paths.runtime_json.unlink(missing_ok=True)
     _report_stalled_exit(paths)
     empty_tmp(paths)
@@ -180,7 +189,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, install_token, ui_dir=UI_DIR), sock)
+        serve(create_app(port, install_token, ui_dir=ui), sock)
     finally:
         sock.close()
         paths.runtime_json.unlink(missing_ok=True)  # clean exit: nothing left to point a second launch at
@@ -219,6 +228,10 @@ def run(
         _log.exception("the server stopped unexpectedly")
         notifier.notify(messages.SERVER_STOPPED)
         return EXIT_SERVER_STOPPED
+    except UiMissingError:
+        _log.exception("start-up stopped: the installed copy has no UI")
+        notifier.notify(messages.START_FAILED_UI_MISSING)
+        return EXIT_START_FAILED
     except MigrationError:
         _log.exception("start-up stopped: the database couldn't be migrated")
         notifier.notify(messages.START_FAILED_MIGRATION)

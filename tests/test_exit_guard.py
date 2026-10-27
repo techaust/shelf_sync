@@ -160,7 +160,9 @@ def test_main_passes_the_data_folder_run_application_resolved_to_the_guard_facto
     seen: list[Any] = []
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: seen.append(self._exit_guard))
     assert (
-        launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore(), make_exit_guard=factory)
+        launcher.main(
+            [], notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore(), make_exit_guard=factory
+        )
         == 0
     )
     assert built == [data_paths] and seen == [guard]
@@ -182,7 +184,7 @@ def test_in_process_main_never_arms_a_real_guard(data_paths: DataPaths, monkeypa
     monkeypatch.setattr(launcher.logs, "install_output_guards", lambda: None)
     guards: list[Any] = []
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: guards.append(self._exit_guard))
-    assert launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore()) == 0
+    assert launcher.main([], notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore()) == 0
     assert guards == [None]
     built = entry.make_real_exit_guard(data_paths)
     assert isinstance(built, ExitGuard) and not built.armed

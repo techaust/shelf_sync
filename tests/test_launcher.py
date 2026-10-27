@@ -304,7 +304,7 @@ def test_the_settings_hook_sets_and_removes_the_run_value_of_an_installed_copy()
     """SYS-04: on a fake key, with `installed` forced, so the owner's real Run key is never involved."""
     key = FakeRunKey()
     launcher.make_on_settings(key, installed=True)({"start_with_windows": True})
-    assert list(key.values) == ["ShelfSync"] and key.values["ShelfSync"].endswith("-m shelfsync.launcher")
+    assert list(key.values) == ["ShelfSync"] and key.values["ShelfSync"].endswith("-m shelfsync.launcher --background")
     launcher.make_on_settings(key, installed=True)({"start_with_windows": False})
     assert key.values == {}
 
@@ -340,7 +340,7 @@ def test_main_first_copy_wires_the_log_failure_notice_and_runs(
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: served.append(True))
     notifier = FakeNotifier()
     try:
-        assert launcher.main(notifier=notifier, shell=FakeShell(), secrets=MemorySecretStore()) == 0
+        assert launcher.main([], notifier=notifier, shell=FakeShell(), secrets=MemorySecretStore()) == 0
         assert served == [True]
         # the notice is wired: a failed log write now reaches the notifier, once
         assert logs._write_failure_notice is not None
@@ -373,7 +373,7 @@ def test_main_second_launch_goes_to_second_launch_and_not_to_the_server(
     monkeypatch.setattr(launcher, "second_launch", fake_second)
     monkeypatch.setattr(launcher.TrayServe, "__call__", lambda self, app, sock: pytest.fail("a second server"))
     try:
-        assert launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore()) == 0
+        assert launcher.main([], notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore()) == 0
     finally:
         logs.set_write_failure_notice(None)
     assert asked == [data_paths]
@@ -452,7 +452,7 @@ def test_a_log_file_that_cant_be_opened_doesnt_stop_the_second_launch(
 
     monkeypatch.setattr(launcher, "second_launch", fake_second)
     try:
-        code = launcher.main(notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore())
+        code = launcher.main([], notifier=FakeNotifier(), shell=FakeShell(), secrets=MemorySecretStore())
     finally:
         logs.set_write_failure_notice(None)
     assert code == 0 and ran == [1]

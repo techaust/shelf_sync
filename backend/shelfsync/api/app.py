@@ -15,6 +15,7 @@ from starlette.types import Scope
 from shelfsync import __version__
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.session import make_session_router
+from shelfsync.paths import source_ui_dir
 from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
 from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
@@ -22,9 +23,9 @@ from shelfsync.secure.token import InstallToken
 
 _log = logging.getLogger("shelfsync.api")
 
-# The built UI (`npm run build` in frontend/) in the source layout: <repo>/frontend/dist. Where the installer puts
-# it is decided with the packaging (M1b); this default is the development layout.
-UI_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+# The built UI (`npm run build` in frontend/) in the source layout: <repo>/frontend/dist. Start-up asks
+# `paths.ui_dir()`, which gives `<version folder>\ui` for an installed copy; this constant is the source layout's.
+UI_DIR = source_ui_dir()
 
 # The mount's name and path. Starlette stores a mount at "/" with the path "" (it strips the trailing slash), which
 # is the path the route-table test sees (tests/test_guard.py ALLOWED_OUTSIDE_API).
