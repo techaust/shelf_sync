@@ -10,21 +10,20 @@ _Replaced (never appended) at the end of every session. Last updated: **2026-10-
 |---|---|---|---|
 | M1a.2 security base (Tier A) | `feat/m1a.2-security` (`6dca164`) | early check CHANGE → fixed; review APPROVE (`code-review` + `security-review`); triage at high; re-check APPROVE | 421 passed; `secure/` 100 %; Windows checks 9 passed; pip-audit clean |
 | M1a.3 app shell | `feat/m1a.3-app-shell` (`86ab5b4`, on M1a.2 at `872dea4`) | SEND BACK (1 high) → fixed; re-check APPROVE (code + visual); round 2 of lows done | Vitest 261, pytest 465, build, `npm audit` 0, brand 221; Playwright + axe written, CI only |
-| M1a.4 tray, launcher, Windows | `feat/m1a.4-tray` (`2168f5c`, on M1a.2 at `6dca164`) | APPROVE (security verdict: no other user or process can get the token); three fix rounds; re-checks APPROVE | 625 passed; Windows checks 27 passed; V29 and V33 confirmed; **pip-audit fails on Pillow** |
+| M1a.4 tray, launcher, Windows | `feat/m1a.4-tray` (`7ecebc9`, on M1a.2 at `6dca164`) | APPROVE (security verdict: no other user or process can get the token); three fix rounds; re-checks APPROVE | 625 passed; Windows checks 27 passed; V29 and V33 confirmed; pip-audit clean after Pillow 13.0.0 (owner, security exception) |
 
 - **Docs branch `docs/m1a.3-m1a.4-briefs`** (local): the M1a.3 and M1a.4 briefs, new wording in [13](13-content.md) §3, four "Lead (proposed)" rows in [11](11-decisions.md), Playwright output in `.gitignore`, this page.
 
 ## Waits on the owner
-1. **Pillow (package decision).** Pillow 12.3.0 has 37 known vulnerabilities, fixed in **13.0.0 (released 2026-10-16, 11 days old)**. Recommended: allow 13.0.0 as a security exception, like certifi and filelock; then rerun the tray tests and the Windows checks. Until then M1a.4's CI is red and can't merge. Real risk today is low: Pillow only opens ShelfSync's own six tray icons.
-2. **Pushes and merges, in this order** (each push and merge needs your yes):
+1. **Pushes and merges, in this order** (each push and merge needs your yes):
    1. `docs/m1a.3-m1a.4-briefs` (docs)
    2. `feat/m1a.2-security`
    3. `feat/m1a.3-app-shell`, rebased on `main` (its first CI run includes Playwright + axe)
-   4. `feat/m1a.4-tray`, rebased, after the Pillow decision
-3. **V31 Defender check, with you present:** it writes the harmless EICAR test string and raises a Defender alert. Command is in [runs/m1a.4-tray-windows.md](runs/m1a.4-tray-windows.md) §3.
-4. **M1a exit test, with you:** the app runs from the tray (right-click menu, Open, View logs, Quit couldn't be clicked by agents today).
-5. **Review** the "Lead (proposed)" rows in [11](11-decisions.md) when convenient.
-6. **Model menu:** start the next session on **Opus 5.5, medium**.
+   4. `feat/m1a.4-tray`, rebased
+2. **V31 Defender check, with you present:** it writes the harmless EICAR test string and raises a Defender alert. Command is in [runs/m1a.4-tray-windows.md](runs/m1a.4-tray-windows.md) §3.
+3. **M1a exit test, with you:** the app runs from the tray (right-click menu, Open, View logs, Quit couldn't be clicked by agents today).
+4. **Review** the "Lead (proposed)" rows in [11](11-decisions.md) when convenient.
+5. **Model menu:** start the next session on **Opus 5.5, medium**.
 
 ## Not verified
 - **CI on GitHub** for M1a.2, M1a.3, M1a.4: nothing pushed. The Playwright + axe suite (24 tests, forced colours and reduced motion included) has never run.
