@@ -2,6 +2,7 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-27 [#10](https://github.com/techaust/shelf_sync/pull/10) docs: end of day 2026-10-27
 - 2026-10-27 [#9](https://github.com/techaust/shelf_sync/pull/9) feat(tray): M1a.4 tray, launcher and Windows [UI-TRAY, SYS-02, SYS-03, SYS-04, SYS-05]
 - 2026-10-27 [#8](https://github.com/techaust/shelf_sync/pull/8) feat(ui): M1a.3 app shell [UI-SHELL, NFR-1, SYS-03]
 - 2026-10-27 [#7](https://github.com/techaust/shelf_sync/pull/7) feat(security): M1a.2 security base [SYS-03, SET-06, LOG-01, NFR-5]

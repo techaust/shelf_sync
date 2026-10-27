@@ -427,4 +427,4 @@ _(lead, 2026-10-27)_
 - M1a.3 was cut from `872dea4` and is rebased onto `main` after this merges.
 
 ## 7. Handover
-_(lead, 2026-10-27)_ Built, reviewed (APPROVE), fixed, re-checked (APPROVE) and the re-check's small items handled. Branch `feat/m1a.2-security` is ready and **waits for the owner's yes to push, open the PR and merge on green**. Then: CHANGELOG line, status, and rebase M1a.3.
+_(lead, 2026-10-27, end of day)_ **Merged as #7** (squash `1fabe38`) on green CI, first run, with the owner's yes. Nothing open here. Carry-overs R1, R2, R6 were done in M1a.4; the rest are in the M1b and M2 lists in [10-status](../10-status.md). Closed.
