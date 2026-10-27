@@ -56,6 +56,7 @@ ManifestDPIAware true
 !define STR_DATA_TEXT "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."
 !define STR_DATA_CHECK "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
 !define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. Delete what is left yourself if you want it gone; this is the data folder:"
+!define STR_DATA_CANT_CHECK "ShelfSync couldn't check whether it is running, so it didn't remove your data. Quit ShelfSync if it is running, then uninstall again with Remove my data ticked. The program is being removed now."
 !define STR_DATA_SECRETS "ShelfSync couldn't remove its stored sign-in token from Windows Credential Manager, so it may still be stored there. You can delete the ShelfSync entry under Windows Credentials in Credential Manager."
 !define STR_DATA_NOTHING "ShelfSync couldn't remove your data, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 
@@ -487,9 +488,18 @@ Section "Uninstall"
   ; 2. "Remove my data": the app's own module removes the Credential Manager entries it owns and the data folder, from
   ;    the installed Python and before any program file goes. A failure is reported; the program is still removed.
   ;    --service keeps a throwaway build (SUFFIX) away from the real ShelfSync Credential Manager service.
-  ;    Its exit codes: 0 done; 3 not ShelfSync's folder (left alone, nothing touched); 4 ShelfSync runs; 1 data is left
-  ;    (the tokens are removed even when the data folder is a link and its data is left); 5 only a Credential Manager entry
-  ;    is left; 6 both. See the notices below.
+  ;    Its exit codes (the one list; shelfsync/uninstall.py's header has the same):
+  ;      0 everything removed
+  ;      1 data left behind (the tokens are removed even when the data folder is a link and its data is left)
+  ;      2 a usage error (nothing removed)
+  ;      3 not ShelfSync's folder: left alone, nothing touched
+  ;      4 ShelfSync runs: nothing removed (the uninstaller stops, exit 5)
+  ;      5 only a Credential Manager entry is left
+  ;      6 both may be left (data and a token); also a crash after the lock was held
+  ;      7 a crash before the lock was taken: nothing removed
+  ;      8 whether ShelfSync runs couldn't be checked (the user's SID): nothing removed; the program is still removed
+  ;    Here 99 means no Python was found, and nsExec's "error" or "timeout" are treated the same: anything not listed is
+  ;    "nothing was removed".
   ${If} $RemoveData == 1
     ; After a killed switch `current` may be missing: fall back to `current.next` (the newer build, with the
     ; longer list of owned secrets), then `current.old`.
@@ -507,9 +517,7 @@ Section "Uninstall"
       Pop $3
     ${EndIf}
     Call un.GetDataDir
-    ; 0 done; 1 data left behind; 3 not ShelfSync's folder; 4 running; 5 only a Credential Manager entry is left; 6 both.
-    ; Anything else is "nothing was removed": 99 here (no Python found), nsExec's "error" or "timeout", exit 2 (a usage
-    ; error) and exit 7 (the module crashed).
+    ; One notice per exit code (the list is above); 2, 7, 99 and anything else: nothing was removed.
     ${If} $3 == 0
     ${ElseIf} $3 == 1
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK
@@ -524,6 +532,8 @@ Section "Uninstall"
     ${ElseIf} $3 == 6
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_SECRETS}" /SD IDOK
+    ${ElseIf} $3 == 8
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_CANT_CHECK}" /SD IDOK
     ${Else}
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_NOTHING}" /SD IDOK
     ${EndIf}

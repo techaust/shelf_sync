@@ -8,14 +8,16 @@ and reports what is left. The lock file is the last thing removed, after the loc
 
 Exit codes: 0 everything removed; 1 data was left behind (an entry in the data folder couldn't be removed, or the
 data folder is itself a link and was left alone); 5 only a Credential Manager entry couldn't be removed; 6 both
-(the uninstaller says so, names the folder and goes on removing the program); 7 the module crashed (treated as
-nothing removed); 3 refused (the folder doesn't look
+(the uninstaller says so, names the folder and goes on removing the program); 7 the module crashed before it
+took the lock (nothing was removed); 8 whether ShelfSync runs couldn't be checked (nothing was removed); a crash
+after the lock is held is 6 (both may be left); 3 refused (the folder doesn't look
 like ShelfSync's data folder, or no data folder is known: nothing was touched); 4 ShelfSync is running (nothing was
 touched). Output names entries and folders, never a secret. `--service` names the Credential Manager service (the
 default is ShelfSync's own; a throwaway build of the installer passes its own so it never touches the real one).
 """
 
 import argparse
+import contextlib
 import os
 import re
 import sys
@@ -39,7 +41,8 @@ EXIT_REFUSED = 3
 EXIT_RUNNING = 4
 EXIT_SECRETS = 5  # only a Credential Manager entry couldn't be removed (the data is gone)
 EXIT_BOTH = 6  # data was left behind and an entry couldn't be removed
-EXIT_ERROR = 7  # the module itself failed (a crash): nothing is known to have been removed
+EXIT_ERROR = 7  # the module crashed BEFORE the lock was taken: nothing was removed
+EXIT_CANT_CHECK = 8  # whether ShelfSync runs couldn't be checked (the user's SID couldn't be read): nothing was removed
 
 _SERVICE = re.compile(r"ShelfSync[A-Za-z0-9._-]*")
 
@@ -83,7 +86,12 @@ def remove_data_folder(root: Path, lock: InstanceLock | None = None, keep: str |
             lock.release()
         return []
     failed: list[str] = []
-    for entry in sorted(root.iterdir()):
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        entries = []
+        failed.append(".")  # the folder can't even be listed: nothing in it was removed
+    for entry in entries:
         if keep is not None and entry.name == keep:
             continue
         try:
@@ -143,30 +151,41 @@ def remove_data(
             # A live link takes the lock through it, as a plain folder does.
             instance = lock if lock is not None else default_instance_lock(paths)
         free = instance.acquire()
-    except OSError, OwnerLookupError:
-        free = False  # can't tell (no lock, or the user's SID for the mutex name couldn't be read): treat it as running
+    except OwnerLookupError:
+        # The user's SID (for the mutex name) couldn't be read: can't tell whether ShelfSync runs. Nothing is removed;
+        # the uninstaller says so and still removes the program.
+        _say("Couldn't check whether ShelfSync is running; nothing was removed.")
+        return EXIT_CANT_CHECK
+    except OSError:
+        free = False  # no lock could be made: treat it as running, touch nothing
     if not free:
         _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
         return EXIT_RUNNING
     try:
         try:
-            secret_store = store if store is not None else KeyringSecretStore(SERVICE_NAME)
-            failed_secrets = remove_secrets(secret_store)
-        except SecretStoreError:
-            failed_secrets = list(OWNED_SECRET_NAMES)
-        for name in failed_secrets:
-            _say(f"Couldn't remove the Credential Manager entry {name}.")
-        data_left = False
-        if link:
-            _say(f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone.")
-            data_left = True
-        else:
-            for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
-                _say(f"Couldn't remove {name} in {paths.root}.")
+            try:
+                secret_store = store if store is not None else KeyringSecretStore(SERVICE_NAME)
+                failed_secrets = remove_secrets(secret_store)
+            except SecretStoreError:
+                failed_secrets = list(OWNED_SECRET_NAMES)
+            for name in failed_secrets:
+                _say(f"Couldn't remove the Credential Manager entry {name}.")
+            data_left = False
+            if link:
+                _say(f"{paths.root} is a link to {link_target(paths.root)}; the data behind it was left alone.")
                 data_left = True
-        if data_left:
-            return EXIT_BOTH if failed_secrets else EXIT_INCOMPLETE
-        return EXIT_SECRETS if failed_secrets else EXIT_OK
+            else:
+                for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
+                    _say(f"Couldn't remove {name} in {paths.root}.")
+                    data_left = True
+            if data_left:
+                return EXIT_BOTH if failed_secrets else EXIT_INCOMPLETE
+            return EXIT_SECRETS if failed_secrets else EXIT_OK
+        except Exception as error:
+            # The lock is held, so the removal may have started: never exit 7 ("nothing was removed") from here. Exit 6
+            # makes the uninstaller say both that data and the stored token may still be there.
+            _say(f"The removal stopped unexpectedly ({type(error).__name__}); some data and the token may be left.")
+            return EXIT_BOTH
     finally:
         if instance is not None:
             instance.release()  # a second release is harmless
@@ -182,6 +201,11 @@ def service_name(text: str) -> str:
 def main(
     argv: Sequence[str] | None = None, *, store: SecretStore | None = None, lock: InstanceLock | None = None
 ) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        # A path or message with characters the console's code page lacks must not crash the report. A stream that
+        # can't be reconfigured (None under pythonw, a test harness's capture) is left as it is.
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
     parser = argparse.ArgumentParser(prog="shelfsync.uninstall", allow_abbrev=False)
     parser.add_argument(
         "--remove-data", action="store_true", required=True, help="remove the data and the stored secrets"

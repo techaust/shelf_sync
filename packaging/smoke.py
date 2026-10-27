@@ -33,11 +33,14 @@ MEMORY_STORE_ENTRY = (
     "server._already_running, secrets=MemorySecretStore()))"
 )
 
-# What the installed copy runs at sign-in, `pythonw -m shelfsync.launcher --background`, with one addition: a thread
+# What the installed copy runs at sign-in, `pythonw -m shelfsync.launcher --background`: `shelfsync.tray.launcher.main`
+# with the real exit guard from `shelfsync.launcher` (only that module's own `__main__` line is not run), plus one
+# addition: a thread
 # that waits for `quit.flag` in the data folder and then calls `app.state.request_quit()`, the way the updater asks the
 # tray to quit, so the run ends cleanly and headless (there is no menu to click). SECRETS is replaced below.
 LAUNCHER_ENTRY = """
 import threading, time
+import shelfsync.launcher as entry
 from shelfsync.paths import resolve_data_paths
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.tray import launcher
@@ -51,7 +54,7 @@ def call(self, app, sock):
     threading.Thread(target=watch, daemon=True).start()
     return original(self, app, sock)
 launcher.TrayServe.__call__ = call
-raise SystemExit(launcher.main(["--background"], secrets=SECRETS))
+raise SystemExit(launcher.main(["--background"], secrets=SECRETS, make_exit_guard=entry.make_real_exit_guard))
 """
 
 # Import the launcher and load every tray icon from the folder itself (the class of miss that shipped no icons).
@@ -142,6 +145,7 @@ def run_launcher(folder: Path, data: Path, real_secrets: bool, version: str) -> 
     finally:
         if process.poll() is None:
             process.kill()
+            process.wait(timeout=10)  # reap it, so the data folder can be removed and no process is left behind
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -155,7 +159,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     build = load_build()
-    folder_python = arguments.folder.resolve() / "python.exe"
+    folder: Path = arguments.folder.resolve()
+    folder_python = folder / "python.exe"
+    # The listing is taken before ANY probe runs, so a `__pycache__` written by the isolation or icon probe is caught
+    # by the "folder unchanged" check at the end (V47).
+    before = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
     # python314._pth puts the interpreter in isolated mode: neither PYTHONPATH nor the working folder is on sys.path,
     # so nothing loads from wherever a shortcut or the Run key happens to start it.
     probe = subprocess.run(  # nosec B603
@@ -168,14 +176,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if probe.stdout.split() != ["1", "True"]:
         sys.stderr.write(f"The built Python isn't isolated (isolated, safe_path = {probe.stdout.strip()})\n")
         return 1
-    folder: Path = arguments.folder.resolve()
     icons = subprocess.run(  # nosec B603
         [str(folder_python), "-c", ICONS_PROBE], capture_output=True, text=True, timeout=120, check=False
     )
     if icons.returncode != 0 or icons.stdout.strip() != "6":
         sys.stderr.write(f"The launcher or a tray icon can't be loaded from the built folder:\n{icons.stderr[-800:]}\n")
         return 1
-    before = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
 
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-") as data:
         environment = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
@@ -201,6 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait(timeout=10)
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-launcher-") as data:
         run_launcher(folder, Path(data) / "ShelfSync", arguments.real_secrets, arguments.version)
     after = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]

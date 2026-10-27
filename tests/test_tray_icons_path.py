@@ -77,3 +77,14 @@ def test_the_smoke_test_loads_the_launcher_and_every_icon_and_quits_through_requ
     assert "tray_icon_dir" in smoke.ICONS_PROBE and "load_icon" in smoke.ICONS_PROBE
     assert "from shelfsync.tray import launcher" in smoke.ICONS_PROBE
     assert "request_quit" in smoke.LAUNCHER_ENTRY and '["--background"]' in smoke.LAUNCHER_ENTRY
+
+
+def test_the_default_icon_folder_is_worked_out_once() -> None:
+    """UI-TRAY: icon_file asks `default_icon_dir()` on every repaint; it is cached."""
+    from shelfsync.tray import icons
+
+    icons.default_icon_dir.cache_clear()
+    for _ in range(3):
+        icon_file(IconState.NORMAL, True)
+    info = icons.default_icon_dir.cache_info()
+    assert info.misses == 1 and info.hits == 2

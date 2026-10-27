@@ -275,12 +275,16 @@ TRAY_ICON_NAMES = tuple(
 )
 
 
-def copy_tray_icons(source: Path, destination: Path) -> None:
-    """The six tray icons the tray loads from `<version folder>/tray` (`paths.tray_icon_dir()`); a missing one stops
-    the build (an installed copy without them can't start its tray)."""
+def check_tray_icons(source: Path) -> None:
     missing = [name for name in TRAY_ICON_NAMES if not (source / name).is_file()]
     if missing:
         raise BuildError(f"{source} is missing tray icons: {', '.join(missing)}")
+
+
+def copy_tray_icons(source: Path, destination: Path) -> None:
+    """The six tray icons the tray loads from `<version folder>/tray` (`paths.tray_icon_dir()`); a missing one stops
+    the build (an installed copy without them can't start its tray)."""
+    check_tray_icons(source)
     destination.mkdir(parents=True)
     for name in TRAY_ICON_NAMES:
         shutil.copy2(source / name, destination / name)
@@ -299,6 +303,7 @@ def build(out: Path, tag: str | None, embed_zip: Path | None) -> Path:
     icon = REPO / "brand" / "assets" / "app" / "shelfsync.ico"
     if not icon.is_file():
         raise BuildError(f"{icon} is missing")
+    check_tray_icons(REPO / "brand" / "assets" / "tray")  # before the slow steps, next to the icon check
 
     folder = out / f"ShelfSync-{version}"
     if out.exists():

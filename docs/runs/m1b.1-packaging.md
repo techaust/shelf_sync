@@ -324,6 +324,19 @@ Re-run: ruff check and format clean (89 files); mypy no issues; bandit no issues
 
 Re-run (port 47615 had no listener before the full run; only TIME_WAIT leftovers of my own smoke runs): ruff check and format clean (90 files); mypy no issues; bandit no issues; `pytest` **811 passed, 12 skipped** (clean); `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py`, `smoke.py` (now with the launcher run), `makensis` x4 and the rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok**. The smoke launcher run used the real tray on this PC's desktop (in-memory secrets); in CI it uses the real Credential Manager. Whether a tray icon can be created on the CI runner's session is not verified until `release.yml` runs.
 
+### Review round 6 (APPROVED, task and fix range) and the last fixes
+| Id | Where | Finding | Fix |
+|---|---|---|---|
+| M1 | `uninstall.py` | Exit 7 ("nothing was removed") could follow a crash after the lock was held | The removal phase is wrapped in `except Exception`: exit 6, so both "may be left" notices show; the lock is still let go. An `OSError` from listing the data folder is "data left" (exit 1, reported as the folder). Exit 7 is only for a crash before the lock |
+| M2 | `smoke.py` | The "before" listing was taken after the icon probe | Taken first, before the isolation probe and the icon probe, so a `__pycache__` written by either fails V47 |
+| L1 | `uninstall.py`, nsi | `OwnerLookupError` shared exit 4 | Own exit code 8 with `STR_DATA_CANT_CHECK` ("couldn't check whether it is running, so it didn't remove your data. Quit ShelfSync if it is running, then uninstall again with Remove my data ticked. The program is being removed now."); it doesn't abort |
+| L2 | `smoke.py` | The launcher run skipped the real entry's exit guard | `LAUNCHER_ENTRY` imports `shelfsync.launcher` and passes `make_exit_guard=entry.make_real_exit_guard`. What runs, exactly: `shelfsync.tray.launcher.main(["--background"], make_exit_guard=<the real one>)` in a `pythonw.exe -c` process, with a `quit.flag` thread calling `app.state.request_quit()`; only `shelfsync.launcher`'s own `if __name__` line is not run |
+| L3 | `smoke.py` | A killed process wasn't reaped | `process.wait(timeout=10)` after both `kill()` calls |
+| L4 | `uninstall.py` | Output could crash on a code page | `sys.stdout` and `sys.stderr` are reconfigured with `errors="replace"` at the start of `main` (skipped for a stream that can't be) |
+| L5 | nsi, `icons.py`, `build.py` | Two exit-code lists; icon folder worked out every repaint; the tray check came late | One list (0 to 8) in the nsi; `default_icon_dir()` is cached; `check_tray_icons` runs next to the `shelfsync.ico` check, before the slow steps |
+
+Re-run (port 47615 had no listener): ruff check and format clean (90 files); mypy no issues; bandit no issues; `pytest` **816 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py`, `smoke.py` (with the real exit guard), `makensis` x4 and the rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r7.log`).
+
 ## 6. Integration notes
 _(lead)_
 

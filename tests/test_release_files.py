@@ -196,3 +196,21 @@ def test_the_installer_script_plants_a_killed_switch() -> None:
 def test_the_workflow_builds_the_extra_setups_for_the_upgrade_and_older_checks() -> None:
     """Review round 1 (LOW 11): exit 6, the prune and the running refusal run in CI."""
     assert "/DFAST" in RELEASE and "-OlderSetup" in RELEASE and "-NewerSetup" in RELEASE
+
+
+def test_round_6_one_exit_code_list_and_the_cant_check_notice() -> None:
+    """Review round 6: the nsi has one list of the uninstall module's exit codes (0 to 8), a notice for 8 that doesn't
+    abort, the smoke test runs the real entry module's exit guard, and its listing is taken before any probe."""
+    section = NSI.split('Section "Uninstall"')[1]
+    assert section.count("Its exit codes") == 1
+    for number in range(0, 9):
+        assert f";      {number} " in section
+    branch = section.split("${ElseIf} $3 == 8")[1].split("${Else}")[0]
+    assert "STR_DATA_CANT_CHECK" in branch and "Abort" not in branch
+    assert "so it didn't remove your data" in NSI
+    smoke = (REPO / "packaging" / "smoke.py").read_text(encoding="utf-8")
+    assert "make_exit_guard=entry.make_real_exit_guard" in smoke and "import shelfsync.launcher as entry" in smoke
+    assert smoke.index("before = {") < smoke.index("isolated, safe_path") < smoke.index('"-c", ICONS_PROBE')
+    assert smoke.count("process.wait(timeout=10)") >= 2  # reaped after every kill
+    build_text = (REPO / "packaging" / "build.py").read_text(encoding="utf-8")
+    assert build_text.index("check_tray_icons(REPO") < build_text.index("download_embed_zip(REPO")

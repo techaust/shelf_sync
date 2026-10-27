@@ -216,6 +216,9 @@ def test_a_non_build_folder_that_has_files_is_never_cleared(tmp_path: Path, monk
     (tmp_path / "frontend" / "dist" / "index.html").write_text("x", encoding="utf-8")
     (tmp_path / "brand" / "assets" / "app").mkdir(parents=True)
     (tmp_path / "brand" / "assets" / "app" / "shelfsync.ico").write_bytes(b"ico")
+    (tmp_path / "brand" / "assets" / "tray").mkdir(parents=True)
+    for name in build.TRAY_ICON_NAMES:
+        (tmp_path / "brand" / "assets" / "tray" / name).write_bytes(b"ico")
     precious = tmp_path / "documents"
     precious.mkdir()
     (precious / "keep.txt").write_text("keep", encoding="utf-8")

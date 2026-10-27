@@ -7,6 +7,7 @@ not the apps' `AppsUseLightTheme`). The .ico files hold 16, 20, 24 and 32 px; th
 size is handed to pystray.
 """
 
+import functools
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,8 +23,14 @@ PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
 TASKBAR_THEME_VALUE = "SystemUsesLightTheme"
 
 
+@functools.cache
+def default_icon_dir() -> Path:
+    """`paths.tray_icon_dir()`, worked out once (the layout can't change while the process runs)."""
+    return tray_icon_dir()
+
+
 def icon_file(state: IconState, light_taskbar: bool, folder: Path | None = None) -> Path:
-    return (folder or tray_icon_dir()) / f"tray-{state.value}-{'light' if light_taskbar else 'dark'}.ico"
+    return (folder or default_icon_dir()) / f"tray-{state.value}-{'light' if light_taskbar else 'dark'}.ico"
 
 
 def nearest_size(wanted: int) -> int:

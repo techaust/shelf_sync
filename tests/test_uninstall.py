@@ -397,8 +397,9 @@ def test_a_crash_in_the_module_is_exit_7_with_one_line_not_a_traceback_or_exit_1
     assert len(out.splitlines()) == 1 and "RuntimeError" in out and "secret-looking" not in out
 
 
-def test_an_owner_lookup_error_from_the_mutex_counts_as_running(tmp_path: Path) -> None:
-    """SYS-08: building the mutex name needs the user's SID; if that can't be read the answer is "can't tell"."""
+def test_an_owner_lookup_error_from_the_mutex_is_exit_8_nothing_removed(tmp_path: Path) -> None:
+    """SYS-08: building the mutex name needs the user's SID; if that can't be read the answer is "can't tell":
+    exit 8 (its own code and notice; the program is still removed), nothing touched."""
     from shelfsync.platform.sockets import OwnerLookupError
 
     gone = tmp_path / "gone"
@@ -411,7 +412,10 @@ def test_an_owner_lookup_error_from_the_mutex_counts_as_running(tmp_path: Path) 
     def refuse() -> FakeInstanceLock:
         raise OwnerLookupError("no SID")
 
-    assert uninstall.remove_data(DataPaths(link), MemorySecretStore(), None, refuse) == uninstall.EXIT_RUNNING
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    assert uninstall.remove_data(DataPaths(link), store, None, refuse) == uninstall.EXIT_CANT_CHECK == 8
+    assert store.get(INSTALL_TOKEN_NAME) == "value"
 
 
 def test_the_default_session_lock_is_the_real_mutex_and_main_does_not_override_it(
@@ -433,3 +437,57 @@ def test_the_default_session_lock_is_the_real_mutex_and_main_does_not_override_i
     monkeypatch.setattr(uninstall, "remove_data", record)
     assert uninstall.main(["--remove-data"], store=MemorySecretStore()) == 0
     assert len(calls) == 1 and len(calls[0]) == 3  # paths, store, lock: no session_lock
+
+
+def test_a_crash_after_the_lock_is_held_is_exit_6_never_7(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-08: once the lock is held the removal may have started, so a crash means "may be left": exit 6 (both
+    notices), the lock is let go, and exit 7 ("nothing was removed") is kept for crashes before the lock."""
+    paths = make_data(tmp_path)
+    taken: set[str] = set()
+
+    def boom(store: object, names: object = None) -> list[str]:
+        raise RuntimeError("detail")
+
+    monkeypatch.setattr(uninstall, "remove_secrets", boom)
+    assert uninstall.remove_data(paths, MemorySecretStore(), FakeInstanceLock(taken)) == uninstall.EXIT_BOTH == 6
+    assert taken == set()
+
+
+def test_a_data_folder_that_cant_be_listed_is_left_behind_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-08: an OSError from listing the folder is "data left" (exit 1), reported as the folder itself."""
+    paths = make_data(tmp_path)
+    real_iterdir = Path.iterdir
+
+    def iterdir(self: Path):  # type: ignore[no-untyped-def]
+        if self == paths.root:
+            raise PermissionError("denied")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert uninstall.remove_data(paths, MemorySecretStore(), FakeInstanceLock(set())) == uninstall.EXIT_INCOMPLETE
+    assert (paths.root / "shelfsync.db").exists()
+
+
+def test_main_makes_the_output_streams_replace_what_the_code_page_cant_show(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-08: a path with characters outside the console's code page must not crash the report."""
+    calls: list[tuple[str, str]] = []
+
+    class Stream:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def reconfigure(self, **kwargs: str) -> None:
+            calls.append((self.name, kwargs["errors"]))
+
+        def write(self, text: str) -> int:
+            return len(text)
+
+    monkeypatch.setattr(uninstall.sys, "stdout", Stream("out"))
+    monkeypatch.setattr(uninstall.sys, "stderr", Stream("err"))
+    monkeypatch.setattr(uninstall, "remove_data", lambda *args, **kwargs: 0)
+    assert uninstall.main(["--remove-data"], store=MemorySecretStore()) == 0
+    assert calls == [("out", "replace"), ("err", "replace")]
