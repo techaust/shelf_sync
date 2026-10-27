@@ -13,44 +13,32 @@ and function names, never values; it is read back through the redacting log hand
 
 The file name is ours, but the folder is writable by the user, so a link planted there must not be followed: an entry
 that is a symlink, a junction or other reparse point, or has more than one hard link, is removed before the guard
-opens it, and is not read back at the next start.
+opens it, and the file is created exclusively (`"xb"`), so an entry that couldn't be removed makes the open fail
+instead of being written through. A link is also never read back at the next start.
 """
 
 import contextlib
 import faulthandler
-import os
-import stat
 from pathlib import Path
 from typing import BinaryIO
 
-from shelfsync.paths import _remove_entry
+from shelfsync.paths import is_plain_file, remove_entry
 
 STALL_FILE_NAME = "shutdown-stall.txt"
 
 
-def is_plain_file(path: Path) -> bool:
-    """True if `path` is a regular file with one name, and not a link or a reparse point. False if it is anything
-    else; an entry that doesn't exist is also False (nothing to read)."""
-    try:
-        info = path.lstat()
-    except OSError:
-        return False
-    if path.is_symlink() or os.path.isjunction(path):
-        return False
-    if getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+def _exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
 
 
 def remove_unsafe_entry(path: Path) -> bool:
     """Remove `path` if it exists and is not a plain file (the way `empty_tmp` removes entries, never following a
-    link). Returns True if something unsafe was found."""
-    if not path.exists() and not path.is_symlink():
+    link). Returns True if something unsafe was found. A removal that fails is ignored here: the entry then stays,
+    and the guard's exclusive create refuses it (it never writes through it)."""
+    if not _exists(path) or is_plain_file(path):
         return False
-    if is_plain_file(path):
-        return False
-    with contextlib.suppress(OSError):  # if it stays, the caller's open fails and is reported
-        _remove_entry(path)
+    with contextlib.suppress(OSError):
+        remove_entry(path)
     return True
 
 
@@ -64,8 +52,13 @@ class ExitGuard:
         """Start the countdown. The file object is kept alive for as long as the guard exists. Raises OSError if the
         file can't be opened (the caller carries on without the guard)."""
         if self._file is None:
-            remove_unsafe_entry(self._path)
-            self._file = self._path.open("wb")
+            # Take away whatever is there (a leftover, a link), then create the file exclusively: if something is
+            # still there (a removal that failed, a link planted in between) the open fails instead of writing
+            # through it, and the launcher logs the OSError.
+            if _exists(self._path):
+                with contextlib.suppress(OSError):
+                    remove_entry(self._path)
+            self._file = self._path.open("xb")
         self._schedule(self._file, seconds)
 
     def rearm(self, seconds: float) -> None:

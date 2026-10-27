@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,7 +57,22 @@ def create_data_folders(paths: DataPaths) -> None:
         folder.mkdir(parents=True, exist_ok=True)
 
 
-def _remove_entry(entry: Path) -> None:
+def is_plain_file(path: Path) -> bool:
+    """True if `path` is a regular file with one name, and not a link or a reparse point. False if it is anything
+    else; an entry that doesn't exist is also False (nothing to read)."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    if path.is_symlink() or os.path.isjunction(path):
+        return False
+    if getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+
+
+def remove_entry(entry: Path) -> None:
+    """Remove a file, folder or link; a link is removed itself, never followed into its target."""
     if entry.is_symlink() or os.path.isjunction(entry):
         # A link (a symlink, or a Windows directory junction) is removed itself, never followed into its target.
         try:
@@ -74,7 +90,7 @@ def empty_tmp(paths: DataPaths) -> None:
     so one locked file can't stop start-up."""
     for entry in paths.tmp.iterdir():
         try:
-            _remove_entry(entry)
+            remove_entry(entry)
         except OSError as error:
             _log.warning("Couldn't remove %s from tmp: %s", entry.name, error)
 

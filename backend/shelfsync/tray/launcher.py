@@ -6,10 +6,10 @@ shut down and waits for it; start-up's own clean-up then closes the socket and r
 exits 0.
 
 Safety exit: once Quit (or a crash, or Ctrl+C) starts the shut-down, an `ExitGuard` is armed for 45 s (more than the
-worst bounded path, about 34 s) and, at the end of `TrayServe.__call__` (after the server join), re-armed for 5 s, so
-the 5 s cover `run()`'s clean-up, the release of the single-instance lock and the interpreter's finalization. If the
+worst bounded path, about 34 s) and, at the end of `TrayServe.__call__` (after the server join), re-armed for 10 s, so
+the 10 s cover `run()`'s clean-up, the release of the single-instance lock and the interpreter's finalization. If the
 process still hasn't ended by then, faulthandler writes every thread's stack to `tmp\\shutdown-stall.txt` and ends it
-with exit code 1; the next start logs that file. Residual: a relaunch within those 5 s may log "Couldn't remove
+with exit code 1; the next start logs that file. Residual: a relaunch within those 10 s may log "Couldn't remove
 shutdown-stall.txt" (the old process still holds the file). Only `shelfsync.launcher`'s `__main__` passes a factory
 that builds a real guard (from the data folder `run_application` resolved); a guard that can't be armed is logged and
 the shut-down goes on without it.
@@ -43,7 +43,8 @@ _log = logging.getLogger("shelfsync.launcher")
 SERVER_START_SECONDS = 15.0
 SERVER_STOP_SECONDS = 15.0
 STAGE1_SECONDS = 45.0  # the exit guard, armed when the shut-down starts
-STAGE2_SECONDS = 5.0  # re-armed once `run_application` has returned
+# Re-armed at the end of `__call__`: run()'s clean-up (a crash's toast, not timed cold), the lock release, finalization.
+STAGE2_SECONDS = 10.0
 _WAIT_STEP_SECONDS = 0.5
 
 
@@ -141,7 +142,7 @@ class TrayServe:
             if self._exit_guard is not None:
                 try:
                     self._exit_guard.arm(STAGE1_SECONDS)
-                except OSError as error:  # no safety exit is better than no shut-down
+                except Exception as error:  # no safety exit is better than no shut-down
                     _log.warning("The safety exit couldn't be armed (%s)", type(error).__name__)
             tray.stop()
             uv.should_exit = True
@@ -150,7 +151,7 @@ class TrayServe:
                 _log.warning("The server thread didn't end in %.0f seconds", SERVER_STOP_SECONDS)
             _log.info("Threads at exit: %s", ", ".join(f"{t.name} (daemon={t.daemon})" for t in threading.enumerate()))
             if self._exit_guard is not None and self._exit_guard.armed:
-                # Stage 2: what is left (run()'s clean-up, the lock release, finalization) gets 5 s.
+                # Stage 2: what is left (run()'s clean-up, the lock release, finalization) gets 10 s.
                 self._exit_guard.rearm(STAGE2_SECONDS)
         # A crash is reported first, even if Quit was asked for meanwhile: it is the more useful fact.
         if crashed:
