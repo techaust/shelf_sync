@@ -14,13 +14,15 @@ shutdown-stall.txt" (the old process still holds the file). Only `shelfsync.laun
 that builds a real guard (from the data folder `run_application` resolved); a guard that can't be armed is logged and
 the shut-down goes on without it.
 
-A second launch (the mutex is taken) opens a new signed-in tab in the running copy and exits; see `second_launch`.
+A second launch (the mutex is taken) opens a new signed-in tab in the running copy and exits (see `second_launch`);
+started with `--background` it exits quietly instead.
 """
 
+import argparse
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import uvicorn
@@ -28,7 +30,7 @@ from fastapi import FastAPI
 
 from shelfsync import logs, messages, server
 from shelfsync.paths import DataPaths
-from shelfsync.platform.autostart import AutostartError, RunKey, apply_start_with_windows
+from shelfsync.platform.autostart import BACKGROUND_FLAG, AutostartError, RunKey, apply_start_with_windows
 from shelfsync.platform.notify import Notifier, default_notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.platform.shell import Shell, ShellError, WindowsShell
@@ -77,7 +79,9 @@ class TrayServe:
 
     def add_quit_guard(self, guard: Callable[[], bool]) -> None:
         """Hook for M5: `guard()` returns False while an upload is running, and Quit then waits. None exist yet.
-        A guard runs on the tray's loop thread and must never wait on it."""
+        A guard may run on the tray's thread (the menu's Quit) or on a server thread (the updater calls
+        `app.state.request_quit` from a request handler), so it must be thread-safe and must never block on the
+        server's event loop or on the tray's."""
         self._before_quit.append(guard)
 
     # --- the menu's actions -------------------------------------------------------------------------------------
@@ -96,17 +100,23 @@ class TrayServe:
     def view_logs(self) -> None:
         self._shell.open_folder(self._paths.logs)
 
-    def request_quit(self) -> None:
+    def request_quit(self) -> bool:
+        """Quit, exactly as the tray menu's Quit does. True if the quit started; False if a quit guard refused
+        (the menu ignores the answer; the updater, through `app.state.request_quit`, reads it)."""
         # M5: wait here for a running upload (see add_quit_guard). Nothing runs yet, so Quit is immediate.
         if all(guard() for guard in self._before_quit):
             self._quit_requested.set()
             self._quit.set()
+            return True
+        return False
 
     # --- serve ---------------------------------------------------------------------------------------------------
 
     def __call__(self, app: FastAPI, sock: Any) -> None:
         self._port = int(sock.getsockname()[1])
         self._sessions = app.state.sessions
+        # For the updater (m1b.2): the one way the app asks the tray to quit. The developer entry never sets it.
+        app.state.request_quit = self.request_quit
         uv = uvicorn.Server(server.make_uvicorn_config(app, self._port))
         crashed: list[BaseException] = []
 
@@ -185,15 +195,30 @@ def make_on_settings(run_key: RunKey | None = None, installed: bool | None = Non
     return apply
 
 
+def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
+    """`--background` is the only argument. An unknown one is an error (argparse exits with 2), never ignored."""
+    parser = argparse.ArgumentParser(prog="shelfsync.launcher", allow_abbrev=False)
+    parser.add_argument(
+        BACKGROUND_FLAG,
+        action="store_true",
+        help="start in the tray without opening a browser tab (the Start with Windows value uses it)",
+    )
+    return parser.parse_args(argv)
+
+
 def main(
+    argv: Sequence[str] | None = None,
     *,
     notifier: Notifier | None = None,
     shell: Shell | None = None,
     secrets: SecretStore | None = None,
     make_exit_guard: Callable[[DataPaths], ExitGuard | None] | None = None,
 ) -> int:
-    """`python -m shelfsync.launcher`. `make_exit_guard(paths)` builds the safety exit from the data folder that
-    `run_application` resolved; it is None in tests: a real armed guard would end pytest."""
+    """`python -m shelfsync.launcher [--background]`. `argv` defaults to `sys.argv[1:]`. `make_exit_guard(paths)`
+    builds the safety exit from the data folder that `run_application` resolved; it is None in tests: a real armed
+    guard would end pytest. With `--background` the first copy opens no tab and a second launch does nothing;
+    without it a second launch opens a signed-in tab."""
+    arguments = parse_arguments(argv)
     logs.install_output_guards()
     toasts = notifier if notifier is not None else default_notifier()
     opener = shell if shell is not None else WindowsShell()
@@ -201,9 +226,13 @@ def main(
 
     def make_serve(paths: DataPaths) -> server.Serve:
         guard = make_exit_guard(paths) if make_exit_guard is not None else None
-        return TrayServe(paths, toasts, opener, exit_guard=guard)
+        return TrayServe(paths, toasts, opener, open_first_tab=not arguments.background, exit_guard=guard)
 
     def second(paths: DataPaths) -> int:
+        if arguments.background:
+            # Signing in to Windows while ShelfSync already runs (a second logon session, say): nothing to show, so
+            # no tab and no sound. Shortcuts have no flag and still open a tab.
+            return 0
         store = secrets if secrets is not None else default_secret_store()
         # A handler that never rotates or prunes: this short-lived process must not rename the running copy's log
         # file or delete its older files (it doesn't know the retention setting either).

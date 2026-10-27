@@ -19,7 +19,7 @@ from shelfsync.platform.autostart import (
     launcher_command,
 )
 
-COMMAND = r'"C:\Users\x\AppData\Local\Programs\ShelfSync\current\pythonw.exe" -m shelfsync.launcher'
+COMMAND = r'"C:\Users\x\AppData\Local\Programs\ShelfSync\current\pythonw.exe" -m shelfsync.launcher --background'
 
 
 def test_a_development_run_writes_nothing_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
@@ -72,6 +72,21 @@ def test_the_command_is_the_quoted_pythonw_path_and_the_launcher_module() -> Non
     assert command.startswith('"')
     assert command.endswith('pythonw.exe" -m shelfsync.launcher')
     assert "Some One" in command
+
+
+def test_the_run_value_passes_background_so_signing_in_opens_no_tab() -> None:
+    """SYS-04: the Run value's command starts ShelfSync in the tray (the flag); shortcuts have no flag."""
+    exe = r"C:\Users\x\AppData\Local\Programs\ShelfSync\current\python.exe"
+    assert launcher_command(exe, background=True).endswith("-m shelfsync.launcher --background")
+    assert "--background" not in launcher_command(exe)
+
+
+def test_an_old_run_value_without_the_flag_is_rewritten() -> None:
+    """SYS-04: a Run value from M1a (no flag) is replaced at the next start, so sign-in stops opening a tab."""
+    key = FakeRunKey()
+    key.values["ShelfSync"] = COMMAND.removesuffix(" --background")
+    assert apply_start_with_windows(True, key, command=COMMAND, installed=True) == "set"
+    assert key.values["ShelfSync"] == COMMAND
 
 
 def test_only_a_python_under_the_install_folders_current_is_the_installed_copy(

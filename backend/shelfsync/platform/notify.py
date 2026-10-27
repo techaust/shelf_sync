@@ -7,6 +7,9 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from shelfsync.platform import aumid
+from shelfsync.platform.autostart import is_installed_copy
+
 _log = logging.getLogger("shelfsync.notify")
 
 APP_NAME = "ShelfSync"
@@ -48,16 +51,23 @@ _toaster: Any = None
 _toaster_lock = threading.Lock()
 
 
-def show_toast(fields: list[str | None]) -> None:
-    """Show one toast through windows-toasts (Windows only). `InteractableWindowsToaster` with no AUMID uses the one
-    Windows already knows (Command Prompt's) and puts "ShelfSync" in the toast's attribution line. Registering
-    ShelfSync's own AppUserModelID, so the toast carries ShelfSync's name and icon, is M1b (V14)."""
+def toast_aumid(installed: bool, registered: bool) -> str | None:
+    """The AppUserModelID for toasts: ShelfSync's own for an installed copy whose key the installer registered;
+    None (windows-toasts' default, Command Prompt's, with "ShelfSync" as the attribution line) for a development run,
+    and for an installed copy with no key, because Windows may drop a toast sent for an unregistered AUMID."""
+    return aumid.AUMID if installed and registered else None
+
+
+def show_toast(fields: list[str | None], *, notifier_aumid: str | None = None) -> None:
+    """Show one toast through windows-toasts (Windows only). An installed copy passes `TecHaust.ShelfSync` as the
+    `notifierAUMID` (see `platform/aumid.py`); `notifier_aumid` is for the Windows tests, which use throwaway ids."""
     global _toaster
     from windows_toasts import InteractableWindowsToaster, Toast
 
     with _toaster_lock:
         if _toaster is None:
-            _toaster = InteractableWindowsToaster(APP_NAME)
+            chosen = notifier_aumid or toast_aumid(is_installed_copy(), aumid.is_registered())
+            _toaster = InteractableWindowsToaster(APP_NAME, notifierAUMID=chosen)
         toaster = _toaster
     toaster.show_toast(Toast(fields))
 

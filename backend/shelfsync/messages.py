@@ -32,3 +32,9 @@ SERVER_STOPPED = (
     "ShelfSync stopped unexpectedly. "
     r"The reason is in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
 )
+
+# M1b.1 (proposed wording, not yet in docs/13): an installed copy without its screens
+START_FAILED_UI_MISSING = (
+    "ShelfSync is missing its screens, so it didn't start. Run the ShelfSync installer again to repair it. "
+    r"Details are in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
+)

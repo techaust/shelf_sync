@@ -1,4 +1,5 @@
-"""Tray icons (UI-TRAY): `brand/assets/tray/tray-<state>-<light|dark>.ico`, "light" meaning for a light taskbar.
+"""Tray icons (UI-TRAY): `tray-<state>-<light|dark>.ico`, "light" meaning for a light taskbar, from
+`paths.tray_icon_dir()` (`brand/assets/tray` in the source layout, `<version folder>\\tray` when installed).
 
 Which one: the state (normal, paused, attention) and the taskbar theme, read from
 `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\\SystemUsesLightTheme` (the taskbar's setting,
@@ -6,25 +7,30 @@ not the apps' `AppsUseLightTheme`). The .ico files hold 16, 20, 24 and 32 px; th
 size is handed to pystray.
 """
 
+import functools
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shelfsync.paths import tray_icon_dir
 from shelfsync.tray.state import IconState
 
 if TYPE_CHECKING:
     from PIL.Image import Image
 
-# backend/shelfsync/tray/icons.py -> the repo root is four levels up. The installer (M1b) places the icons at the
-# same relative place beside the program.
-ICON_DIR = Path(__file__).resolve().parents[3] / "brand" / "assets" / "tray"
 AVAILABLE_SIZES = (16, 20, 24, 32)
 PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 TASKBAR_THEME_VALUE = "SystemUsesLightTheme"
 
 
+@functools.cache
+def default_icon_dir() -> Path:
+    """`paths.tray_icon_dir()`, worked out once (the layout can't change while the process runs)."""
+    return tray_icon_dir()
+
+
 def icon_file(state: IconState, light_taskbar: bool, folder: Path | None = None) -> Path:
-    return (folder or ICON_DIR) / f"tray-{state.value}-{'light' if light_taskbar else 'dark'}.ico"
+    return (folder or default_icon_dir()) / f"tray-{state.value}-{'light' if light_taskbar else 'dark'}.ico"
 
 
 def nearest_size(wanted: int) -> int:

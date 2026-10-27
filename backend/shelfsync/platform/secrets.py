@@ -13,6 +13,12 @@ _log = logging.getLogger("shelfsync.secrets")
 
 SERVICE_NAME = "ShelfSync"  # the Credential Manager service name; each secret is one entry under it
 
+INSTALL_TOKEN_ENTRY = "install-token"  # nosec B105
+# Every Credential Manager entry ShelfSync owns, under SERVICE_NAME. The uninstaller's "Remove my data" removes exactly
+# these (`shelfsync.uninstall`), so a new secret (the GitHub token of the updater, M2's keys) is added here and nowhere
+# else; deleting one that was never stored is not an error.
+OWNED_SECRET_NAMES: tuple[str, ...] = (INSTALL_TOKEN_ENTRY, "github-token")
+
 
 class SecretStoreError(Exception):
     """A secret store couldn't be read or written. The message never holds a secret value."""

@@ -11,6 +11,7 @@ from pathlib import Path
 _log = logging.getLogger("shelfsync.paths")
 
 DATA_DIR_ENV = "SHELFSYNC_DATA_DIR"  # for tests and Linux CI; nothing else overrides the root
+INSTANCE_LOCK_NAME = "instance.lock"  # in the data folder; the installer and uninstaller also try to open it (SYS-01)
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,11 @@ class DataPaths:
     @property
     def database(self) -> Path:
         return self.root / "shelfsync.db"
+
+    @property
+    def instance_lock(self) -> Path:
+        """The lock file that keeps a second logon session of the same user from starting a second server (SYS-03)."""
+        return self.root / INSTANCE_LOCK_NAME
 
 
 def resolve_data_paths() -> DataPaths:
@@ -100,3 +106,49 @@ def write_runtime_json(paths: DataPaths, port: int, pid: int) -> None:
     temporary = paths.runtime_json.with_name("runtime.json.tmp")
     temporary.write_text(json.dumps({"port": port, "pid": pid}), encoding="utf-8")
     os.replace(temporary, paths.runtime_json)
+
+
+class UiMissingError(Exception):
+    r"""An installed copy has no built UI (`ui\index.html`). A start-up error: the server must not run without it."""
+
+
+def _version_folder(package_file: Path) -> Path:
+    r"""The folder that holds the `shelfsync` package: `versions\<v>` when installed, `backend` in the source layout."""
+    return package_file.resolve().parents[1]
+
+
+def is_packaged_layout(package_file: Path | None = None) -> bool:
+    """True when the package sits in an embedded-Python folder (the installed copy, or the build folder before it is
+    packed): the embeddable package always has a `python*._pth` file beside the package; the source layout does not."""
+    folder = _version_folder(package_file or Path(__file__))
+    return any(folder.glob("python*._pth"))
+
+
+def source_ui_dir(package_file: Path | None = None) -> Path:
+    """`<repo>/frontend/dist`, the source layout's build folder (`npm run build`)."""
+    return _version_folder(package_file or Path(__file__)).parent / "frontend" / "dist"
+
+
+def ui_dir(package_file: Path | None = None) -> Path:
+    """The built UI the server serves. A packaged copy uses `<version folder>\\ui` and raises `UiMissingError` when it
+    has no `index.html`; the source layout keeps `frontend/dist`, which may be missing (API only, M1a)."""
+    file = package_file or Path(__file__)
+    if not is_packaged_layout(file):
+        return source_ui_dir(file)
+    folder = _version_folder(file) / "ui"
+    if not (folder / "index.html").is_file():
+        raise UiMissingError(f"The installed copy has no UI in {folder}")
+    return folder
+
+
+TRAY_ICON_FOLDER = "tray"  # `<version folder>\\tray` when packaged (build.py copies brand/assets/tray there)
+
+
+def tray_icon_dir(package_file: Path | None = None) -> Path:
+    """The tray icons (`tray-<state>-<light|dark>.ico`). A packaged copy has them in `<version folder>\\tray`; the
+    source layout reads `<repo>/brand/assets/tray`. Raises nothing: a missing folder shows up when an icon is loaded
+    (and in the build's smoke test, which loads every one)."""
+    file = package_file or Path(__file__)
+    if is_packaged_layout(file):
+        return _version_folder(file) / TRAY_ICON_FOLDER
+    return _version_folder(file).parent / "brand" / "assets" / "tray"
