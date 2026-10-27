@@ -1,6 +1,6 @@
-Status: open (PR open)
+Status: merged (PR #9)
 Tier: B ([12 §2](../12-models-and-usage.md): tray, launcher, notifications); the `reviewer` also runs `security-review` because it touches `platform/` and sends the install token (09 §3)
-Usage: (filled from node tools/model-audit.mjs)
+Usage: `builder claude-sonnet-5-5/medium` (no 09 §3 skill fits); `reviewer claude-opus-5-5/high` twice (`code-review`, `security-review`); re-checks at medium (see the M1a.3 run file for the two unmapped runs). From `node tools/model-audit.mjs 2026-10-27`
 
 # M1a.4: Tray, launcher and Windows
 

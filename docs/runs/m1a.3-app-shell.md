@@ -1,6 +1,6 @@
-Status: open (ready for PR after M1a.2 merges and a rebase)
+Status: merged (PR #8)
 Tier: B (design effort A: designer at high, [12 §2](../12-models-and-usage.md))
-Usage: (filled from node tools/model-audit.mjs)
+Usage: `designer claude-opus-5-5/high` (`frontend-design`), fix rounds `designer opus/medium` (`frontend-design`); re-check `reviewer opus/medium` (`code-review`, `frontend-design`). Two `reviewer opus/medium` runs with `code-review` only (03:28, 03:37 IST) belong to M1a.3 or M1a.4 re-checks; the audit doesn't say which. From `node tools/model-audit.mjs 2026-10-27`
 
 # M1a.3: App shell
 
