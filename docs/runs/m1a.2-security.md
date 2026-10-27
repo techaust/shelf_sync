@@ -1,6 +1,6 @@
-Status: open (ready for PR)
+Status: merged (PR #7)
 Tier: A
-Usage: `analyst claude-opus-5-5/high` (brief draft; no skill: `security-review` and `code-review` need a diff, none existed); lead at Opus 5.5 high for the final brief (12 §3, key step 1); 5-h 23 % at the start of the draft
+Usage: `analyst claude-opus-5-5/high` (brief draft; no skill: `security-review` and `code-review` need a diff, none existed); lead at Opus 5.5 high for the final brief and the review triage (12 §3); `analyst opus/high` early check (`security-review`); `builder claude-sonnet-5-5/high`, fix round `sonnet/medium`; `reviewer opus/high` (`code-review`, `security-review`); re-check `reviewer opus/medium` (same skills). From `node tools/model-audit.mjs 2026-10-27`; 5-h 23 % at the start, 51 % late in the day
 
 # M1a.2: Security base
 
