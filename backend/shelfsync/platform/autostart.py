@@ -1,6 +1,7 @@
 """Start with Windows (SYS-04): one value in `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`.
 
-The value is named `ShelfSync` and holds the quoted path of the installed `pythonw.exe` and `-m shelfsync.launcher`.
+The value is named `ShelfSync` and holds the quoted path of the installed `pythonw.exe`, `-m shelfsync.launcher` and
+`--background` (sign-in starts ShelfSync in the tray with no browser tab; shortcuts have no flag and open a tab).
 Turning the setting off removes the value. It is written only by an installed copy (running from
 `%LOCALAPPDATA%\\Programs\\ShelfSync\\current\\`): a development run never touches the owner's Run key.
 """

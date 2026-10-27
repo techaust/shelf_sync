@@ -1,4 +1,4 @@
-Status: open (brief written; waits for the owner's yes)
+Status: builder done (m1b.1-build branch); waits for the reviewer
 Tier: B ([12 §2](../12-models-and-usage.md)); the installer row of [09 §3](../09-tooling.md) adds `security-review`
 Usage: lead `claude-opus-5-5/medium` wrote this brief: 5-h 36 → 37 %
 
@@ -146,7 +146,98 @@ Don't touch `update/`, `db/backup.py`, `api/updates.py`, `api/secrets.py` or `to
 _(Tier B: none)_
 
 ## 3. Builder report
-_(builder)_
+Builder: `builder` (Sonnet 5.5). Branch `m1b.1-build` (cut from `b46d73c`; the worktree had started on `a230782`). Nothing pushed.
+
+**Skills and tools loaded (09 §3 rows):**
+- Context7 for **windows-toasts** (`/websites/windows-toasts_readthedocs_io_en`: `InteractableWindowsToaster(applicationText, notifierAUMID=...)`, custom AUMID under `HKCU\Software\Classes\AppUserModelId`), **uv** (`/astral-sh/uv`: `uv export --no-dev`, `uv pip install --target --python-platform windows --python-version --require-hashes --only-binary :all:`) and **pystray** (`/moses-palmer/pystray`: `Icon.stop()` semantics; the tray code is unchanged).
+- NSIS: Context7 has none. nsis.sourceforge.io couldn't be fetched (no web tool), and `hh.exe -decompile` of the local `NSIS.chm` produced nothing. I read the local `Include\MUI2.nsh`, `FileFunc.nsh`, `WordFunc.nsh` and `Contrib\Modern UI 2\Pages\Finish.nsh`, and settled the behaviours that mattered by running them (below). **Not verified against the official docs.**
+- `security-review` and `code-review`: the reviewer's. `aws-*`, `frontend-design`, `dataviz`, `artifact-design`: don't apply (no S3, no screen, no page). `run`: not loaded; the built folder's smoke test is the check of the running app.
+
+### Files changed (25; commits `0342ec6`, then the build and installer commits, then this report)
+- **App:** `backend/shelfsync/paths.py` (`ui_dir()`, `source_ui_dir()`, `is_packaged_layout()`, `UiMissingError`, `DataPaths.instance_lock`), `api/app.py` (`UI_DIR` now comes from `paths.source_ui_dir()`; kept because `frontend/e2e/server.py` and `test_static_ui.py` import it), `server.py` (everything except `migrate(connection)`: `ui_dir()` at start-up, `UiMissingError` gives exit 3 and a notice), `messages.py`, `tray/instance.py`, `tray/launcher.py`, `platform/autostart.py`, `platform/notify.py`, `platform/aumid.py` (new), `platform/secrets.py` (`OWNED_SECRET_NAMES`), `secure/token.py` (name now from that list), `uninstall.py` (new).
+- **Packaging:** `packaging/build.py`, `packaging/smoke.py`, `packaging/ShelfSync.nsi`, `packaging/test-installer.ps1`, `.github/workflows/release.yml`, `.gitignore` (+`build-cache/`).
+- **Tests:** `tests/test_m1b1_launcher.py`, `test_uninstall.py`, `test_packaging_build.py`, `test_release_files.py` (new); `test_autostart.py`, `test_launcher.py`, `test_exit_guard.py` edited (the Run value now ends in `--background`; `launcher.main([], ...)`).
+- Not touched: `update/`, `db/backup.py`, `api/updates.py`, `api/secrets.py`, `tools/release/`, `frontend/`, `brand/`, `docs/` other than this file.
+
+### Contracts for m1b.2 (as built)
+- `default_instance_lock()` keeps its no-argument signature. It returns `CombinedInstanceLock(WindowsInstanceLock(), WindowsFileLock(<data folder>\instance.lock))`.
+- `app.state.request_quit: Callable[[], bool]` is set in `TrayServe.__call__` (the menu's Quit and the app's call are the same method; `False` when a quit guard refuses). The developer entry never sets it.
+- `launcher.main(argv=None, *, ...)`: `argv` is new and first. Any caller must pass `[]` in tests (argparse would read pytest's arguments).
+- `OWNED_SECRET_NAMES = ("install-token", "github-token")`. I added `github-token` because §0 names it for m1b.2's `api/secrets.py`; deleting an entry that was never stored is not an error. Remove it if m1b.2 names it differently.
+- **Zip layout (decide at integration):** `shelfsync-<v>-win64.zip` holds the version folder's files with **no top-level folder**, in the same order and with the same paths as `build\files.txt` (`path<TAB>size<TAB>sha256`, sorted, forward slashes, LF). `files.txt` is not inside the zip.
+- The installer finds "the version `current` pointed at" from the Uninstall key's `DisplayVersion` (the updater rewrites it after each switch), not by reading the junction.
+
+### What was built, per item of the brief
+1. `paths.ui_dir()`: a packaged layout (a `python*._pth` beside the package) uses `<version folder>\ui` and raises `UiMissingError` without `index.html` (exit 3, `messages.START_FAILED_UI_MISSING`); the source layout keeps `frontend/dist` (M1a "API only" line).
+2. Data-folder lock: mutex first, then `instance.lock` opened with `CreateFileW` share mode 0 and `FILE_FLAG_OPEN_REPARSE_POINT`; a refused file lock gives the mutex back; a folder where the file should be is refused (fail closed). Fakes: `FakeInstanceLock` + `FakeFileLock` under `CombinedInstanceLock`.
+3. `--background`: `argparse` (`allow_abbrev=False`; an unknown argument exits 2). The Run value is `"<...>\current\pythonw.exe" -m shelfsync.launcher --background`; the shortcuts and a second launch have no flag and open a tab. An M1a value without the flag is rewritten by the existing "unchanged" comparison.
+4. `request_quit`: see contracts.
+5. AUMID `TecHaust.ShelfSync`: an installed copy uses it **only when the key exists** (`aumid.is_registered()`); otherwise the M1a default, because Windows may drop a toast sent for an unregistered AUMID. The installer writes `DisplayName` and `IconUri`; the uninstaller removes the key. `platform/aumid.py` also has `register`/`unregister`, the twin of the installer's writes, used by the Windows tests.
+6. Cold toast time: see commands.
+7. `python -m shelfsync.uninstall --remove-data`: removes `OWNED_SECRET_NAMES`, then the data folder entry by entry with `paths.remove_entry`, carries on after a failure and exits 1; exit 3 (refused, nothing touched) unless the folder is named `ShelfSync*` or holds `shelfsync.db` (a wrong `SHELFSYNC_DATA_DIR` can't become a wide delete). **Bug found by its own test and fixed:** a data folder that was itself a junction was emptied through the link (`Path.is_symlink()` is False for junctions on Windows); it now uses `os.path.isjunction` too.
+8. Strings: `messages.py` and the NSIS string table (wording below).
+- `build.py`, `smoke.py`, `ShelfSync.nsi`, `test-installer.ps1`, `release.yml`: as the brief; details in the files' headers. `release.yml` adds no action (the four checks.yml SHAs plus `upload-artifact` v7.0.2); the draft job fetches the artifact with `gh run download` instead of `download-artifact` (a new action), needs `actions: read` besides `contents: write`, and runs no repository code. The manifest step is a comment placeholder.
+
+### Findings that change what the docs say
+- **04-A V40: confirmed on this PC.** A throwaway NSIS 3.13 program that makes a junction inside a folder and runs `RMDir /r` on the folder **deleted the file in the junction's target** (result `FOLLOWED`). So the installer and uninstaller never use `RMDir /r` directly: `UnlinkAll` first runs `cmd /c for /f ... in ('dir /AL /S /B "<dir>"') do rmdir "%i"` (removes each link itself), then `RMDir /r`. `test_release_files.py` forbids a bare `RMDir /r` in the uninstall section. The sentinel check passed with it.
+- **V47: passed locally.** After a first start of the built folder (`python.exe`, throwaway data folder, in-memory secret store) the folder's 1,624 files are byte-identical (`checked-hash` precompile).
+- **V38: partly.** The embedded Python plus the locked wheels starts the server and serves the UI here. This PC isn't a clean PC; CI's runner is the real answer.
+- **V49 (cold toast):** 0.35 to 0.61 s from process start to `show_toast` returning (three runs: 0.61, 0.35, 0.37), a fresh `python -I` process, throwaway AUMID. **Under 5 s.** Caveat: that is the time to the call returning; whether the toast was rendered on screen in time (Focus Assist, this being inside the Claude app) was not observed.
+- Raw `uv pip install --target` for win_amd64 works from the lock with hashes; `compileall` prints one harmless `SyntaxWarning` for `pystray/_util/gtk.py`.
+- `python.exe` and 32 other files in the embeddable zip are signed by "Python Software Foundation" or "Microsoft Corporation" (the VC++ runtime DLLs): `build.py` accepts those two signers and refuses anything else (`Valid` status required).
+
+### SHA-256 values
+- Python embed zip `python-3.14.8-embed-amd64.zip`: `a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310` (computed by `build.py` on the downloaded file; equals the pin).
+- NSIS zip: the pin `ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8` is in `release.yml`; not re-downloaded here (the lead extracted it).
+- Local build (not reproducible, for reference only): `shelfsync-0.1.0-win64.zip` `cf02c8b42bb52977a16a1c6e4ccd3370418d064ed75502d40eaad1b434501205`; `files.txt` `a93bd5afa4e4f8730c87a52b659b1deb0c1fe28daef5ad9a33bde8f6737a620d` (1,624 files); rehearsal `Setup` `DC1145AD3DF5141C93CBCF4AA45F4232FCB4C1AD49BE9D315F5A8605ABD30A7F` (20,139,927 bytes). The built folder is 67 MB.
+
+### Commands run (all with `UV_PYTHON_DOWNLOADS=never`) and results
+| Command | Result |
+|---|---|
+| `uv sync --locked` | ok |
+| `uv run ruff check` and `uv run ruff format --check` | All checks passed; 88 files formatted |
+| `bash tools/heavy.sh --log mypy-full uv run mypy` | Success: no issues in 40 source files |
+| `bash tools/heavy.sh --log pytest-full uv run pytest` | **774 passed, 12 skipped**, 37 deselected, exit 0 (87 % total). Run on Windows only; **not run on Linux**: the new tests are written to be portable (symlinks instead of junctions, Windows-only parts under `skipif`) but unproven there. The folders with a 90 % gate (`secure`, `inspect`, `match`, `apply`) are unchanged by this task apart from `secure/token.py`'s constant |
+| `uv run bandit -r backend` | No issues identified (`packaging/` is outside bandit's CI scope; its `subprocess` and `urlopen` lines carry `nosec` notes) |
+| pip-audit as CLAUDE.md describes | No known vulnerabilities found |
+| `bash tools/heavy.sh --log pytest-windows uv run pytest -m windows --no-cov -s` | **36 passed**, 1 skipped (the V31 Defender check, owner-only), exit 0. Includes the new ones: the lock file across two real processes (held, refused, freed when the holder is killed), the AUMID key written, read and removed under a throwaway id, the cold toast, and the existing keyring and mutex checks |
+| `bash tools/heavy.sh --log npm-ci npm ci --prefix frontend` and `... --log ui-build npm run build --prefix frontend` | 146 packages, 0 vulnerabilities; build ok (frontend/ files unchanged) |
+| `bash tools/heavy.sh --log build-final .venv/Scripts/python.exe -I packaging/build.py` | exit 0, 1,624 files, run outside `uv run` as CI will |
+| `... packaging/smoke.py build/ShelfSync-0.1.0 --version 0.1.0` | passed: version 0.1.0 answered, UI served, folder unchanged |
+| `makensis /DVERSION=0.1.0 /DBUILD_DIR=... /DSUFFIX=-rehearsal` (NSIS v3.13, from `tools\nsis-3.13`, not copied) | exit 0, about 42 s, 20 MB |
+| `bash tools/heavy.sh --log install-rehearsal-final powershell -File packaging/test-installer.ps1 -Setup ... -Version 0.1.0 -Root <throwaway> -Suffix -rehearsal` | **All installer checks passed** (35 checks): silent install exits 0; `current` is a junction to `versions\0.1.0`; both shortcuts have the right target, arguments and icon; every Uninstall-key value and the AUMID key; installed Python imports `shelfsync 0.1.0`; Setup refuses (exit 5) while `instance.lock` is held; sentinel junction planted; silent uninstall with `_?=` exits 0 and leaves only `uninstall.exe`; the file behind the junction survived; shortcuts, keys and Run value gone |
+| Extra rehearsal (ad hoc script, same Setup built as 0.0.9, 0.1.0, 0.1.1, 0.1.2) | upgrade keeps old and new (`0.1.0,0.1.1`); an **older Setup is refused (exit 6)** and nothing changes; the next upgrade prunes to `0.1.1,0.1.2`; a repair of the same version removes nothing (I had it pruning the rollback copy; fixed before the final run); uninstall leaves no key |
+| Rehearsal of `/REMOVEDATA` with a data folder that isn't ShelfSync's | the module refused (exit 3), the uninstaller carried on, the program was removed, the data file was kept |
+
+All rehearsals used throwaway roots, the suffix `-rehearsal` on every key, value and shortcut, and a throwaway `SHELFSYNC_DATA_DIR`. The Desktop shortcut was written to this PC's real Desktop (OneDrive) under the throwaway name and removed by the uninstaller.
+
+### Proposed wording for 13
+In `messages.py`:
+- `START_FAILED_UI_MISSING`: "ShelfSync is missing its screens, so it didn't start. Run the ShelfSync installer again to repair it. Details are in the log: %LOCALAPPDATA%\ShelfSync\logs\shelfsync.log"
+
+In the NSIS string table (`packaging/ShelfSync.nsi`):
+- Running at install: "ShelfSync is running. Quit it from its tray icon, then run this installer again."
+- Running at uninstall: "ShelfSync is running. Quit it from its tray icon, then run the uninstaller again."
+- Older Setup: "This installer is ShelfSync <version>, but a newer ShelfSync is already installed. Installing an older version could damage your data, so the installer stopped. Download the newest installer, or uninstall ShelfSync first."
+- Junction failed: "The installer couldn't switch ShelfSync to the new version. Nothing else was changed. Close any window showing the ShelfSync folder and run the installer again."
+- Finish page checkbox: "Open ShelfSync"
+- Uninstall page title: "Remove my data"; text: "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."; checkbox (off by default): "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
+- Data not fully removed: "ShelfSync couldn't remove all of your data. Delete what is left of this folder yourself:" followed by the folder.
+- Exit codes of Setup/uninstaller: 5 running, 6 older, 7 junction failed.
+
+### Not verified
+- **`release.yml` has never run.** Untested in it: the SourceForge URL for `nsis-3.13.zip` (redirects; the hash check is the guard), `uv pip install --python` on a runner with no venv (I ran `.venv\Scripts\python.exe -I build.py`, which is close but not the same), the smoke with `--real-secrets` (the real `python -m shelfsync`, so keyring in the embedded Python), `gh run download` and `gh release create --draft --verify-tag` in the draft job, `-RemoveData` with the real Credential Manager. A local run of `-RemoveData` was impossible: it would delete this owner's real `ShelfSync` Credential Manager entries.
+- The installer's **screens were never seen**: the Welcome, Finish ("Open ShelfSync" ticked and starting the app) and the uninstall "Remove my data" page, and the brand bitmaps in them. Silent mode skips them.
+- **V36/V42:** every rehearsal ran inside the Claude app, whose `%LOCALAPPDATA%` and `%APPDATA%` (and possibly HKCU writes) are virtualized, so "the check saw its own files and keys" proves the script, not what Windows sees. The owner's clean-account install and `reg query` outside Claude are still needed.
+- The `--background` sign-in start and a reboot; SmartScreen and Defender on the unsigned Setup (V48); whether the toast was visible within the cold-start time; the Linux CI run of the new tests; Start-menu shortcut placement under a normal (non-virtualized) `%APPDATA%`; the junction switch under an open file handle (`current` is re-pointed by `RMDir` then `mklink /J`, not atomically: V39 stays open for m1b.2's fault tests).
+- The uninstaller removes `$INSTDIR` with a plain `RMDir` (only if empty), so anything unknown in the program folder's root is left behind rather than risking a recursive delete of a wrongly chosen `/D=` folder.
+
+### Open questions for the lead
+1. Zip layout (no top-level folder) and `files.txt` format: does m1b.2's `unpack.py`/`manifest.py` want something else?
+2. `github-token` in `OWNED_SECRET_NAMES`: keep, or let m1b.2 add it?
+3. `UI_DIR` stays in `api/app.py` as an alias of the source layout; `frontend/e2e/server.py` (the designer's) still imports it. Fine, or move that import at m1b.4?
+4. Setup/uninstaller exit codes 5, 6, 7: any the runbook should name?
+5. Should a repair (same version) re-run the keep-one-previous rule? As built it removes nothing.
 
 ## 4. Designer report
 _(none: the installer uses the existing brand art)_
