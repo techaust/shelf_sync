@@ -27,7 +27,7 @@ The M1b plan is in [runs/m1b.2-updater.md](m1b.2-updater.md) §0. The APIs these
    - the development-copy and no-key states turn the buttons off and say why;
    - **Install:** a "preparing" state while the download and check run; "Install {v} and restart" opens a ConfirmDialog; after the 202, a "ShelfSync is restarting" panel that polls `/api/health` and reloads when the new version answers;
    - **Roll back:** the ConfirmDialog with the two wordings (files only, or a database change with the date). The second one sends what the API's `confirm_required` asks for;
-   - the GitHub token in a SecretField: show only the API's masked form, Save, Remove, the expiry notice, and the github_pat_ refusal;
+   - the GitHub token in a SecretField. The API never returns the token, masked or not ([11](../11-decisions.md), 2026-10-27): show only whether one is saved and its expiry, plus Save, Remove, the expiry notice and the github_pat_ refusal;
    - drop "Installs in under a minute" (13 §6: not measured). Use "This takes about a minute." only inside the install dialog, as the m1b.2 wording has it;
    - each API error code shown with its 13 wording.
 3. **Settings › App** (`appPage()` in the mockup), wired to `GET`/`PUT /api/settings/app` and `POST` reset-token in `api/session.py`:
@@ -40,7 +40,7 @@ The M1b plan is in [runs/m1b.2-updater.md](m1b.2-updater.md) §0. The APIs these
    - `installed: false` (a development copy): Start with Windows is shown off and disabled, with a one-line reason.
 4. **Shared parts** in `frontend/src/components/`:
    - **ConfirmDialog** on the native `<dialog>` element (`showModal()`), with a focus trap from the browser, Esc to cancel, the focus going back to the opener, and the destructive button styled `is-danger`;
-   - **SecretField:** never puts a stored secret in the page; shows the masked form from the API; a password input only for a new value; Save and Remove;
+   - **SecretField:** never puts a stored secret in the page; shows "saved" or "not set" from the API; a password input only for a new value, cleared after saving; Save and Remove;
    - **Switch:** `role="switch"` with `aria-checked`, a visible label and a helper line.
    - Use the existing Radix packages only where they already fit (Tooltip). **No new npm package.**
 5. **The API client:** use the generated types in `src/api/schema.d.ts` and `client.ts`'s typed calls and error codes. Every write sends what the guard needs (the client does already).
