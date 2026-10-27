@@ -24,7 +24,7 @@ if sys.platform == "win32":
 
 
 @contextmanager
-def throwaway_store(names: list[str]) -> Iterator["KeyringSecretStore"]:
+def throwaway_store(names: list[str]) -> Iterator[KeyringSecretStore]:
     """A store under a one-off service name; the given entry names are always deleted afterwards."""
     store = KeyringSecretStore(f"ShelfSync-test-{secrets.token_hex(6)}")
     try:

@@ -1,4 +1,4 @@
-Status: open
+Status: merged (PR #12)
 Tier: B ([12 §2](../12-models-and-usage.md): tray, launcher); the `reviewer` also runs `security-review`, because the stall report is a new output path ([06 §3](../06-security.md))
 Usage: `analyst claude-opus-5-5/high` (no 09 §3 skill fits a read-only diagnosis): 5-h 40 → 49 %; `builder claude-sonnet-5-5/medium` (no 09 §3 skill fits; Context7 for pystray), three rounds; `reviewer claude-opus-5-5/high` [`code-review`, `security-review`] and two re-checks, with one read-only `general-purpose` helper started by `code-review` (the 12 §3 exception). From `node tools/model-audit.mjs 2026-10-27`
 
@@ -182,4 +182,4 @@ _(lead, 2026-10-27)_
 - **Follow-ups:** the `httpx` deprecation warning from `starlette.testclient` (seen in the Windows checks); the M1b carry-overs in the status page.
 
 ## 7. Handover
-_(lead)_
+_(lead, 2026-10-27)_ Merged as PR #12 (`4508d20`) after green CI (704 passed, no skips, so the symlink tests ran). The owner approved M1a the same day. Nothing left in this task. Carry-overs for M1b: time a cold crash toast against stage 2 (10 s); the `httpx` deprecation warning from `starlette.testclient`.

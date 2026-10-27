@@ -32,7 +32,7 @@ One Python process holds the web server, the job worker and the tray. No separat
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | **Python 3.12**, the official Windows embeddable package (PSF-signed executables, V12) with `python312._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
+| Runtime | **Python 3.14** ([ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendment, 2026-10-27), the official Windows embeddable package (PSF-signed executables, V12) with `python314._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
 | Web | **FastAPI** on **uvicorn** (bound to `127.0.0.1`), **python-multipart** for uploads | Typed routes; OpenAPI generates the UI's TypeScript types (**openapi-typescript**) |
 | Database | **SQLite** through the standard `sqlite3` module, WAL mode, numbered SQL migrations with a small runner, foreign keys on | One file, no ORM |
 | HTTP | **httpx** (stores, GitHub), **boto3** (S3; `request_checksum_calculation="when_required"` for non-AWS endpoints, V10) | boto3 handles range reads, presigning and `ContentMD5` |
@@ -90,9 +90,10 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | CI actions (by commit SHA) | actions/checkout | v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1` | 2026-07-20 | MIT |
 | | actions/setup-node | v7.1.0 `949feb2413d6458794dcd2491c4babbbce0c15c1` | 2026-10-08 | MIT |
 | | astral-sh/setup-uv | v10.3.0 `1c37ad07a6a961277cf70c0d37d6f313000f5884` | 2026-10-09 | MIT |
+| | actions/setup-python | v7.0.0 `5fda3b95a4ea91299a34e894583c3862153e4b97` | 2026-07-20 | MIT (owner, 2026-10-27: CI's Python 3.14.8) |
 | | actions/upload-artifact | v7.0.2 `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 | MIT |
 
-Local tools already on this PC (not shipped): Python 3.12.10, uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
+Local tools already on this PC (not shipped): Python 3.14.8 (owner-installed from python.org, 2026-10-27; 3.12.10 also still installed), uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0.
 
 ## 3. Folder structure
 ```text
@@ -207,7 +208,7 @@ stateDiagram-v2
 - **GitHub Releases:** read-only check with the owner's fine-grained token (designed for a private repo). While the repo is public the releases can be read without a token; whether the updater keeps the token is decided in the M1b brief.
 
 ## 8. Packaging, install and updates
-- **Build (CI, Windows, on a release tag):** download the Python 3.12 embeddable package (SHA-256 pinned), check its executables' signatures, write `python312._pth`, install the app's wheels with `pip install --target Lib\site-packages` from the hash-locked requirements, add the built UI, then compile `ShelfSync-Setup.exe` with NSIS. The build produces an **unsigned** release manifest; the owner signs it offline ([06 §6](06-security.md), runbook `release.md`).
+- **Build (CI, Windows, on a release tag):** download the Python 3.14 embeddable package (SHA-256 pinned), check its executables' signatures, write `python314._pth`, install the app's wheels with `pip install --target Lib\site-packages` from the hash-locked requirements, add the built UI, then compile `ShelfSync-Setup.exe` with NSIS. The build produces an **unsigned** release manifest; the owner signs it offline ([06 §6](06-security.md), runbook `release.md`).
 - **Install layout (per user, no admin):**
   - program: `%LOCALAPPDATA%\Programs\ShelfSync\versions\<version>\`
   - a **directory junction** `%LOCALAPPDATA%\Programs\ShelfSync\current` → the active version (junctions need no admin)

@@ -26,7 +26,7 @@ from shelfsync.tray.launcher import TrayServe
 
 
 class FakeTray:
-    instances: ClassVar[list["FakeTray"]] = []
+    instances: ClassVar[list[FakeTray]] = []
     on_stop: ClassVar[Callable[[], None] | None] = None
 
     def __init__(
@@ -78,7 +78,7 @@ class Running:
         except httpx.TransportError:
             self.events.append("tray stopped, server already down")
 
-    def start(self) -> "Running":
+    def start(self) -> Running:
         self.thread.start()
         assert wait_for(lambda: bool(FakeTray.instances) and FakeTray.instances[0].started)
         return self

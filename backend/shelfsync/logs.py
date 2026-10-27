@@ -233,7 +233,7 @@ def _log_uncaught_in_thread(args: threading.ExceptHookArgs) -> None:
     )
 
 
-def _log_unraisable(unraisable: "sys.UnraisableHookArgs") -> None:
+def _log_unraisable(unraisable: sys.UnraisableHookArgs) -> None:
     _UNCAUGHT.error(
         "Unraisable exception: %s",
         unraisable.err_msg or "exception ignored",

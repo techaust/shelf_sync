@@ -1,6 +1,6 @@
 # ADR 0001: Python + FastAPI + SQLite backend, React + TypeScript UI
 
-- **Status:** Accepted (owner, with plan Draft 3, 2026-10-25)
+- **Status:** Accepted (owner, with plan Draft 3, 2026-10-25); **amended 2026-10-27 (owner): Python 3.14**, see below
 - **Date:** 2026-10-25
 
 ## Context
@@ -23,3 +23,6 @@ ShelfSync runs on one Windows PC for one user. It reads ZIPs (locally and from S
 ## Consequences
 - One process, one database file, one log folder.
 - The UI shares its component approach and tokens with the TecHaust admin ([ADR 0006](0006-techaust-product-brand.md)).
+
+## Amendment 2026-10-27: Python 3.14
+Python 3.12's last release with Windows builds is 3.12.10 (8 April 2025, python.org Windows downloads page, read 2026-10-27); its later security fixes are source-only, so an embedded 3.12 could never take them, and ShelfSync reads untrusted vendor ZIPs. The owner moved ShelfSync to **Python 3.14**, the newest line, which has Windows builds with fixes until about October 2027. The move is the first M1b task: every locked package is checked for 3.14 wheels first, and the lead comes back to the owner before changing anything if one is missing. The rest of this ADR is unchanged.

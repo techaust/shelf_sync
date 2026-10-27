@@ -147,7 +147,7 @@ def test_the_real_taskbar_theme_and_icon_size_can_be_read() -> None:
 
 
 class FakeIcon:
-    instances: ClassVar[list["FakeIcon"]] = []
+    instances: ClassVar[list[FakeIcon]] = []
     auto_ready: ClassVar[bool] = True
     stop_delay: ClassVar[float] = 0.0
     loop_never_ends: ClassVar[bool] = False  # `stop()` and `_stop()` post a message that is never handled
