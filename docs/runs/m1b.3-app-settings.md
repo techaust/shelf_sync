@@ -28,7 +28,7 @@ The M1b plan is in [runs/m1b.2-updater.md](m1b.2-updater.md) §0. m1b.1 (#15), m
      - `log_retention_days` 1–365.
    - It saves through `db/settings.py` (`set_setting`, one transaction) and returns what was saved, plus `restart_needed: bool` (true when the port changed).
    - What a save does at once:
-     - **Start with Windows:** applies `apply_start_with_windows` now. An installed copy writes or removes the Run value. An `AutostartError` is reported as a 200 with `start_with_windows_applied: false`, never a 500.
+     - **Start with Windows:** applies `apply_start_with_windows` now. An installed copy writes or removes the Run value. An `AutostartError` is reported as a 200 with `start_with_windows_result: "failed"`, never a 500.
      - **Log retention:** updates the running handler's `backupCount` and prunes at once (item 2).
      - **Port:** takes effect at the next start.
      - **Notifications:** saved only. SYS-05 is M5; the notifier doesn't read it yet, so don't wire it.
@@ -76,7 +76,7 @@ Builder: Sonnet 5.5, worktree branch `worktree-agent-a7fa3226c665c0518` (the wor
 **Skills and tools:** Context7 (FastAPI and Pydantic): `StrictInt`/`StrictBool` refuse `true` and `"30"` for numbers, `ConfigDict(extra="forbid")` refuses unknown fields, `response_model` on a PUT. No skill was loaded through the Skill tool: the lead said not to load `security-review` or `code-review`, and no other skill in the row applies to this task (not stated otherwise in the brief).
 
 **Files changed**
-- `backend/shelfsync/api/app_settings.py` (new): `AppSettingsService`, `make_app_settings_router`, the models. `GET`/`PUT /api/settings/app`. Strict types; `port` 47615-47624; `theme` system/light/dark; `log_retention_days` 1-365; all required; unknown fields (`installed` included) refused as the fixed 422 `invalid_request`. A save is one `BEGIN IMMEDIATE` transaction through `set_setting`. Answers the five values + `restart_needed` (port differs from the stored one) + `start_with_windows_applied`.
+- `backend/shelfsync/api/app_settings.py` (new): `AppSettingsService`, `make_app_settings_router`, the models. `GET`/`PUT /api/settings/app`. Strict types; `port` 47615-47624; `theme` system/light/dark; `log_retention_days` 1-365; all required; unknown fields (`installed` included) refused as the fixed 422 `invalid_request`. A save is one `BEGIN IMMEDIATE` transaction through `set_setting`. Answers the five values + `restart_needed` (the saved port differs from the one the server is bound to) + `start_with_windows_result` ("applied", "not_installed" or "failed"; was a bool `start_with_windows_applied`, changed in the review fixes).
 - `backend/shelfsync/api/app.py`: keyword-only `app_settings=` on `create_app`, like `updates=`; the default is `AppSettingsService.development()` (settings in a shared in-memory SQLite, no log handler, a `FakeRunKey`, never installed).
 - `backend/shelfsync/server.py`: start-up calls `set_log_retention` (was a bare `backupCount =`) and passes the real service (`connect(paths.database)`, the log handler).
 - `backend/shelfsync/logs.py`: `prune_logs`, `set_log_retention`; `RedactingFileHandler.doRollover` prunes after a successful rollover. `configure_logging` deliberately doesn't prune (the retention is still the default there; pruning with 30 could delete files the owner's 365 keeps).
@@ -87,7 +87,7 @@ Builder: Sonnet 5.5, worktree branch `worktree-agent-a7fa3226c665c0518` (the wor
 
 **Decisions made (routine)**
 - Age rule: a rotated file named for day D is kept while `today(UTC) - D <= N days` (N rotated files at most, equal to `backupCount`); the date is taken from the name, not the mtime.
-- `start_with_windows_applied` is false only on `AutostartError`; for a copy that isn't installed ("skipped") it is true (nothing to apply).
+- `start_with_windows_result` is "failed" only on `AutostartError`; "not_installed" for a copy that isn't installed (nothing applied).
 - A real folder with a rotated name is skipped; a link with one is removed itself.
 
 **Commands and results** (all with `UV_PYTHON_DOWNLOADS=never`)
@@ -107,13 +107,29 @@ Builder: Sonnet 5.5, worktree branch `worktree-agent-a7fa3226c665c0518` (the wor
 - The `PUT` of `start_with_windows` re-applies the Run value even if unchanged (idempotent: "unchanged" when it already matches).
 
 **Proposed 13 wording** (no string is shown by the backend; these are for m1b.4's screen)
-- Notice when `start_with_windows_applied` is false: "Your settings were saved, but Windows wouldn't let ShelfSync change its start-up entry. Start with Windows is unchanged."
+- Notice when `start_with_windows_result` is "failed": "Your settings were saved, but Windows wouldn't let ShelfSync change its start-up entry. Start with Windows is unchanged."
 - Notice when `restart_needed` is true: "The new port is used the next time ShelfSync starts."
 - Hint for a development copy (`installed` false): "This copy isn't installed, so Start with Windows is saved but not applied."
 - Field limits to show in the form: port 47615 to 47624; log retention 1 to 365 days.
 
 ## 5. Review
 _(reviewer)_
+
+### Review fixes (builder, Sonnet 5.5)
+| # | Finding | Fix | Test |
+|---|---------|-----|------|
+| 1 | bool `start_with_windows_applied` | `start_with_windows_result`: "applied" / "not_installed" / "failed"; schema regenerated; brief wording updated | `test_app_settings.py` (result on installed, development, broken key) |
+| 2 | `restart_needed` vs stored port | `AppSettingsService(connect, bound_port, ...)`; `_start` passes the bound port, `create_app` passes its port to the default service | `test_restart_needed_compares_with_the_port_the_server_is_bound_to`, `test_the_default_service_uses_the_port_create_app_gets`, `test_the_settings_service_gets_the_bound_port_the_run_key_and_installed` |
+| 3 | save not serialized | `threading.Lock` around the whole save | `test_two_saves_at_once_are_applied_in_the_order_they_commit` |
+| 4 | retention change and prune unlocked; 0 days | `set_log_retention` under `handler.acquire()`; `prune_logs` and `set_log_retention` raise ValueError below 1 | `test_set_log_retention_holds_the_handlers_lock`, `test_prune_and_set_retention_refuse_less_than_one_day` |
+| 5 | start-up handler used 30 days | `configure_logging(..., MAX_LOG_RETENTION_DAYS)` (365, now defined in `logs.py`, imported by the API) until the settings are read | `test_logging_starts_with_the_longest_retention_until_the_settings_are_read` |
+| 6 | GET 500 on a bad stored value | each stored value validated; invalid: default plus a WARNING naming the key | `test_get_falls_back_to_the_default_on_a_stored_value_that_is_not_valid` |
+| 8 | duplicated apply code | `autostart.apply_start_with_windows_safely` used by the launcher and the API; `run_key` and `installed` pass through `run` and `_start` | `test_the_safe_apply_returns_failed_instead_of_raising`, the server wiring test, `test_launcher.py` |
+| 9 | Run key and prune at every save | Run key only when the setting changed or at the first save after start (a failed apply is retried); prune only when the retention changed; unchanged results documented in `save`'s docstring | `test_the_run_key_is_touched_once_per_start_and_then_only_when_it_changes`, `test_a_failed_run_key_is_tried_again_at_the_next_save`, `test_the_log_retention_is_applied_only_when_it_changes` |
+| 10 | `SaveOutcome` duplicate | removed; `save()` returns `AppSettingsSaved` | every PUT test |
+| 11 | dead `entry.name == LOG_FILE_NAME` | removed (the name regex already excludes it) | existing `test_log_prune.py` |
+| 12 | Run value rewritten on case difference | compared with `ntpath.normcase` on both (the Run value is a Windows path on every platform, so CI on Linux behaves the same); the value is still written as before | `test_a_run_value_that_differs_only_in_case_or_slashes_is_left_alone` |
+| 7 | (not fixed here) | the lead records it as a follow-up | |
 
 ## 6. Integration notes
 _(lead)_

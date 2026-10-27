@@ -206,3 +206,25 @@ def test_the_real_run_key_is_not_written_by_a_development_apply(monkeypatch: pyt
     assert apply_start_with_windows(True, key) == "skipped"
     assert apply_start_with_windows(False, key) == "skipped"
     assert key.get("ShelfSync") == before
+
+
+def test_a_run_value_that_differs_only_in_case_or_slashes_is_left_alone() -> None:
+    """SYS-04: compared like Windows paths, so a case difference doesn't rewrite the value at every start."""
+    key = FakeRunKey()
+    key.values["ShelfSync"] = COMMAND.upper().replace("\\", "/")
+    assert apply_start_with_windows(True, key, command=COMMAND, installed=True) == "unchanged"
+    assert key.values["ShelfSync"] == COMMAND.upper().replace("\\", "/")
+
+
+def test_the_safe_apply_returns_failed_instead_of_raising(caplog: pytest.LogCaptureFixture) -> None:
+    """SYS-04: the one helper the launcher and the settings API share."""
+    from shelfsync.platform.autostart import AutostartError, apply_start_with_windows_safely
+
+    class Refusing(FakeRunKey):
+        def get(self, name: str) -> str | None:
+            raise AutostartError("Reading the Run key failed (PermissionError)")
+
+    with caplog.at_level(logging.WARNING, logger="shelfsync.autostart"):
+        assert apply_start_with_windows_safely(True, Refusing(), installed=True) == "failed"
+    assert "couldn't be applied" in caplog.text
+    assert apply_start_with_windows_safely(True, FakeRunKey(), installed=False) == "skipped"

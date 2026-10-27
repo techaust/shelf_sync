@@ -30,7 +30,7 @@ from fastapi import FastAPI
 
 from shelfsync import logs, messages, server
 from shelfsync.paths import DataPaths
-from shelfsync.platform.autostart import BACKGROUND_FLAG, AutostartError, RunKey, apply_start_with_windows
+from shelfsync.platform.autostart import BACKGROUND_FLAG, RunKey, apply_start_with_windows_safely
 from shelfsync.platform.notify import Notifier, default_notifier
 from shelfsync.platform.secrets import SecretStore, default_secret_store
 from shelfsync.platform.shell import Shell, ShellError, WindowsShell
@@ -186,11 +186,7 @@ def make_on_settings(run_key: RunKey | None = None, installed: bool | None = Non
     """Applies what the settings decide at start-up: Start with Windows (SYS-04)."""
 
     def apply(settings: dict[str, Any]) -> None:
-        try:
-            outcome = apply_start_with_windows(bool(settings["start_with_windows"]), run_key, installed=installed)
-            _log.info("Start with Windows: %s", outcome)
-        except AutostartError as error:
-            _log.warning("Start with Windows couldn't be applied (%s)", error)
+        apply_start_with_windows_safely(bool(settings["start_with_windows"]), run_key, installed=installed)
 
     return apply
 
