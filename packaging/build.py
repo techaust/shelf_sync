@@ -282,9 +282,8 @@ def check_tray_icons(source: Path) -> None:
 
 
 def copy_tray_icons(source: Path, destination: Path) -> None:
-    """The six tray icons the tray loads from `<version folder>/tray` (`paths.tray_icon_dir()`); a missing one stops
-    the build (an installed copy without them can't start its tray)."""
-    check_tray_icons(source)
+    """The six tray icons the tray loads from `<version folder>/tray` (`paths.tray_icon_dir()`); `build()` has
+    already stopped the build if one is missing (`check_tray_icons`; without them an installed copy can't start)."""
     destination.mkdir(parents=True)
     for name in TRAY_ICON_NAMES:
         shutil.copy2(source / name, destination / name)

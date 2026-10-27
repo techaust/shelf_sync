@@ -207,7 +207,7 @@ def test_round_6_one_exit_code_list_and_the_cant_check_notice() -> None:
         assert f";      {number} " in section
     branch = section.split("${ElseIf} $3 == 8")[1].split("${Else}")[0]
     assert "STR_DATA_CANT_CHECK" in branch and "Abort" not in branch
-    assert "so it didn't remove your data" in NSI
+    assert "so it didn't remove your data or the stored sign-in token" in NSI
     smoke = (REPO / "packaging" / "smoke.py").read_text(encoding="utf-8")
     assert "make_exit_guard=entry.make_real_exit_guard" in smoke and "import shelfsync.launcher as entry" in smoke
     assert smoke.index("before = {") < smoke.index("isolated, safe_path") < smoke.index('"-c", ICONS_PROBE')

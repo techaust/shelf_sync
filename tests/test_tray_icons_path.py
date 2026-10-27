@@ -63,7 +63,7 @@ def test_the_build_copies_the_six_icons_and_stops_when_one_is_missing(tmp_path: 
     assert [e.path for e in entries] == sorted(f"tray/{name}" for name in build.TRAY_ICON_NAMES)
     (source / build.TRAY_ICON_NAMES[0]).unlink()
     with pytest.raises(build.BuildError, match="missing tray icons"):
-        build.copy_tray_icons(source, tmp_path / "out2" / "tray")
+        build.check_tray_icons(source)  # `build()` runs this before the slow steps; the copy itself doesn't repeat it
 
 
 def test_the_smoke_test_loads_the_launcher_and_every_icon_and_quits_through_request_quit() -> None:

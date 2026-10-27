@@ -56,7 +56,7 @@ ManifestDPIAware true
 !define STR_DATA_TEXT "ShelfSync keeps your database, backups and logs, and the sign-in token it stored for you, even after it is removed, so a later install picks up where you left off."
 !define STR_DATA_CHECK "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
 !define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. Delete what is left yourself if you want it gone; this is the data folder:"
-!define STR_DATA_CANT_CHECK "ShelfSync couldn't check whether it is running, so it didn't remove your data. Quit ShelfSync if it is running, then uninstall again with Remove my data ticked. The program is being removed now."
+!define STR_DATA_CANT_CHECK "ShelfSync couldn't check whether it is running, so it didn't remove your data or the stored sign-in token. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 !define STR_DATA_SECRETS "ShelfSync couldn't remove its stored sign-in token from Windows Credential Manager, so it may still be stored there. You can delete the ShelfSync entry under Windows Credentials in Credential Manager."
 !define STR_DATA_NOTHING "ShelfSync couldn't remove your data, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 

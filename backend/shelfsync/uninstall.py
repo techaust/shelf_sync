@@ -4,16 +4,24 @@ any program file is removed and only when "Remove my data" is ticked.
 It takes the single-instance lock for the whole job (and refuses if ShelfSync runs), removes every Credential Manager
 entry ShelfSync owns (`platform.secrets.OWNED_SECRET_NAMES`), then the data folder, without following any link or
 junction in it (`paths.remove_entry`). It carries on after a failure so one locked file doesn't leave the rest behind,
-and reports what is left. The lock file is the last thing removed, after the lock is let go.
+and reports what is left. The lock file is removed last, after the lock is let go (if the folder can't even be
+listed, nothing in it is removed and the lock file goes with the lock when the process ends).
 
-Exit codes: 0 everything removed; 1 data was left behind (an entry in the data folder couldn't be removed, or the
-data folder is itself a link and was left alone); 5 only a Credential Manager entry couldn't be removed; 6 both
-(the uninstaller says so, names the folder and goes on removing the program); 7 the module crashed before it
-took the lock (nothing was removed); 8 whether ShelfSync runs couldn't be checked (nothing was removed); a crash
-after the lock is held is 6 (both may be left); 3 refused (the folder doesn't look
-like ShelfSync's data folder, or no data folder is known: nothing was touched); 4 ShelfSync is running (nothing was
-touched). Output names entries and folders, never a secret. `--service` names the Credential Manager service (the
-default is ShelfSync's own; a throwaway build of the installer passes its own so it never touches the real one).
+Exit codes (the same list, in the same order, as the installer script's):
+  0 everything removed
+  1 data left behind (an entry in the data folder couldn't be removed, or the data folder is itself a link and was
+    left alone; the stored tokens are removed either way)
+  2 a usage error (argparse): nothing was removed
+  3 refused: the folder doesn't look like ShelfSync's data folder, or no data folder is known; nothing was touched
+  4 ShelfSync is running: nothing was removed
+  5 only a Credential Manager entry couldn't be removed
+  6 both may be left (data and a token); also a crash after the lock was held
+  7 the module crashed before it took the lock: nothing was removed
+  8 whether ShelfSync runs couldn't be checked (the user's SID, or the lock couldn't be made or taken): nothing was
+    removed
+The uninstaller says what is left, names the folder and goes on removing the program. Output names entries and folders,
+never a secret. `--service` names the Credential Manager service (the default is ShelfSync's own; a throwaway build
+of the installer passes its own so it never touches the real one).
 """
 
 import argparse
@@ -108,7 +116,8 @@ def remove_data_folder(root: Path, lock: InstanceLock | None = None, keep: str |
     try:
         root.rmdir()
     except OSError:
-        failed.append(".")
+        if "." not in failed:
+            failed.append(".")
     return failed
 
 
@@ -157,7 +166,9 @@ def remove_data(
         _say("Couldn't check whether ShelfSync is running; nothing was removed.")
         return EXIT_CANT_CHECK
     except OSError:
-        free = False  # no lock could be made: treat it as running, touch nothing
+        # The data folder or the lock file couldn't be made or opened: can't tell either. Nothing is removed.
+        _say("Couldn't check whether ShelfSync is running (the lock couldn't be made); nothing was removed.")
+        return EXIT_CANT_CHECK
     if not free:
         _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
         return EXIT_RUNNING

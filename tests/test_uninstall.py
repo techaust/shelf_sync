@@ -216,8 +216,9 @@ def test_it_refuses_while_shelfsync_runs_and_touches_nothing(tmp_path: Path) -> 
     assert taken == {"x"}  # the holder's lock isn't disturbed
 
 
-def test_a_lock_that_cant_be_checked_counts_as_running(tmp_path: Path) -> None:
-    """SYS-08: fail closed."""
+def test_a_lock_that_cant_be_made_is_exit_8_nothing_removed_and_the_token_kept(tmp_path: Path) -> None:
+    """SYS-08: an OSError from `acquire()` (the data folder or lock file can't be made or opened) is "can't tell":
+    exit 8, not 4 ("running"); nothing is touched."""
 
     class Broken:
         def acquire(self) -> bool:
@@ -226,8 +227,10 @@ def test_a_lock_that_cant_be_checked_counts_as_running(tmp_path: Path) -> None:
         def release(self) -> None: ...
 
     paths = make_data(tmp_path)
-    assert uninstall.remove_data(paths, MemorySecretStore(), Broken()) == uninstall.EXIT_RUNNING
-    assert paths.root.exists()
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    assert uninstall.remove_data(paths, store, Broken()) == uninstall.EXIT_CANT_CHECK == 8
+    assert paths.root.exists() and store.get(INSTALL_TOKEN_NAME) == "value"
 
 
 def test_the_lock_is_held_during_the_job_and_the_lock_file_goes_last(tmp_path: Path) -> None:
@@ -349,8 +352,8 @@ def test_a_dangling_link_still_takes_the_session_mutex_and_refuses_while_it_is_h
     assert store.get(INSTALL_TOKEN_NAME) == "value"
 
 
-def test_a_mutex_that_cant_be_taken_counts_as_running_for_a_dangling_link(tmp_path: Path) -> None:
-    """SYS-08: fail closed (off Windows the real mutex refuses to be built)."""
+def test_a_mutex_that_cant_be_made_is_exit_8_for_a_dangling_link(tmp_path: Path) -> None:
+    """SYS-08: can't tell (off Windows the real mutex refuses to be built): exit 8."""
     gone = tmp_path / "gone"
     gone.mkdir()
     link = tmp_path / "ShelfSync"
@@ -361,7 +364,8 @@ def test_a_mutex_that_cant_be_taken_counts_as_running_for_a_dangling_link(tmp_pa
     def refuse() -> FakeInstanceLock:
         raise OSError("no mutex")
 
-    assert uninstall.remove_data(DataPaths(link), MemorySecretStore(), None, refuse) == uninstall.EXIT_RUNNING
+    code = uninstall.remove_data(DataPaths(link), MemorySecretStore(), None, refuse)
+    assert code == uninstall.EXIT_CANT_CHECK
 
 
 def test_the_exit_codes_tell_data_left_from_a_token_left(tmp_path: Path) -> None:
@@ -491,3 +495,20 @@ def test_main_makes_the_output_streams_replace_what_the_code_page_cant_show(
     monkeypatch.setattr(uninstall, "remove_data", lambda *args, **kwargs: 0)
     assert uninstall.main(["--remove-data"], store=MemorySecretStore()) == 0
     assert calls == [("out", "replace"), ("err", "replace")]
+
+
+def test_a_folder_that_cant_be_listed_or_removed_is_reported_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-08: "." is named once even when both the listing and the final rmdir fail."""
+    paths = make_data(tmp_path)
+
+    def broken_iterdir(self: Path):  # type: ignore[no-untyped-def]
+        raise PermissionError("denied")
+
+    def broken_rmdir(self: Path) -> None:
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "iterdir", broken_iterdir)
+    monkeypatch.setattr(Path, "rmdir", broken_rmdir)
+    assert uninstall.remove_data_folder(paths.root) == ["."]

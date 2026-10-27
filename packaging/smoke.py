@@ -10,6 +10,7 @@ Run it with the Python that built the folder, not the folder's own.
 """
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -145,7 +146,8 @@ def run_launcher(folder: Path, data: Path, real_secrets: bool, version: str) -> 
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=10)  # reap it, so the data folder can be removed and no process is left behind
+            with contextlib.suppress(subprocess.TimeoutExpired):  # reap it so the data folder can be removed
+                process.wait(timeout=10)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -207,7 +209,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=10)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=10)
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-launcher-") as data:
         run_launcher(folder, Path(data) / "ShelfSync", arguments.real_secrets, arguments.version)
     after = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]

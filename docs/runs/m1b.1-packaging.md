@@ -1,4 +1,4 @@
-Status: builder done (m1b.1-build branch); waits for the reviewer
+Status: ready for PR (builder and reviewer rounds 1 to 7 done)
 Tier: B ([12 §2](../12-models-and-usage.md)); the installer row of [09 §3](../09-tooling.md) adds `security-review`
 Usage: lead `claude-opus-5-5/medium` wrote this brief: 5-h 36 → 37 %
 
@@ -336,6 +336,19 @@ Re-run (port 47615 had no listener before the full run; only TIME_WAIT leftovers
 | L5 | nsi, `icons.py`, `build.py` | Two exit-code lists; icon folder worked out every repaint; the tray check came late | One list (0 to 8) in the nsi; `default_icon_dir()` is cached; `check_tray_icons` runs next to the `shelfsync.ico` check, before the slow steps |
 
 Re-run (port 47615 had no listener): ruff check and format clean (90 files); mypy no issues; bandit no issues; `pytest` **816 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py`, `smoke.py` (with the real exit guard), `makensis` x4 and the rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r7.log`).
+
+### Review round 7 (APPROVED) and the last small fixes
+| Id | Where | Finding | Fix |
+|---|---|---|---|
+| M-1 | nsi `STR_DATA_CANT_CHECK` | Didn't say the token is also still stored | "ShelfSync couldn't check whether it is running, so it didn't remove your data or the stored sign-in token. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."; the assert matches |
+| M-2 | `uninstall.py` | An `OSError` making or taking the lock was exit 4 ("running") | Exit 8 (can't tell), nothing removed; tests: `acquire()` raising `OSError` gives 8 and keeps the token (plain folder and dangling-link mutex). The `ERROR_ACCESS_DENIED` fail-closed case in `instance.py` is unchanged |
+| L-1 | nsi `STR_DATA_SECRETS` | "may still be stored" is a hedge | Accepted as is: the module can't know whether a failed Credential Manager delete left the entry, so the wording stays; no code change |
+| L-2 | `uninstall.py` | `"."` could be reported twice; lock-file comment | Added once only (test); the header comment now says the lock file is removed last after the lock is let go, and stays until the process ends if the folder can't be listed |
+| L-3 | `smoke.py` | A `wait(timeout=10)` after `kill()` could raise | Both wrapped in `contextlib.suppress(subprocess.TimeoutExpired)` |
+| L-4 | `uninstall.py` | Header list order | Lists 0 to 8 in the nsi's order, including 2 |
+| L-5 | `build.py` | `copy_tray_icons` repeated the check | Removed; `build()` runs `check_tray_icons` once, early; the test calls it directly |
+
+Re-run (port 47615 had no listener): ruff check and format clean (90 files); mypy no issues; bandit no issues; `pytest` **817 passed, 12 skipped**; `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py`, `smoke.py`, `makensis` x4 and the rehearsal `-OlderSetup -NewerSetup -RemoveData`: **97 checks, all ok** (`.logs/install-rehearsal-r8.log`). Note: another run (`tools/release/rehearse.py`) was using `build/ShelfSync-0.1.0` of this worktree while I rebuilt it.
 
 ## 6. Integration notes
 _(lead)_
