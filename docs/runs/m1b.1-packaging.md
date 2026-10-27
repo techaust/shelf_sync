@@ -265,13 +265,32 @@ Findings as sent by the lead; every fix is in commit `8beabd4` (branch `m1b.1-bu
 | LOW 12 | `tray/instance.py`, `secure/token.py` | `FakeFileLock`; the `INSTALL_TOKEN_NAME` alias | `FakeFileLock` merged into `FakeInstanceLock`. The alias is **kept**: `second_launch`, `launcher`, the token code and many tests import `INSTALL_TOKEN_NAME` from `secure.token` |
 | Extra | `_pth` | Does `python314._pth` give isolated mode? | **Yes** (checked): in the built folder `sys.flags.isolated == 1`, `safe_path == True`, `PYTHONPATH` is ignored and the working folder is not on `sys.path` (a `json.py` and a probe module in the cwd with `PYTHONPATH` set were not loaded). `smoke.py` now asserts it, so a start from any working folder loads nothing from it; no shortcut start-in change was needed |
 
-## 3b. Fixes (round 1)
+## 3b. Fixes (round 2 note, then round 1)
+Round 2 follow-ups (table in §5) are fixed in the commit after `ad9a9b8`. Re-run: ruff check and format clean (89 files); mypy no issues (40 files); bandit no issues; `pytest` **797 passed, 12 skipped** (Windows only); `pytest -m windows --no-cov` **38 passed**, 1 skipped (V31); `build.py` (the stricter signer parse accepted all 33 real signatures) and `smoke.py` passed; four Setups compiled; local rehearsal `test-installer.ps1 ... -RemoveData`: **89 checks, all ok** (`.logs/install-rehearsal-r3.log`), including the killed-switch recovery, the junction-derived prune and `current.old` at uninstall. The notice texts shown by `MessageBox` were not seen (silent runs only).
+
+### Round 1
 All of §5's findings are fixed in `8beabd4`. Re-run after the fixes (all with `UV_PYTHON_DOWNLOADS=never`):
 - `ruff check` and `ruff format --check`: clean (89 files). `mypy`: no issues, 40 files. `bandit -r backend`: no issues. `pip-audit`: not re-run (no dependency changed since the last clean run).
 - `pytest`: **786 passed, 12 skipped** (Windows only; Linux not run). `pytest -m windows --no-cov`: **38 passed**, 1 skipped (the V31 Defender check).
 - Rebuilt: `build.py` (exact signer check passed on all 33 files), `smoke.py` (now also asserts the isolated Python): passed. Four Setups compiled with `makensis` v3.13 (`-rehearsal` suffix; the 0.1.0 one, 0.0.1 and 99.0.0 with `/DFAST`).
 - Local rehearsal, `test-installer.ps1 ... -OlderSetup -NewerSetup -NewerVersion 99.0.0 -RemoveData`: **70 checks, all ok** (log `.logs/install-rehearsal-r2.log`). Includes: install, contract keys, shortcuts; Setup and uninstaller both refuse with exit 5 while `instance.lock` is held; sentinel junction survives; a version folder that is a junction survives the installer's pre-clean and its prune; `versions` as a junction survives the uninstall; a held junction makes the uninstall stop with exit 8 and delete nothing behind it, and the retry finishes; upgrade keeps `0.1.0` and `99.0.0` only; a repair removes nothing; an older Setup is refused with exit 6, also when only the version folders show it; `/REMOVEDATA` removed the throwaway data folder and spared the file behind a junction inside it (the suffixed build used the throwaway Credential Manager service `ShelfSync-rehearsal`).
 - Still not verified: the same list as in §3 (release.yml never run; installer screens; clean-account and `reg query` outside Claude). New: the NSIS `DeleteTree` was exercised through the CI-style script only, not through the GUI uninstaller.
+
+### Review round 2 (APPROVE) and follow-ups
+| Id | Where | Follow-up | Fix |
+|---|---|---|---|
+| 1 MEDIUM | nsi `STR_UNSAFE` | Wrong for any entry that can't be deleted | Neutral wording in two strings (`STR_STUCK_SETUP`, `STR_STUCK_UNINSTALL`): couldn't remove a file or link in its program folder; close any window using it and run again. `DeleteTree` now returns the stuck path (deepest first) and the notice shows it |
+| 2 | nsi `DeleteTree` | Any `-1` counted as gone | `GetFileAttributesW ... ?e`, then the last error is read: only 2 and 3 mean gone; any other error is a failure, for the top folder, for children and in the final check |
+| 3 | nsi swap | The restore rename wasn't checked | Checked; a failure shows the new `STR_RESTORE_FAILED` ("run the installer again to finish the install", exit 9). A restore is only tried when `current` had been moved aside |
+| 4 | nsi uninstall | `current.old` left behind | Removed with `RMDir` (no `/r`), next to `current.next` |
+| 5 | `uninstall.py` | A dangling junction reported "running" | The `is_link(root)` check (exit 1, target printed) now runs before the lock; nothing else is removed in that case |
+| 6 | `uninstall.py` | `exists()` on the lock file | `os.path.lexists` |
+| 7 | `uninstall.py` | A failed `--service` store fell back to the real service | `UnavailableStore` (every delete fails, so every entry is reported); no store for another service is ever built |
+| 8 | `build.py` | Loose subject parsing | `subject_fields` reads in order, each match starting where the last ended, and refuses a subject that doesn't parse completely |
+| 9 | nsi prune | Kept only the registry's `DisplayVersion` | The target of `current` and of a leftover `current.old` is read from the junctions themselves (`CreateFileW` + `GetFinalPathNameByHandleW`) before anything changes and kept as well |
+| 10 NEW | nsi, `test-installer.ps1` | Setup again must recover a missing `current` with `current.old`/`current.next` left over (a switch killed between its two renames) | The swap already removed both leftovers (`RMDir`, no `/r`) and creates `current`; now proven. Planted in `test-installer.ps1` ("recover", "recover-upgrade", and a leftover `current.old` at uninstall), so `release.yml` runs it |
+
+Tests added: `test_uninstall.py` (dangling link before lock, `lexists`, no fallback service), `test_packaging_build.py` (subjects that don't parse completely, real-looking subjects), `test_release_files.py` (the script guards, the planted switch), and in `test-installer.ps1` the "recover", "keep-current" (registry says 0.0.3 while `current` points at the running version: that one is kept) and "recover-upgrade" scenarios.
 
 ## 6. Integration notes
 _(lead)_

@@ -190,6 +190,31 @@ Check ((Test-Path (Join-Path $behind "keep-a.txt")) -and (Test-Path (Join-Path $
 Check (Is-Link (Join-Path $behind "inner")) "the link inside the target is untouched"
 Finish-Uninstalled
 
+# ---- 2b. a switch killed between its two renames: `current` is missing, `current.old` and `current.next` are left over ----
+function Plant-KilledSwitch([string]$target) {
+    $cur = Join-Path $script:install "current"
+    if (Test-Path $cur) { cmd /c rmdir "`"$cur`"" | Out-Null }   # removes the junction only
+    New-Junction (Join-Path $script:install "current.old") $target
+    New-Junction (Join-Path $script:install "current.next") $target
+}
+New-Scenario "recover"
+Check ((Install $Setup) -eq 0) "install exits 0"
+Plant-KilledSwitch (Join-Path $script:install "versions\$Version")
+Check (-not (Test-Path (Join-Path $script:install "current"))) "current is missing and current.old and current.next are planted"
+Check ((Install $Setup) -eq 0) "running Setup again recovers (exit 0)"
+$cur = Join-Path $script:install "current"
+Check ((Is-Link $cur) -and (@((Get-Item $cur -Force).Target)[0] -like "*versions\$Version")) "current is a junction to versions\$Version again"
+Check (-not (Test-Path (Join-Path $script:install "current.old")) -and -not (Test-Path (Join-Path $script:install "current.next"))) "the leftover junctions are gone"
+Check (Test-Path (Join-Path $script:install "versions\$Version\python.exe")) "the version folder behind them was not deleted"
+# The uninstaller removes a leftover current.old too (without following it).
+Set-Content (Join-Path $script:outside "keep.txt") "must survive"
+New-Junction (Join-Path $script:install "current.old") $script:outside
+Check ((Uninstall) -eq 0) "uninstall exits 0 with a leftover current.old"
+$left = @(Get-ChildItem $script:install -Force | ForEach-Object { $_.Name })
+Check (($left.Count -eq 1) -and ($left[0] -eq "uninstall.exe")) "only uninstall.exe is left (left: $($left -join ', '))"
+Check (Test-Path (Join-Path $script:outside "keep.txt")) "the file behind current.old survived"
+Finish-Uninstalled
+
 # ---- 3. upgrade, prune, older refused -------------------------------------------------------------------------------
 if ($NewerSetup -ne "") {
     New-Scenario "upgrade"
@@ -220,6 +245,33 @@ if ($NewerSetup -ne "") {
         Check ($code -eq 6) "an older Setup is refused by the version folders alone (exit $code)"
         Set-ItemProperty $uninstallKey -Name DisplayVersion -Value $NewerVersion
     }
+    Check ((Uninstall) -eq 0) "uninstall exits 0"
+    Finish-Uninstalled
+
+    # The prune keeps the version `current` really points at, even when the registry says something else.
+    New-Scenario "keep-current"
+    Check ((Install $Setup) -eq 0) "install $Version exits 0"
+    Set-ItemProperty $uninstallKey -Name DisplayVersion -Value "0.0.3"
+    foreach ($d in "0.0.3", "0.0.4") {
+        New-Item -ItemType Directory -Force (Join-Path $script:install "versions\$d") | Out-Null
+        Set-Content (Join-Path $script:install "versions\$d\x.txt") "x"
+    }
+    Check ((Install $NewerSetup) -eq 0) "upgrade to $NewerVersion exits 0"
+    $expected = (($Version, $NewerVersion, "0.0.3") | Sort-Object) -join ","
+    Check ((Versions) -eq $expected) "the prune kept what current pointed at ($Version), the registry's 0.0.3 and the new one, and removed 0.0.4 (got: $(Versions))"
+    Check ((Uninstall) -eq 0) "uninstall exits 0"
+    Finish-Uninstalled
+
+    # A killed switch plus an upgrade: the version a leftover current.old points at is kept, and current is made again.
+    New-Scenario "recover-upgrade"
+    Check ((Install $Setup) -eq 0) "install $Version exits 0"
+    Set-ItemProperty $uninstallKey -Name DisplayVersion -Value "0.0.0"
+    Plant-KilledSwitch (Join-Path $script:install "versions\$Version")
+    Check ((Install $NewerSetup) -eq 0) "upgrade over a killed switch exits 0"
+    $cur = Get-Item (Join-Path $script:install "current") -Force
+    Check ((Is-Link $cur.FullName) -and (@($cur.Target)[0] -like "*versions\$NewerVersion")) "current points at $NewerVersion"
+    Check (-not (Test-Path (Join-Path $script:install "current.old")) -and -not (Test-Path (Join-Path $script:install "current.next"))) "the leftover junctions are gone"
+    Check ((Versions) -eq ((($Version, $NewerVersion) | Sort-Object) -join ",")) "the version current.old pointed at was kept (got: $(Versions))"
     Check ((Uninstall) -eq 0) "uninstall exits 0"
     Finish-Uninstalled
 }

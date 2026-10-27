@@ -86,7 +86,7 @@ def remove_data_folder(root: Path, lock: InstanceLock | None = None, keep: str |
             failed.append(entry.name)
     if lock is not None:
         lock.release()
-    if keep is not None and (root / keep).exists():
+    if keep is not None and os.path.lexists(root / keep):
         try:
             remove_entry(root / keep)
         except OSError:
@@ -98,6 +98,20 @@ def remove_data_folder(root: Path, lock: InstanceLock | None = None, keep: str |
     return failed
 
 
+class UnavailableStore:
+    """The store for a `--service` whose Credential Manager couldn't be opened: every delete fails, so every entry is
+    reported as not removed. It never falls back to another service (least of all ShelfSync's real one)."""
+
+    def get(self, name: str) -> str | None:
+        raise SecretStoreError("Credential Manager is unavailable")
+
+    def set(self, name: str, value: str) -> None:
+        raise SecretStoreError("Credential Manager is unavailable")
+
+    def delete(self, name: str) -> None:
+        raise SecretStoreError("Credential Manager is unavailable")
+
+
 def _say(text: str) -> None:
     sys.stdout.write(text + "\n")
 
@@ -107,6 +121,10 @@ def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: Instan
     if not looks_like_data_folder(paths.root):
         _say(f"Refused: {paths.root} doesn't look like ShelfSync's data folder.")
         return EXIT_REFUSED
+    if is_link(paths.root):
+        # Checked before the lock: a dangling junction can't hold a lock file, and that must never read as "running".
+        _say(f"{paths.root} is a link to {link_target(paths.root)}; it was left alone, and nothing else was removed.")
+        return EXIT_INCOMPLETE
     try:
         instance = lock if lock is not None else default_instance_lock(paths)
         free = instance.acquire()
@@ -125,9 +143,6 @@ def remove_data(paths: DataPaths, store: SecretStore | None = None, lock: Instan
         for name in failed_secrets:
             _say(f"Couldn't remove the Credential Manager entry {name}.")
             problems += 1
-        if is_link(paths.root):
-            _say(f"{paths.root} is a link to {link_target(paths.root)}; it was left alone.")
-            return EXIT_INCOMPLETE
         for name in remove_data_folder(paths.root, instance, paths.instance_lock.name):
             _say(f"Couldn't remove {name} in {paths.root}.")
             problems += 1
@@ -161,7 +176,7 @@ def main(
         try:
             store = KeyringSecretStore(arguments.service)
         except SecretStoreError:
-            store = None  # remove_data reports every entry as not removed
+            store = UnavailableStore()  # remove_data reports every entry as not removed
     return remove_data(paths, store, lock)
 
 

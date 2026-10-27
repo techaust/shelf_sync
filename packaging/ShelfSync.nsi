@@ -47,7 +47,9 @@ ManifestDPIAware true
 !define STR_RUNNING_UNINSTALL "ShelfSync is running. Quit it from its tray icon, then run the uninstaller again."
 !define STR_OLDER "This installer is ShelfSync ${VERSION}, but a newer ShelfSync is already installed. Installing an older version could damage your data, so the installer stopped. Download the newest installer, or uninstall ShelfSync first."
 !define STR_LINK_FAILED "The installer couldn't switch ShelfSync to the new version. The version you had installed was left as it was. Close any window showing the ShelfSync folder and run the installer again."
-!define STR_UNSAFE "ShelfSync stopped removing files because it found a link in its program folder that it couldn't remove safely. Nothing outside the program folder was touched. This is what is left:"
+!define STR_STUCK_SETUP "The installer couldn't remove a file or link in its program folder. Close any window that's using it, then run the installer again. This is what couldn't be removed:"
+!define STR_STUCK_UNINSTALL "The uninstaller couldn't remove a file or link in its program folder. Close any window that's using it, then run the uninstaller again. This is what couldn't be removed:"
+!define STR_RESTORE_FAILED "The installer couldn't finish switching ShelfSync to the new version, and couldn't put the old one back. Run the installer again to finish the install."
 !define STR_DATA_NOT_OURS "ShelfSync left this folder alone because it doesn't look like ShelfSync's own data folder:"
 !define STR_FINISH_RUN "Open ShelfSync"
 !define STR_DATA_TITLE "Remove my data"
@@ -78,11 +80,14 @@ VIAddVersionKey "LegalCopyright" "${PUBLISHER}"
 
 !insertmacro GetParameters
 !insertmacro GetOptions
+!insertmacro GetFileName
 !insertmacro un.GetParameters
 !insertmacro un.GetOptions
 !insertmacro VersionCompare
 
 Var PreviousVersion
+Var CurrentVersion
+Var OldVersion
 Var RemoveData
 Var RemoveDataBox
 
@@ -147,8 +152,9 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
 ; A recursive delete that never follows a link (04-A V40: NSIS 3.13's own `RMDir /r` does, checked on this PC). Every
 ; entry, the top folder included, is asked for its attributes first (GetFileAttributesW does not follow a link):
 ; a reparse point (0x400) is removed itself with RMDir (a link to a folder) or Delete (a link to a file), never
-; entered; only real folders are recursed into. If anything still exists afterwards the whole delete stops and
-; reports it. In: the path on the stack. Out: "0" if it is gone, "1" if something is left.
+; entered; only real folders are recursed into. An entry counts as gone only when Windows says "not found" (error 2 or
+; 3): any other error, or an entry that is still there, is a failure, and the whole delete stops at once.
+; In: the path on the stack. Out: "0" if it is gone, otherwise the path that couldn't be removed.
 !macro DefineDeleteTree un
   Function ${un}DeleteTree
     Exch $R0
@@ -159,8 +165,13 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
     Push $R5
     Push $R6
     StrCpy $R3 0
-    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1'
+    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1 ?e'
+    Pop $R5
     ${If} $R1 == -1
+      ${If} $R5 != 2
+      ${AndIf} $R5 != 3
+        StrCpy $R3 $R0
+      ${EndIf}
       Goto done
     ${EndIf}
     IntOp $R2 $R1 & 0x10
@@ -186,7 +197,7 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
         Call ${un}DeleteTree
         Pop $R6
         ${If} $R6 != 0
-          StrCpy $R3 1
+          StrCpy $R3 $R6
           ${Break}
         ${EndIf}
       ${EndIf}
@@ -197,9 +208,15 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
       RMDir "$R0"
     ${EndIf}
     verify:
-    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1'
-    ${If} $R1 != -1
-      StrCpy $R3 1
+    System::Call 'kernel32::GetFileAttributesW(w R0) i .R1 ?e'
+    Pop $R5
+    ${If} $R3 == 0
+      ${If} $R1 != -1
+        StrCpy $R3 $R0
+      ${ElseIf} $R5 != 2
+      ${AndIf} $R5 != 3
+        StrCpy $R3 $R0
+      ${EndIf}
     ${EndIf}
     done:
     StrCpy $R0 $R3
@@ -215,17 +232,45 @@ UninstPage custom un.DataPageCreate un.DataPageLeave
 !insertmacro DefineDeleteTree ""
 !insertmacro DefineDeleteTree "un."
 
-; Delete a tree or stop: tell the owner which path is left, and end with exit code 8. Nothing outside the tree was touched.
-!macro DeleteTreeOrStop un FOLDER
+; Delete a tree or stop: tell the owner which path couldn't be removed and end with exit code 8. Nothing outside the
+; tree was touched. TEXT is the string to show above the path.
+!macro DeleteTreeOrStop un FOLDER TEXT
   Push "${FOLDER}"
   Call ${un}DeleteTree
   Pop $R9
   ${If} $R9 != 0
-    MessageBox MB_OK|MB_ICONSTOP "${STR_UNSAFE}$\r$\n${FOLDER}" /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "${TEXT}$\r$\n$R9" /SD IDOK
     SetErrorLevel 8
     Abort
   ${EndIf}
 !macroend
+
+; The name of the folder a link points at (its version), or "" if it isn't a link to a folder that exists. The link is
+; opened WITHOUT FILE_FLAG_OPEN_REPARSE_POINT, so Windows follows it, and the final path of that handle is read.
+; In: the link's path on the stack. Out: the target's last path component.
+Function GetLinkVersion
+  Exch $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  Push $R4
+  StrCpy $R3 ""
+  System::Call 'kernel32::CreateFileW(w R0, i 0, i 7, p 0, i 3, i 0x02000000, p 0) p .R1'
+  ${If} $R1 != -1
+  ${AndIf} $R1 != 0
+    System::Call 'kernel32::GetFinalPathNameByHandleW(p R1, w .R2, i 1024, i 0) i .R4'
+    System::Call 'kernel32::CloseHandle(p R1)'
+    ${If} $R2 != ""
+      ${GetFileName} "$R2" $R3
+    ${EndIf}
+  ${EndIf}
+  StrCpy $R0 $R3
+  Pop $R4
+  Pop $R3
+  Pop $R2
+  Pop $R1
+  Exch $R0
+FunctionEnd
 
 ; ---- installer -----------------------------------------------------------------------------------------------------
 Function .onInit
@@ -279,8 +324,17 @@ Section "ShelfSync" SecMain
   ${EndIf}
   SetOutPath "$INSTDIR"
 
+  ; The versions `current` and a leftover `current.old` (a switch killed between its two renames) point at: they are
+  ; read before anything changes and kept by the prune below, whatever the registry says.
+  Push "$INSTDIR\current"
+  Call GetLinkVersion
+  Pop $CurrentVersion
+  Push "$INSTDIR\current.old"
+  Call GetLinkVersion
+  Pop $OldVersion
+
   ; The new version goes into its own folder first; `current` still points at the old one until the last moment.
-  !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\${VERSION}"
+  !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\${VERSION}" "${STR_STUCK_SETUP}"
   SetOutPath "$INSTDIR\versions\${VERSION}"
   SetOverwrite on
   File /r "${BUILD_DIR}\*.*"
@@ -302,6 +356,7 @@ Section "ShelfSync" SecMain
     Abort
   ${EndIf}
   System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\current") i .r1'
+  StrCpy $2 0
   ClearErrors
   ${If} $1 != -1
     Rename "$INSTDIR\current" "$INSTDIR\current.old"
@@ -311,19 +366,29 @@ Section "ShelfSync" SecMain
       SetErrorLevel 7
       Abort
     ${EndIf}
+    StrCpy $2 1
   ${EndIf}
   ClearErrors
   Rename "$INSTDIR\current.next" "$INSTDIR\current"
   ${If} ${Errors}
-    Rename "$INSTDIR\current.old" "$INSTDIR\current"
     RMDir "$INSTDIR\current.next"
+    ${If} $2 == 1
+      ClearErrors
+      Rename "$INSTDIR\current.old" "$INSTDIR\current"
+      ${If} ${Errors}
+        MessageBox MB_OK|MB_ICONSTOP "${STR_RESTORE_FAILED}" /SD IDOK
+        SetErrorLevel 9
+        Abort
+      ${EndIf}
+    ${EndIf}
     MessageBox MB_OK|MB_ICONSTOP "${STR_LINK_FAILED}" /SD IDOK
     SetErrorLevel 7
     Abort
   ${EndIf}
   RMDir "$INSTDIR\current.old"
 
-  ; Keep the data, the version that was running (the one `current` pointed at, for "Roll back app") and the new one;
+  ; Keep the data, the versions that were running (what `current` pointed at, read from the junction itself, and what
+  ; a leftover `current.old` pointed at; the registry's DisplayVersion too; for "Roll back app") and the new one;
   ; remove every other version folder. A repair (the same version again) removes nothing: the rollback copy stays.
   ${If} $PreviousVersion != "${VERSION}"
     FindFirst $0 $1 "$INSTDIR\versions\*.*"
@@ -332,7 +397,9 @@ Section "ShelfSync" SecMain
       ${AndIf} $1 != ".."
       ${AndIf} $1 != "${VERSION}"
       ${AndIf} $1 != $PreviousVersion
-        !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\$1"
+      ${AndIf} $1 != $CurrentVersion
+      ${AndIf} $1 != $OldVersion
+        !insertmacro DeleteTreeOrStop "" "$INSTDIR\versions\$1" "${STR_STUCK_SETUP}"
       ${EndIf}
       FindNext $0 $1
     ${Loop}
@@ -432,12 +499,13 @@ Section "Uninstall"
     ${EndIf}
   ${EndIf}
 
-  ; 3. The `current` junction first, itself only (and the updater's `current.next`, if one was left).
+  ; 3. The `current` junction first, itself only (and `current.next` and `current.old`, if a switch left them).
   RMDir "$INSTDIR\current"
   RMDir "$INSTDIR\current.next"
+  RMDir "$INSTDIR\current.old"
 
   ; 4. versions\: deleted by DeleteTree, which removes every link itself and never follows one (V40).
-  !insertmacro DeleteTreeOrStop "un." "$INSTDIR\versions"
+  !insertmacro DeleteTreeOrStop "un." "$INSTDIR\versions" "${STR_STUCK_UNINSTALL}"
 
   ; 5. Shortcuts, the Run value, the AUMID key, the uninstall key, the uninstaller and the folder (only if empty:
   ;    nothing else in it is ours to delete).

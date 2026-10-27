@@ -157,6 +157,7 @@ def test_valid_signatures_from_a_trusted_publisher_pass() -> None:
         record(r"D:\b\python.exe", subject="CN=Somebody Else"),
         record(r"D:\b\python.exe", subject="CN=Evil, O=Not Python Software Foundation Inc"),
         record(r"D:\b\python.exe", subject="CN=Python Software Foundation Fake, O=Evil"),
+        record(r"D:\b\python.exe", subject="CN=Python Software Foundation; O=Python Software Foundation"),
     ],
 )
 def test_an_unsigned_altered_or_foreign_file_fails_the_check(bad: dict[str, str | None]) -> None:
@@ -227,3 +228,29 @@ def test_a_subject_is_read_attribute_by_attribute_not_as_text() -> None:
     """SYS-01: exact values; a quoted value with a comma is one value."""
     fields = build.subject_fields('CN="Python Software Foundation, Inc.", O=Python Software Foundation, L=Beaverton')
     assert fields == {"CN": "Python Software Foundation, Inc.", "O": "Python Software Foundation", "L": "Beaverton"}
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "CN=Python Software Foundation, garbage",
+        'CN="Python Software Foundation, O=x',
+        "O=Python Software Foundation,, CN=x",
+        "=Python Software Foundation",
+    ],
+)
+def test_a_subject_that_doesnt_parse_completely_is_refused(subject: str) -> None:
+    """SYS-01: no half-read subject is ever matched against the trusted signers."""
+    with pytest.raises(build.BuildError):
+        build.subject_fields(subject)
+    with pytest.raises(build.BuildError):
+        build.check_signatures([record(r"D:\python.exe", subject=subject)], ["python.exe"])
+
+
+def test_real_looking_subjects_parse_fully() -> None:
+    """SYS-01: the usual shapes, with extra attributes and an OID attribute."""
+    psf = "CN=Python Software Foundation, O=Python Software Foundation, L=Beaverton, S=Oregon, C=US"
+    assert build.subject_fields(psf)["O"] == "Python Software Foundation"
+    ms = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, OID.1.3.6.1.4.1.311.60.2.1.3=US, C=US"
+    assert build.subject_fields(ms)["CN"] == "Microsoft Corporation"
+    assert build.subject_fields("") == {}

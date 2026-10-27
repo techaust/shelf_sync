@@ -143,6 +143,25 @@ def test_every_external_command_is_started_by_full_path_and_the_stale_guards_exi
     assert "--service ShelfSync${SUFFIX}" in NSI
 
 
+def test_round_2_guards_are_in_the_installer_script() -> None:
+    """Review round 2: only "not found" counts as gone, neutral wording, the restore rename is checked, the uninstaller
+    removes `current.old`, and the prune reads the junction's own target."""
+    assert NSI.count("GetFileAttributesW(w R0) i .R1 ?e") == 2
+    assert "${If} $R5 != 2" in NSI and "${AndIf} $R5 != 3" in NSI
+    assert "link in its program folder that it couldn't remove safely" not in NSI
+    assert "!define STR_STUCK_SETUP" in NSI and "!define STR_STUCK_UNINSTALL" in NSI
+    assert "STR_RESTORE_FAILED" in NSI.split('Rename "$INSTDIR\\current.old" "$INSTDIR\\current"')[1]
+    section = NSI.split('Section "Uninstall"')[1]
+    assert 'RMDir "$INSTDIR\\current.old"' in section
+    assert "GetFinalPathNameByHandleW" in NSI and "$CurrentVersion" in NSI and "$OldVersion" in NSI
+
+
+def test_the_installer_script_plants_a_killed_switch() -> None:
+    """Review round 2: running Setup again recovers a missing `current` with `current.old`/`current.next` left over."""
+    script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
+    assert "Plant-KilledSwitch" in script and "running Setup again recovers" in script
+
+
 def test_the_workflow_builds_the_extra_setups_for_the_upgrade_and_older_checks() -> None:
     """Review round 1 (LOW 11): exit 6, the prune and the running refusal run in CI."""
     assert "/DFAST" in RELEASE and "-OlderSetup" in RELEASE and "-NewerSetup" in RELEASE

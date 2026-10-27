@@ -136,14 +136,22 @@ def parse_files_txt(text: str) -> list[FileEntry]:
     return entries
 
 
-_RDN = re.compile(r'(?:^|,\s*)([A-Za-z]+)=("(?:[^"]|"")*"|[^,]*)')
+_RDN = re.compile(r'([A-Za-z][A-Za-z0-9.]*)=("(?:[^"]|"")*"|[^,"]*)(?:,\s*|$)')
 
 
 def subject_fields(subject: str) -> dict[str, str]:
-    """A certificate subject (`CN=..., O=..., L=...`) as {attribute: exact value}; a quoted value loses its quotes."""
+    """A certificate subject (`CN=..., O=..., L=...`) as {attribute: exact value}; a quoted value loses its quotes.
+    Read strictly in order, each match starting where the last ended: a subject that doesn't parse completely is
+    refused, never half-read."""
     fields: dict[str, str] = {}
-    for key, value in _RDN.findall(subject):
-        fields.setdefault(key.upper(), value[1:-1].replace('""', '"') if value.startswith('"') else value.strip())
+    position = 0
+    while position < len(subject):
+        found = _RDN.match(subject, position)
+        if found is None or found.end() == position:
+            raise BuildError(f"The signer's subject can't be read completely: {subject!r}")
+        key, value = found.group(1).upper(), found.group(2)
+        fields.setdefault(key, value[1:-1].replace('""', '"') if value.startswith('"') else value.strip())
+        position = found.end()
     return fields
 
 

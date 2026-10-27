@@ -265,3 +265,53 @@ def test_remove_data_removes_a_throwaway_credential_manager_entry_and_a_real_jun
         store.delete(INSTALL_TOKEN_NAME)
     assert not paths.root.exists()
     assert (outside / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_a_dangling_link_as_the_data_folder_is_reported_not_called_running(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-08: the link check comes before the lock: a junction to a folder that is gone can't hold a lock file, and
+    that must read as a link left alone (exit 1), never as "ShelfSync is running" (exit 4)."""
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    link = tmp_path / "ShelfSync"
+    if not make_link(link, gone):
+        pytest.skip("this account can't make directory links")
+    gone.rmdir()  # now the link dangles
+    broken = FakeInstanceLock({"x"}, "x")  # would say "running" if it were asked
+    store = MemorySecretStore()
+    store.set(INSTALL_TOKEN_NAME, "value")
+    assert uninstall.remove_data(DataPaths(link), store, broken) == uninstall.EXIT_INCOMPLETE
+    out = capsys.readouterr().out
+    assert "link" in out and "running" not in out
+    assert store.get(INSTALL_TOKEN_NAME) == "value"  # nothing was removed
+
+
+def test_a_dangling_link_in_place_of_the_lock_file_is_still_removed(tmp_path: Path) -> None:
+    """SYS-08: `lexists`, not `exists`: a dangling link named instance.lock must not stop the folder from going."""
+    paths = make_data(tmp_path)
+    if not make_link(paths.instance_lock, tmp_path / "nowhere"):
+        pytest.skip("this account can't make links")
+    assert uninstall.remove_data(paths, MemorySecretStore(), FakeInstanceLock(set())) == uninstall.EXIT_OK
+    assert not paths.root.exists()
+
+
+def test_a_service_whose_store_cant_be_built_never_falls_back_to_the_real_one(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-08: `--service ShelfSync-x` with a Credential Manager that can't be opened: every entry is reported, and
+    no store is ever built for the real `ShelfSync` service."""
+    built: list[str] = []
+
+    def refuse(service: str) -> MemorySecretStore:
+        built.append(service)
+        raise SecretStoreError("Credential Manager is available on Windows only")
+
+    monkeypatch.setattr(uninstall, "KeyringSecretStore", refuse)
+    data_paths.root.mkdir(parents=True)
+    (data_paths.root / "shelfsync.db").write_text("db", encoding="utf-8")
+    code = uninstall.main(["--remove-data", "--service", "ShelfSync-x"], lock=FakeInstanceLock(set()))
+    assert code == uninstall.EXIT_INCOMPLETE
+    assert built == ["ShelfSync-x"]
+    assert "install-token" in capsys.readouterr().out
+    assert not data_paths.root.exists()
