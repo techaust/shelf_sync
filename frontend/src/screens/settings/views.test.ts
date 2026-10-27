@@ -236,18 +236,15 @@ describe("the shared parts", () => {
   it("ConfirmDialog: a native dialog named by its title; the destructive button is is-danger", () => {
     const html = decode(
       renderToStaticMarkup(
-        h(
-          ConfirmDialog,
-          {
-            open: false,
-            title: A.resetDialogTitle,
-            confirmLabel: A.resetConfirm,
-            danger: true,
-            onConfirm: vi.fn(),
-            onCancel: vi.fn(),
-          },
-          h("p", null, A.resetDialogLead),
-        ),
+        h(ConfirmDialog, {
+          open: false,
+          title: A.resetDialogTitle,
+          confirmLabel: A.resetConfirm,
+          danger: true,
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          children: h("p", null, A.resetDialogLead),
+        }),
       ),
     );
     expect(html).toMatch(/^<dialog class="confirm-dialog" aria-labelledby="(.+)-title" aria-describedby="\1-body"/);
