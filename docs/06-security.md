@@ -36,6 +36,8 @@
 - **Log redaction:** one `redact` step, applied to every final log line (tracebacks included), every HTTP error body and every other output path, masks anything shaped like `ck_…`, `cs_…`, AWS keys, GitHub tokens, the install token and the session cookie. A test sends known secrets through every log path and fails if any appears.
 - **The one raw file:** the launcher's stall report, `tmp\shutdown-stall.txt` (M1a.5), is written by Python's `faulthandler` without `redact`. It holds only thread ids, file paths, line numbers and function names, never values. The next start reads it back through the redacting log handler (capped at 64 KB, and never through a link), then removes it with the rest of `tmp\`.
 - Errors from the stores and AWS are stripped of signatures and auth headers before they're shown or logged.
+- **Entry names** (M2): `install-token`, `github-token`, `s3-rw-key-id`, `s3-rw-secret`, `s3-ro-key-id`, `s3-ro-secret`, and one pair per store, `store-<id>-key` and `store-<id>-secret` (store ids are never reused). Every stored value is registered with `redact` at start-up and when it is set or read. "Remove my data" deletes the fixed names and, reading the database read-only, every store's pair (removed stores too).
+- **Store keys stay with their store** (M2.1): HTTP Basic over HTTPS only, never in a URL; redirects are never followed; a change of a store's host must come with new keys in the same request, and it deletes the old pair before the new address is saved, so a crash at any point leaves no keys rather than keys on the wrong host. The `httpx` and `httpcore` loggers are kept at WARNING, so no request URL reaches the log.
 
 ## 4. Safe ZIP handling and the malware scan
 Vendor ZIPs are untrusted input.
@@ -59,6 +61,18 @@ Vendor ZIPs are untrusted input.
   - **read-only** (calibration, teach from current files): `s3:GetObject` and `s3:ListBucket` only. The calibration code also has no write methods, but the key is what enforces it
   - **Storage "Test"** (owner, 2026-10-26): it writes a tiny object under `shelfsync-test/` with the read/write key, reads it back with the read-only key, then deletes it with the read/write key. That's about 4 requests per click, a tiny AWS charge. The test object never goes on a store, so it's the one object deleted outside the retention pass.
   - **Bucket versioning:** if it's off, `DeleteObject` is permanent. So ShelfSync deletes an old file only after every store succeeded, always keeps each slot's current and most recently replaced file (so a rollback can be rolled forward), and runs the **safe-delete check** of APL-07 first: in one retention pass that holds the single writer slot, a fresh read of every store (**paused ones included**, any product status including trash, variations included) must find no download whose link contains the object's key in any form; an unparseable link counts as a reference, files a queued rollback, restore or Set file manually will use are left out, a failed or partial store read deletes nothing, and objects ShelfSync didn't upload are never deleted automatically. Whether versioning is on is recorded at M2 (it isn't turned on by ShelfSync: it costs storage)
+- **The two policies** (M2, drafted with the `aws-iam` skill; `BUCKET` is the owner's bucket, filled in by the app's guide, never committed):
+  ```json
+  {"Version":"2012-10-17","Statement":[
+   {"Sid":"ShelfSyncObjects","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::BUCKET/*"},
+   {"Sid":"ShelfSyncList","Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::BUCKET"}]}
+  ```
+  ```json
+  {"Version":"2012-10-17","Statement":[
+   {"Sid":"ShelfSyncRead","Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::BUCKET/*"},
+   {"Sid":"ShelfSyncList","Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::BUCKET"}]}
+  ```
+  To verify against the AWS docs before M2's exit (04-A): `s3:GetObject` covers HEAD and ranged GETs; with `s3:ListBucket` a missing key answers 404, not 403 (APL-08 and APL-14 rely on it); a bucket encrypted with its own KMS key also needs `kms:Decrypt` and `kms:GenerateDataKey`. The owner reads the bucket's versioning and encryption in the S3 console (Properties) and Claude records them.
 - **WooCommerce:** keys created for a dedicated **Shop Manager** user, not the admin account, with Read/Write. **Residual risk, stated plainly:** WooCommerce REST keys can't be limited to products. A Read/Write key can also change orders, coupons and customers, so it's guarded like a password.
 - **GitHub:** update checks need no token while the repo is public (owner, 2026-10-27). If the owner sets one, it's a fine-grained token with read-only **Contents** on the `shelf_sync` repo only, kept in Credential Manager. It has an expiry date; the app warns 14 days before it, reading the expiry from GitHub's `github-authentication-token-expiration` response header (SYS-06, 04-A V26).
 
@@ -102,4 +116,6 @@ Vendor ZIPs are untrusted input.
 - **Unknown or new malware** in a vendor ZIP passes a Defender scan. The trust ramp and Review keep a person in the loop, but the code itself isn't audited.
 - **The public repo** (during development, owner's choice, [11](11-decisions.md)): the code, the security design, the store names and their WooCommerce/WordPress versions are readable by anyone. No defence here relies on being hidden, and no secret or store address is ever committed (checked before the first push). Running the tests from a fork can't reach secrets: CI uses none and runs on `pull_request` with read-only permissions.
 - **WooCommerce key scope** (§5): a leaked Read/Write key can change orders and customers.
+- **The S3 read/write key can delete any object in the bucket**, including ones ShelfSync didn't upload. The code never does (APL-07), but the key allows it.
+- **Store entries left behind** (M2.1): a roll back from a build with stores to one without them (0002), or a crash while a store is being added, can leave `store-<id>-…` entries in Credential Manager that an older uninstaller doesn't know. They hold keys the owner can revoke in WooCommerce; the owner can also delete them under Windows Credentials.
 - **Smart App Control and SmartScreen** (04-A V17–V18) are Windows protections, not threats; they may block or warn on the unsigned installer.
