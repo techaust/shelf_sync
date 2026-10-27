@@ -89,4 +89,4 @@ _(reviewer)_
 _(lead)_
 
 ## 7. Handover
-_(lead, 2026-10-27)_ The analyst's M1b plan and updater draft are saved above, and the owner answered every question (§0). Next: check the package list (Python 3.14 wheels for every locked package; versions of cryptography, Python 3.14, the 3.14 embeddable zip and NSIS, each the newest release at least 14 days old) and put it to the owner for one yes; then m1b.0 (the Python move); then the final briefs, this one at Opus high.
+_(lead, 2026-10-27)_ The analyst's M1b plan and updater draft are saved above, the owner answered every question (§0), and the M1b package list is approved ([11](../11-decisions.md)). Next: the owner installs Python 3.14.8 from python.org's per-user installer, outside Claude; then the lead writes the m1b.0 brief (the Python move: `requires-python`, `.python-version`, mypy's `python_version`, CI's Python, re-lock with `UV_PYTHON_DOWNLOADS=never`, 04 §2 and 09 §1 tool lines) and starts the builder; then the final m1b.1 and m1b.2 briefs, this one at Opus high.
