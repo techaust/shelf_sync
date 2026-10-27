@@ -8,11 +8,15 @@ from fastapi.testclient import TestClient
 
 import shelfsync
 from shelfsync.api.app import create_app
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure.token import InstallToken
+from tests.support import PORT, make_harness
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app())
+    # The Host check refuses TestClient's default host (testserver), so the client talks as 127.0.0.1:<port>.
+    return make_harness().client()
 
 
 def test_health_returns_exactly_app_and_version(client: TestClient) -> None:
@@ -27,7 +31,7 @@ def test_docs_and_schema_routes_are_not_served(client: TestClient, path: str) ->
 
 
 def test_schema_is_still_available_in_code() -> None:
-    schema = create_app().openapi()
+    schema = create_app(PORT, InstallToken(MemorySecretStore())).openapi()
     assert "/api/health" in schema["paths"]
 
 

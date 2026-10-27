@@ -6,6 +6,8 @@ requires-python = "==3.12.*"
 dependencies = [
     "fastapi==0.143.0",
     "uvicorn==0.54.0",
+    # Credential Manager adapter (M1a.2). Windows only: Linux CI uses the in-memory fake and installs none of it.
+    "keyring==25.7.0; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
@@ -37,9 +39,13 @@ src = ["backend", "tests"]
 extend-exclude = ["docs", "tools", "brand", ".claude"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "T20"]
 # The en dash in the ERR-06 text is the owner-approved wording (docs/13), not a typo.
 ignore = ["RUF001"]
+
+[tool.ruff.lint.per-file-ignores]
+# T20 (no print) is for the app in backend/. Tests may print.
+"tests/**" = ["T20"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -50,8 +56,10 @@ packages = ["shelfsync"]
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]
-markers = ["windows: needs Windows (skipped on other systems); proves behaviour the Linux CI can't"]
-addopts = "-ra --strict-markers --cov --cov-report=term-missing:skip-covered"
+markers = ["windows: needs Windows; deselected by default, run on purpose with `pytest -m windows`; proves behaviour the Linux CI can't"]
+# "-m 'not windows'": the Windows checks write throwaway Credential Manager entries, so a plain run skips them; run
+# them on purpose with `pytest -m windows` (a -m on the command line replaces this one).
+addopts = "-ra --strict-markers -m 'not windows' --cov --cov-report=term-missing:skip-covered"
 
 [tool.coverage.run]
 source = ["backend/shelfsync"]
