@@ -15,6 +15,7 @@ from starlette.types import Scope
 
 from shelfsync import __version__
 from shelfsync.api.app_settings import AppSettingsService, make_app_settings_router
+from shelfsync.api.backup_settings import BackupSettingsService, make_backup_settings_router
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
@@ -98,6 +99,7 @@ def create_app(
     updates: UpdateService | None = None,
     app_settings: AppSettingsService | None = None,
     stores: StoreService | None = None,
+    backups: BackupSettingsService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -109,16 +111,20 @@ def create_app(
     stops it when the server stops (the lifespan below). `app_settings` is the Settings > App service (SET-06); the
     default keeps the settings in memory, with no log handler and no real Run key. `stores` is the stores service
     (M2.1); the default runs on an in-memory database and secret store, so no test touches a file or Credential Manager
-    by accident.
+    by accident. `backups` is the Settings > Backup service and the daily backup scheduler (M2.2); the default keeps
+    the settings in memory and runs no schedule. The app starts the scheduler with the server and stops it with it.
     """
     service = updates if updates is not None else UpdateService.development()
+    backup_service = backups if backups is not None else BackupSettingsService.development()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         service.start()
+        backup_service.start()
         try:
             yield
         finally:
+            backup_service.stop()
             service.stop()
 
     # No interactive docs and no public schema route (docs_url, redoc_url, openapi_url all None). The schema is
@@ -155,6 +161,7 @@ def create_app(
         make_app_settings_router(app_settings if app_settings is not None else AppSettingsService.development(port))
     )
     app.include_router(make_stores_router(stores if stores is not None else StoreService.in_memory()))
+    app.include_router(make_backup_settings_router(backup_service))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

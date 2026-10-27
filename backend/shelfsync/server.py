@@ -15,8 +15,10 @@ from fastapi import FastAPI
 from shelfsync import messages
 from shelfsync.api.app import create_app
 from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
+from shelfsync.api.backup_settings import BackupSettingsService
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
+from shelfsync.db.daily import DailyBackups
 from shelfsync.db.migrate import MigrationError
 from shelfsync.db.settings import get_all_settings
 from shelfsync.logs import (
@@ -213,6 +215,9 @@ def _start(
             updates=build_update_service(paths, secrets),
             app_settings=AppSettingsService(lambda: connect(paths.database), port, handler, run_key, installed),
             stores=stores,
+            backups=BackupSettingsService(
+                lambda: connect(paths.database), DailyBackups(paths, lambda: connect(paths.database))
+            ),
         )
         serve(app, sock)
     finally:

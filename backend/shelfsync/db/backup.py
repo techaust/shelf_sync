@@ -7,8 +7,8 @@ already has a version, it takes an online backup (the sqlite3 backup API) to
 code 2 as before). The updater restores the same backup when a new version's start-up fails its health check or the
 owner rolls the app back after a database change (04 section 8).
 
-Nothing here deletes a backup. BAK-01 (M2, daily backups) must never delete a pre-migration backup that a kept
-version still needs: the one `update\\state.json` names.
+Nothing here deletes a backup. BAK-01's retention (`db/daily.py`) deletes only daily backups and never a
+pre-migration backup that a kept version still needs: the one `update\\state.json` names.
 """
 
 import dataclasses
@@ -30,6 +30,8 @@ _log = logging.getLogger("shelfsync.db")
 
 BACKUP_PREFIX = "pre-migration-"
 SNAPSHOT_PREFIX = "pre-rollback-"  # the safety copy taken before a roll back restores an older backup
+DAILY_PREFIX = "daily-"  # the daily backup (BAK-01, db/daily.py)
+RESTORABLE_PREFIXES = (BACKUP_PREFIX, SNAPSHOT_PREFIX, DAILY_PREFIX)
 
 
 class BackupError(Exception):
@@ -112,11 +114,14 @@ def take_backup(
     is removed and BackupError is raised."""
     moment = now()
     destination = paths.backups / backup_name(from_schema, to_schema, moment)
-    _write_checked_copy(connection, destination, from_schema)
+    write_checked_copy(connection, destination, from_schema)
     return BackupRecord(str(destination), from_schema, to_schema, to_iso(moment))
 
 
-def _write_checked_copy(connection: sqlite3.Connection, destination: Path, schema: int) -> None:
+def write_checked_copy(connection: sqlite3.Connection, destination: Path, schema: int) -> None:
+    """An online backup of `connection` into `destination` (one standalone file), checked. A copy that fails the check
+    is removed and BackupError("backup_failed") is raised. Shared by the pre-migration backup, the roll-back snapshot
+    and the daily backup (db/daily.py)."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         target = sqlite3.connect(destination)
@@ -148,7 +153,7 @@ def take_snapshot(paths: DataPaths, label: str, now: Callable[[], datetime] = ut
     except sqlite3.Error:
         raise BackupError("backup_failed") from None
     try:
-        _write_checked_copy(source, destination, schema)
+        write_checked_copy(source, destination, schema)
     except sqlite3.Error:
         destination.unlink(missing_ok=True)
         raise BackupError("backup_failed") from None
@@ -162,9 +167,9 @@ def restore_backup(record: BackupRecord, paths: DataPaths) -> None:
     the caller). The backup must be a plain file inside backups\\ that passes the integrity check and holds the schema
     the record says. The database and its `-wal` and `-shm` files are first moved aside (never deleted before the
     replace has worked), then the verified copy replaces the database in one `os.replace`; if that fails, the old files
-    are moved back. Only a backup or a roll-back snapshot made by this app is accepted."""
+    are moved back. Only a pre-migration backup, a roll-back snapshot or a daily backup made by this app is accepted."""
     source = Path(record.path)
-    if source.parent != paths.backups or not source.name.startswith((BACKUP_PREFIX, SNAPSHOT_PREFIX)):
+    if source.parent != paths.backups or not source.name.startswith(RESTORABLE_PREFIXES):
         raise BackupError("backup_invalid")
     if not is_plain_file(source):
         raise BackupError("backup_missing")

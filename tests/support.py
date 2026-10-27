@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from shelfsync.api.app import create_app
 from shelfsync.api.app_settings import AppSettingsService
+from shelfsync.api.backup_settings import BackupSettingsService
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.token import INSTALL_TOKEN_NAME, InstallToken
 from shelfsync.update.service import UpdateService
@@ -127,10 +128,19 @@ def make_harness(
     ui_dir: Path | None = None,
     updates: UpdateService | None = None,
     app_settings: AppSettingsService | None = None,
+    backups: BackupSettingsService | None = None,
 ) -> Harness:
     """API only by default (ui_dir=None), so the result never depends on whether frontend/dist was built on this
     PC; the static-mount tests pass a folder of their own."""
     secret_store = store if store is not None else MemorySecretStore()
     clock = FakeClock()
-    app = create_app(port, InstallToken(secret_store), clock, ui_dir=ui_dir, updates=updates, app_settings=app_settings)
+    app = create_app(
+        port,
+        InstallToken(secret_store),
+        clock,
+        ui_dir=ui_dir,
+        updates=updates,
+        app_settings=app_settings,
+        backups=backups,
+    )
     return Harness(app=app, store=secret_store, clock=clock, port=port)
