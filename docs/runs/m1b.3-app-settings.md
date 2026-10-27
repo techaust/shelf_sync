@@ -81,3 +81,29 @@ _(lead)_
 
 ## 7. Handover
 _(lead, 2026-10-28)_ Brief written; builder next.
+
+**Overnight run (owner's instruction, 2026-10-28):** "complete everything till M2: build, review, fix, re-review; push and merge once satisfied; update CLAUDE.md and all the docs; then end the day." It is standing approval for pushes and merges of reviewed, CI-green PRs tonight. These limits still hold (CLAUDE.md hard rules):
+- no writes to the live stores or the S3 bucket;
+- no new package without the owner's yes;
+- no Windows security settings;
+- the M1b and M2 exit tests and milestone approvals stay the owner's.
+
+State at the time of writing:
+- `main` is at `1358dc0` (#15, #16, #17 merged).
+- `release.yml` run [40575157342](https://github.com/techaust/shelf_sync/actions/runs/40575157342) on main is in progress: its first run after the one-script fix.
+- This branch is `feat/m1b.3-app-settings`, with the brief at `b070f6e`.
+
+Order:
+1. The m1b.3 builder, then the reviewer, then fixes, then merge.
+2. m1b.4: the screens, by the `designer` at Opus high, then the visual review, then merge.
+3. M1b record: the exit-test steps for the owner.
+4. M2: only the parts needing no new packages and no live system. Store settings use httpx against fakes. Credential Manager secrets. Backup export with scrypt and AES-GCM (cryptography is approved). BAK-01. The screens. S3 needs boto3 and moto, not approved, so it's left for the owner, and so is LocalWP.
+5. `end-session`.
+
+Before every push:
+- `packaging/release-build.ps1` (when packaging or what the build ships changed);
+- `uv run mypy --platform linux`.
+
+Clean up afterwards: the merged worktrees `agent-a1e0d53eff589f5c5` and `agent-ac2f65217273a2b24` (branches `m1b.1-build`, `m1b.2-build`, `m1b.2-integrate`, `m1b.2-prerebase`), and `build/`.
+
+For the owner: one `reg query` on the Uninstall\ShelfSync key outside Claude. The lead's effort was left at high (owner asleep).
