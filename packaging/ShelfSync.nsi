@@ -57,7 +57,7 @@ ManifestDPIAware true
 !define STR_DATA_CHECK "Remove my data too (the database, backups, logs and the stored token). This can't be undone."
 !define STR_DATA_PARTIAL "ShelfSync couldn't remove all of your data. Whatever it couldn't remove, including anything a link in the data folder points to, was left in place. Delete what is left yourself if you want it gone; this is the data folder:"
 !define STR_DATA_SECRETS "ShelfSync couldn't remove its stored sign-in token from Windows Credential Manager, so it may still be stored there. You can delete the ShelfSync entry under Windows Credentials in Credential Manager."
-!define STR_DATA_NOTHING "ShelfSync couldn't find its own program to remove your data with, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
+!define STR_DATA_NOTHING "ShelfSync couldn't remove your data, so nothing was removed: your data and the stored sign-in token are still there. Run the installer again, then uninstall again with Remove my data ticked. The program is being removed now."
 
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
@@ -508,7 +508,8 @@ Section "Uninstall"
     ${EndIf}
     Call un.GetDataDir
     ; 0 done; 1 data left behind; 3 not ShelfSync's folder; 4 running; 5 only a Credential Manager entry is left; 6 both.
-    ; Anything else (99 here: no Python; nsExec's "error" or "timeout"; exit 2; a crash) is "nothing was removed".
+    ; Anything else is "nothing was removed": 99 here (no Python found), nsExec's "error" or "timeout", exit 2 (a usage
+    ; error) and exit 7 (the module crashed).
     ${If} $3 == 0
     ${ElseIf} $3 == 1
       MessageBox MB_OK|MB_ICONEXCLAMATION "${STR_DATA_PARTIAL}$\r$\n$0" /SD IDOK

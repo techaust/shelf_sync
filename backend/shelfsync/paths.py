@@ -139,3 +139,16 @@ def ui_dir(package_file: Path | None = None) -> Path:
     if not (folder / "index.html").is_file():
         raise UiMissingError(f"The installed copy has no UI in {folder}")
     return folder
+
+
+TRAY_ICON_FOLDER = "tray"  # `<version folder>\\tray` when packaged (build.py copies brand/assets/tray there)
+
+
+def tray_icon_dir(package_file: Path | None = None) -> Path:
+    """The tray icons (`tray-<state>-<light|dark>.ico`). A packaged copy has them in `<version folder>\\tray`; the
+    source layout reads `<repo>/brand/assets/tray`. Raises nothing: a missing folder shows up when an icon is loaded
+    (and in the build's smoke test, which loads every one)."""
+    file = package_file or Path(__file__)
+    if is_packaged_layout(file):
+        return _version_folder(file) / TRAY_ICON_FOLDER
+    return _version_folder(file).parent / "brand" / "assets" / "tray"

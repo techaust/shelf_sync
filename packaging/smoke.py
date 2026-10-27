@@ -33,6 +33,44 @@ MEMORY_STORE_ENTRY = (
     "server._already_running, secrets=MemorySecretStore()))"
 )
 
+# What the installed copy runs at sign-in, `pythonw -m shelfsync.launcher --background`, with one addition: a thread
+# that waits for `quit.flag` in the data folder and then calls `app.state.request_quit()`, the way the updater asks the
+# tray to quit, so the run ends cleanly and headless (there is no menu to click). SECRETS is replaced below.
+LAUNCHER_ENTRY = """
+import threading, time
+from shelfsync.paths import resolve_data_paths
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.tray import launcher
+flag = resolve_data_paths().root / "quit.flag"
+original = launcher.TrayServe.__call__
+def call(self, app, sock):
+    def watch():
+        while not flag.exists():
+            time.sleep(0.2)
+        app.state.request_quit()
+    threading.Thread(target=watch, daemon=True).start()
+    return original(self, app, sock)
+launcher.TrayServe.__call__ = call
+raise SystemExit(launcher.main(["--background"], secrets=SECRETS))
+"""
+
+# Import the launcher and load every tray icon from the folder itself (the class of miss that shipped no icons).
+ICONS_PROBE = """
+from shelfsync.paths import tray_icon_dir
+from shelfsync.tray import launcher
+from shelfsync.tray.icons import icon_file, load_icon
+from shelfsync.tray.state import IconState
+folder = tray_icon_dir()
+count = 0
+for state in IconState:
+    for light in (True, False):
+        path = icon_file(state, light)
+        assert path.parent == folder and path.is_file(), path
+        load_icon(path, 16).close()
+        count += 1
+print(count)
+"""
+
 
 def load_build() -> object:
     spec = importlib.util.spec_from_file_location("shelfsync_packaging_build", Path(__file__).with_name("build.py"))
@@ -73,6 +111,39 @@ def wait_for_port(runtime_json: Path, process: subprocess.Popen[bytes]) -> int:
     raise SystemExit("ShelfSync didn't write runtime.json in time")
 
 
+def run_launcher(folder: Path, data: Path, real_secrets: bool, version: str) -> None:
+    """Start the folder's `pythonw -m shelfsync.launcher --background` (with the quit thread above), check it answers
+    /api/health with the right version, then ask it to quit through `request_quit` and require exit code 0 and no
+    runtime.json left. Raises SystemExit with a message on any failure."""
+    secrets = "None" if real_secrets else "MemorySecretStore()"
+    environment = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    environment["SHELFSYNC_DATA_DIR"] = str(data)
+    process = subprocess.Popen(  # nosec B603
+        [str(folder / "pythonw.exe"), "-c", LAUNCHER_ENTRY.replace("SECRETS", secrets)],
+        cwd=folder,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        port = wait_for_port(data / "runtime.json", process)
+        status, body = get(f"http://127.0.0.1:{port}/api/health")
+        if status != 200 or json.loads(body) != {"app": "shelfsync", "version": version}:
+            raise SystemExit(f"The launcher answered /api/health with {status} {body!r}")
+        (data / "quit.flag").write_text("quit", encoding="utf-8")
+        try:
+            code = process.wait(timeout=45)
+        except subprocess.TimeoutExpired:
+            raise SystemExit("The launcher didn't quit within 45 s after request_quit") from None
+        if code != 0:
+            raise SystemExit(f"The launcher exited with code {code}, not 0, after request_quit")
+        if (data / "runtime.json").exists():
+            raise SystemExit("The launcher left runtime.json behind")
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("folder", type=Path)
@@ -98,6 +169,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"The built Python isn't isolated (isolated, safe_path = {probe.stdout.strip()})\n")
         return 1
     folder: Path = arguments.folder.resolve()
+    icons = subprocess.run(  # nosec B603
+        [str(folder_python), "-c", ICONS_PROBE], capture_output=True, text=True, timeout=120, check=False
+    )
+    if icons.returncode != 0 or icons.stdout.strip() != "6":
+        sys.stderr.write(f"The launcher or a tray icon can't be loaded from the built folder:\n{icons.stderr[-800:]}\n")
+        return 1
     before = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
 
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-") as data:
@@ -124,12 +201,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 process.kill()
+    with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-launcher-") as data:
+        run_launcher(folder, Path(data) / "ShelfSync", arguments.real_secrets, arguments.version)
     after = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
     differences = changes(before, after)
     if differences:
         sys.stderr.write("The folder changed during the first start (V47):\n" + "\n".join(differences[:40]) + "\n")
         return 1
-    sys.stdout.write(f"Smoke test passed: version {arguments.version} answered, UI served, folder unchanged\n")
+    sys.stdout.write(
+        f"Smoke test passed: version {arguments.version} answered, UI served, the tray icons load, the launcher"
+        " started and quit through request_quit, folder unchanged\n"
+    )
     return 0
 
 

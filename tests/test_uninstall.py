@@ -379,3 +379,57 @@ def test_the_exit_codes_tell_data_left_from_a_token_left(tmp_path: Path) -> None
         == uninstall.EXIT_INCOMPLETE
         == 1
     )
+
+
+def test_a_crash_in_the_module_is_exit_7_with_one_line_not_a_traceback_or_exit_1(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-08: an uncaught exception would exit 1 ("data left behind"); it is 7, which the uninstaller reads as
+    "nothing was removed". The line names the error type only."""
+
+    def boom(*args: object, **kwargs: object) -> int:
+        raise RuntimeError("secret-looking detail")
+
+    monkeypatch.setattr(uninstall, "remove_data", boom)
+    code = uninstall.main(["--remove-data"], store=MemorySecretStore(), lock=FakeInstanceLock(set()))
+    assert code == uninstall.EXIT_ERROR == 7
+    out = capsys.readouterr().out
+    assert len(out.splitlines()) == 1 and "RuntimeError" in out and "secret-looking" not in out
+
+
+def test_an_owner_lookup_error_from_the_mutex_counts_as_running(tmp_path: Path) -> None:
+    """SYS-08: building the mutex name needs the user's SID; if that can't be read the answer is "can't tell"."""
+    from shelfsync.platform.sockets import OwnerLookupError
+
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    link = tmp_path / "ShelfSync"
+    if not make_link(link, gone):
+        pytest.skip("this account can't make directory links")
+    gone.rmdir()
+
+    def refuse() -> FakeInstanceLock:
+        raise OwnerLookupError("no SID")
+
+    assert uninstall.remove_data(DataPaths(link), MemorySecretStore(), None, refuse) == uninstall.EXIT_RUNNING
+
+
+def test_the_default_session_lock_is_the_real_mutex_and_main_does_not_override_it(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-08: `remove_data`'s default is `WindowsInstanceLock`, and `main()` passes only paths, store and lock."""
+    import inspect
+
+    from shelfsync.tray.instance import WindowsInstanceLock
+
+    assert inspect.signature(uninstall.remove_data).parameters["session_lock"].default is WindowsInstanceLock
+    calls: list[tuple[object, ...]] = []
+
+    def record(*args: object, **kwargs: object) -> int:
+        calls.append(args)
+        assert not kwargs
+        return 0
+
+    monkeypatch.setattr(uninstall, "remove_data", record)
+    assert uninstall.main(["--remove-data"], store=MemorySecretStore()) == 0
+    assert len(calls) == 1 and len(calls[0]) == 3  # paths, store, lock: no session_lock

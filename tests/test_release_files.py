@@ -181,6 +181,7 @@ def test_round_3_guards_are_in_the_installer_script() -> None:
         and "Credential Manager" in NSI.split("!define STR_DATA_SECRETS")[1].split("\n")[0]
     )
     assert "so it has no working version right now" in NSI
+    assert "couldn't remove your data, so nothing was removed" in NSI
     script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
     assert "remove-data-killed-switch" in script and "remove-data-no-python" in script
     assert "function Plant-KilledSwitch([string]$old, [string]$next)" in script

@@ -8,7 +8,8 @@ and reports what is left. The lock file is the last thing removed, after the loc
 
 Exit codes: 0 everything removed; 1 data was left behind (an entry in the data folder couldn't be removed, or the
 data folder is itself a link and was left alone); 5 only a Credential Manager entry couldn't be removed; 6 both
-(the uninstaller says so, names the folder and goes on removing the program); 3 refused (the folder doesn't look
+(the uninstaller says so, names the folder and goes on removing the program); 7 the module crashed (treated as
+nothing removed); 3 refused (the folder doesn't look
 like ShelfSync's data folder, or no data folder is known: nothing was touched); 4 ShelfSync is running (nothing was
 touched). Output names entries and folders, never a secret. `--service` names the Credential Manager service (the
 default is ShelfSync's own; a throwaway build of the installer passes its own so it never touches the real one).
@@ -29,6 +30,7 @@ from shelfsync.platform.secrets import (
     SecretStore,
     SecretStoreError,
 )
+from shelfsync.platform.sockets import OwnerLookupError
 from shelfsync.tray.instance import InstanceLock, WindowsInstanceLock, default_instance_lock
 
 EXIT_OK = 0
@@ -37,6 +39,7 @@ EXIT_REFUSED = 3
 EXIT_RUNNING = 4
 EXIT_SECRETS = 5  # only a Credential Manager entry couldn't be removed (the data is gone)
 EXIT_BOTH = 6  # data was left behind and an entry couldn't be removed
+EXIT_ERROR = 7  # the module itself failed (a crash): nothing is known to have been removed
 
 _SERVICE = re.compile(r"ShelfSync[A-Za-z0-9._-]*")
 
@@ -140,8 +143,8 @@ def remove_data(
             # A live link takes the lock through it, as a plain folder does.
             instance = lock if lock is not None else default_instance_lock(paths)
         free = instance.acquire()
-    except OSError:
-        free = False  # can't tell: treat it as running, touch nothing
+    except OSError, OwnerLookupError:
+        free = False  # can't tell (no lock, or the user's SID for the mutex name couldn't be read): treat it as running
     if not free:
         _say("ShelfSync is running, or its lock couldn't be checked; nothing was removed.")
         return EXIT_RUNNING
@@ -186,16 +189,21 @@ def main(
     parser.add_argument("--service", type=service_name, default=SERVICE_NAME, help="Credential Manager service name")
     arguments = parser.parse_args(argv)
     try:
-        paths = resolve_data_paths()
-    except RuntimeError:
-        _say("Refused: the data folder is unknown.")
-        return EXIT_REFUSED
-    if store is None:
         try:
-            store = KeyringSecretStore(arguments.service)
-        except SecretStoreError:
-            store = UnavailableStore()  # remove_data reports every entry as not removed
-    return remove_data(paths, store, lock)
+            paths = resolve_data_paths()
+        except RuntimeError:
+            _say("Refused: the data folder is unknown.")
+            return EXIT_REFUSED
+        if store is None:
+            try:
+                store = KeyringSecretStore(arguments.service)
+            except SecretStoreError:
+                store = UnavailableStore()  # remove_data reports every entry as not removed
+        return remove_data(paths, store, lock)
+
+    except Exception as error:  # a crash must not look like "data left behind" (exit 1) to the uninstaller
+        _say(f"The removal stopped unexpectedly ({type(error).__name__}); nothing is known to have been removed.")
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@ Writes `build/ShelfSync-<version>/` (what the installer puts in `versions\\<vers
 4. the locked run-time wheels are installed into `Lib/site-packages` from `uv export --locked --no-dev` with hashes
    required, binary wheels only, for win_amd64 and CPython 3.14 (the wheels' own DLLs aren't signed by their projects,
    04 section 8's honest note);
-5. `backend/shelfsync`, the built UI (`frontend/dist`, as `ui/`) and `brand/assets/app/shelfsync.ico` are copied in;
+5. `backend/shelfsync`, the built UI (`frontend/dist`, as `ui/`), `brand/assets/app/shelfsync.ico` and the six tray
+   icons (`brand/assets/tray`, as `tray/`) are copied in;
 6. everything is precompiled with `--invalidation-mode checked-hash`, so a first start writes nothing into the folder
    (V47).
 
@@ -269,6 +270,22 @@ def precompile(folder: Path) -> None:
          "Lib/site-packages"], cwd=folder)  # fmt: skip
 
 
+TRAY_ICON_NAMES = tuple(
+    f"tray-{state}-{theme}.ico" for state in ("normal", "paused", "attention") for theme in ("light", "dark")
+)
+
+
+def copy_tray_icons(source: Path, destination: Path) -> None:
+    """The six tray icons the tray loads from `<version folder>/tray` (`paths.tray_icon_dir()`); a missing one stops
+    the build (an installed copy without them can't start its tray)."""
+    missing = [name for name in TRAY_ICON_NAMES if not (source / name).is_file()]
+    if missing:
+        raise BuildError(f"{source} is missing tray icons: {', '.join(missing)}")
+    destination.mkdir(parents=True)
+    for name in TRAY_ICON_NAMES:
+        shutil.copy2(source / name, destination / name)
+
+
 def copy_tree(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
@@ -309,6 +326,7 @@ def build(out: Path, tag: str | None, embed_zip: Path | None) -> Path:
     copy_tree(REPO / "backend" / "shelfsync", folder / "shelfsync")
     copy_tree(ui, folder / "ui")
     shutil.copy2(icon, folder / "shelfsync.ico")
+    copy_tray_icons(REPO / "brand" / "assets" / "tray", folder / "tray")
 
     precompile(folder)
     shutil.rmtree(work)
