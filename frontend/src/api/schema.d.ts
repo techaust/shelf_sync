@@ -122,6 +122,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Backup Settings */
+        get: operations["get_backup_settings_api_settings_backup_get"];
+        /** Put Backup Settings */
+        put: operations["put_backup_settings_api_settings_backup_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stores": {
         parameters: {
             query?: never;
@@ -339,6 +357,31 @@ export interface components {
             ready: boolean;
             /** Version */
             version: string;
+        };
+        /** BackupSettingsResponse */
+        BackupSettingsResponse: {
+            /** Daily Count */
+            daily_count: number;
+            /** Db Backups Kept */
+            db_backups_kept: number;
+            /** Last Backup At */
+            last_backup_at: string | null;
+            /** Last Backup Bytes */
+            last_backup_bytes: number | null;
+            /** Next Backup At */
+            next_backup_at: string | null;
+            /** Snapshot Retention Days */
+            snapshot_retention_days: number;
+        };
+        /**
+         * BackupSettingsValues
+         * @description The two settings. Strict types, so `true` is never a count and `"7"` is never a number of days.
+         */
+        BackupSettingsValues: {
+            /** Db Backups Kept */
+            db_backups_kept: number;
+            /** Snapshot Retention Days */
+            snapshot_retention_days: number;
         };
         /** CreateStoreRequest */
         CreateStoreRequest: {
@@ -886,6 +929,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppSettingsSaved"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_backup_settings_api_settings_backup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettingsResponse"];
+                };
+            };
+        };
+    };
+    put_backup_settings_api_settings_backup_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupSettingsValues"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettingsValues"];
                 };
             };
             /** @description Unprocessable Content */
