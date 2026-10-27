@@ -15,6 +15,7 @@ saved: nothing reads the setting before M5 (SYS-05).
 import logging
 import sqlite3
 import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from logging.handlers import TimedRotatingFileHandler
@@ -99,6 +100,7 @@ class AppSettingsService:
         migrate(keeper)
         service = cls(connect, None, FakeRunKey(), lambda: False)
         service._keeper = keeper
+        weakref.finalize(service, keeper.close)  # closed with the service, so no connection is left to the collector
         return service
 
     def read(self) -> AppSettingsResponse:
