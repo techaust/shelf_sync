@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RouterProvider } from "react-router";
 import type { ApiClient } from "../api/client";
 import { checkSession, type SessionStore } from "../api/session";
 import { TipProvider } from "../components/Tip";
 import { SessionGate } from "../screens/SessionGate";
 import { createAppRouter } from "./router";
+import { ServicesProvider } from "./services";
 
 /**
  * Shows the result of the sign-in boot() started and applied to the session store (the ticket never reaches React),
@@ -36,6 +37,7 @@ export function App({
   // makes a second router and disposes the first, which is correct too.
   const [router, setRouter] = useState<ReturnType<typeof createAppRouter> | null>(null);
   const signedIn = state.kind === "signed_in";
+  const services = useMemo(() => ({ api, session }), [api, session]);
   useEffect(() => {
     if (!signedIn) return;
     const next = createAppRouter();
@@ -49,7 +51,13 @@ export function App({
   return (
     <QueryClientProvider client={queryClient}>
       <TipProvider delayDuration={300}>
-        {signedIn && router ? <RouterProvider router={router} /> : <SessionGate state={state} onRetry={retry} />}
+        {signedIn && router ? (
+          <ServicesProvider value={services}>
+            <RouterProvider router={router} />
+          </ServicesProvider>
+        ) : (
+          <SessionGate state={state} onRetry={retry} />
+        )}
       </TipProvider>
     </QueryClientProvider>
   );

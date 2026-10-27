@@ -1,7 +1,7 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, type LucideIcon, Monitor, Moon, Sun } from "lucide-react";
 import { isThemePreference, type ThemePreference } from "../theme/theme";
-import { useTheme } from "../theme/useTheme";
+import { useSavedTheme } from "../theme/useSavedTheme";
 
 // Wording from the approved mockup's Settings, App, Theme (docs/05-design-system-appendix/mockup/js/screens-b.js).
 const OPTIONS: { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
@@ -14,9 +14,10 @@ const OPTIONS: { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
  * The manual theme override in the app bar (UI-SHELL): Same as Windows (default), Light, Dark. A Radix dropdown
  * menu with radio items (arrow keys, Enter, Esc, focus returns to the button). It is non-modal on purpose: the
  * modal menu locks page scrolling by injecting a <style> element, which the CSP (style-src 'self') refuses.
+ * It shares the tab's one theme with Settings › App, and a choice here is saved too (useSavedTheme).
  */
 export function ThemeMenu() {
-  const { preference, setPreference } = useTheme();
+  const { preference, choose } = useSavedTheme();
   const current = OPTIONS.find((option) => option.value === preference) ?? OPTIONS[0];
   const CurrentIcon = current?.Icon ?? Monitor;
   return (
@@ -32,7 +33,7 @@ export function ThemeMenu() {
           <DropdownMenu.RadioGroup
             value={preference}
             onValueChange={(value) => {
-              if (isThemePreference(value)) setPreference(value);
+              if (isThemePreference(value)) void choose(value);
             }}
           >
             {OPTIONS.map(({ value, label, Icon }) => (

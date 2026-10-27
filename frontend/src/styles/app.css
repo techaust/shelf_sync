@@ -9,6 +9,8 @@
 @import "./generated/tokens.css";
 @import "./generated/shelfsync-tokens.css";
 @import "./fonts.css";
+/* Settings and its shared parts (ConfirmDialog, SecretField, Switch, alerts, forms): M1b.4 */
+@import "./settings.css";
 
 @layer base {
   html {

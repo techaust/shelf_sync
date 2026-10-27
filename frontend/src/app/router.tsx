@@ -1,6 +1,7 @@
-import { createHashRouter } from "react-router";
+import { createHashRouter, Navigate } from "react-router";
 import { AppShell } from "../components/AppShell";
-import { Activity, Catalog, Cleanup, Dashboard, NotFound, Review, Settings, Upload } from "../screens/screens";
+import { Activity, Catalog, Cleanup, Dashboard, NotFound, Review, Upload } from "../screens/screens";
+import { DEFAULT_SETTINGS_SUB, Settings } from "../screens/settings/Settings";
 
 /**
  * Hash routing (#/review), not history routing: the backend serves frontend/dist as plain files with no
@@ -19,7 +20,14 @@ export function createAppRouter() {
         { path: "catalog", Component: Catalog },
         { path: "cleanup", Component: Cleanup },
         { path: "activity", Component: Activity },
-        { path: "settings", Component: Settings },
+        // #/settings opens its first page; each page has its own address (#/settings/updates), so it can be linked
+        {
+          path: "settings",
+          children: [
+            { index: true, element: <Navigate to={DEFAULT_SETTINGS_SUB} replace /> },
+            { path: ":sub", Component: Settings },
+          ],
+        },
         { path: "*", Component: NotFound },
       ],
     },

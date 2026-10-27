@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router";
 import { fetchShellStatus, SHELL_STATUS_PLACEHOLDER, SHELL_STATUS_QUERY_KEY } from "../api/placeholder";
+import { useThemeFromServer } from "../theme/useSavedTheme";
 import { AppBar } from "./AppBar";
 import { HealthArea } from "./HealthArea";
 import { PauseButton } from "./PauseButton";
@@ -21,16 +22,19 @@ export function AppShell() {
   const main = useRef<HTMLElement>(null);
   const location = useLocation();
   const first = useRef(true);
+  useThemeFromServer();
 
   // Every navigation moves focus to the new screen's title, so keyboard and screen-reader users land on it
-  // (not on the first load: focus starts at the top of the page).
+  // (not on the first load: focus starts at the top of the page). A screen with its own pages (Settings) marks the
+  // heading to land on with data-nav-focus: there it is the sub-page's title, as in the approved mockup.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on each change of location, by design
   useEffect(() => {
     if (first.current) {
       first.current = false;
       return;
     }
-    const heading = main.current?.querySelector<HTMLElement>("h1");
+    const heading =
+      main.current?.querySelector<HTMLElement>("[data-nav-focus]") ?? main.current?.querySelector<HTMLElement>("h1");
     (heading ?? main.current)?.focus({ preventScroll: true });
     window.scrollTo(0, 0);
   }, [location.pathname]);
