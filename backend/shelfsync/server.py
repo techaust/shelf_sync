@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from shelfsync import messages
 from shelfsync.api.app import create_app
-from shelfsync.api.app_settings import AppSettingsService
+from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import MigrationError
@@ -178,10 +178,11 @@ def _start(
     try:
         migrate_with_backup(connection, paths)  # SYS-07: a backup first when migrations are pending
         settings = get_all_settings(connection)
+        checked = stored_app_settings(connection)  # a hand-edited value falls back to its default, as GET shows
     finally:
         connection.close()
-    preferred = settings["port"]
-    set_log_retention(handler, int(settings["log_retention_days"]))  # LOG-01: also prunes files past the retention
+    preferred = checked["port"]
+    set_log_retention(handler, checked["log_retention_days"])  # LOG-01: also prunes files past the retention
     if on_settings is not None:
         on_settings(settings)
 

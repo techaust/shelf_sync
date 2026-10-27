@@ -69,6 +69,19 @@ _VALIDATORS: dict[str, TypeAdapter[Any]] = {
 }
 
 
+def stored_app_settings(connection: sqlite3.Connection) -> dict[str, Any]:
+    """The five stored App settings. One that is out of range or of the wrong type (a hand-edited database) is the
+    default, with a warning naming the key only, so a read never fails. Start-up reads them through this too."""
+    values: dict[str, Any] = {}
+    for key in _KEYS:
+        try:
+            values[key] = _VALIDATORS[key].validate_python(get_setting(connection, key))
+        except ValueError:  # includes JSON errors and pydantic's validation errors
+            _log.warning("The stored setting '%s' isn't valid; the default is used", key)
+            values[key] = DEFAULTS[key]
+    return values
+
+
 class AppSettingsService:
     """What the routes talk to: reads and saves through `db/settings.py` and applies what a save decides at once.
 
@@ -110,23 +123,10 @@ class AppSettingsService:
         weakref.finalize(service, keeper.close)  # closed with the service, so no connection is left to the collector
         return service
 
-    @staticmethod
-    def _stored(connection: sqlite3.Connection) -> dict[str, Any]:
-        """The stored values. One that is out of range or of the wrong type (a hand-edited database) is the default,
-        with a warning naming the key only, so a read never fails."""
-        values: dict[str, Any] = {}
-        for key in _KEYS:
-            try:
-                values[key] = _VALIDATORS[key].validate_python(get_setting(connection, key))
-            except ValueError:  # includes JSON errors and pydantic's validation errors
-                _log.warning("The stored setting '%s' isn't valid; the default is used", key)
-                values[key] = DEFAULTS[key]
-        return values
-
     def read(self) -> AppSettingsResponse:
         connection = self._connect()
         try:
-            values = self._stored(connection)
+            values = stored_app_settings(connection)
         finally:
             connection.close()
         return AppSettingsResponse(**values, installed=self._installed())
@@ -142,7 +142,7 @@ class AppSettingsService:
             try:
                 connection.execute("BEGIN IMMEDIATE")  # all five or none
                 try:
-                    before = self._stored(connection)
+                    before = stored_app_settings(connection)
                     for key in _KEYS:
                         set_setting(connection, key, getattr(new, key))
                     connection.execute("COMMIT")
@@ -169,6 +169,7 @@ class AppSettingsService:
             return "applied" if installed else "not_installed"
         outcome = apply_start_with_windows_safely(enabled, self._run_key, installed=installed)
         if outcome == "failed":
+            self._run_key_applied = False  # the stored value no longer matches Windows: the next save tries again
             return "failed"
         self._run_key_applied = True
         return "not_installed" if outcome == "skipped" else "applied"

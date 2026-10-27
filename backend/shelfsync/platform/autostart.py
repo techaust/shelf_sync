@@ -11,7 +11,7 @@ import logging
 import ntpath
 import sys
 from pathlib import PureWindowsPath
-from typing import Protocol
+from typing import Literal, Protocol
 
 from shelfsync.update.layout import installed_root
 
@@ -19,6 +19,8 @@ _log = logging.getLogger("shelfsync.autostart")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "ShelfSync"
+
+ApplyOutcome = Literal["set", "removed", "unchanged", "skipped"]
 CURRENT_FOLDER_NAME = "current"
 
 
@@ -130,7 +132,7 @@ def apply_start_with_windows(
     name: str = VALUE_NAME,
     command: str | None = None,
     installed: bool | None = None,
-) -> str:
+) -> ApplyOutcome:
     """Make the Run value match the `start_with_windows` setting. Returns what happened, for the log and for tests:
     "set", "removed", "unchanged" or "skipped".
 
@@ -145,8 +147,8 @@ def apply_start_with_windows(
     current = key.get(name)
     if enabled:
         wanted = command if command is not None else launcher_command(background=True)
-        # Compared case-insensitively like Windows paths, so a case or junction-prefix difference doesn't rewrite the
-        # value at every start (a value that does differ is still written as `wanted`).
+        # Compared like Windows paths (case and slash direction ignored), so such a difference doesn't rewrite the
+        # value at every start; it resolves no links (a value that does differ is still written as `wanted`).
         if current is not None and ntpath.normcase(current) == ntpath.normcase(wanted):
             return "unchanged"
         key.set(name, wanted)
@@ -159,7 +161,7 @@ def apply_start_with_windows(
 
 def apply_start_with_windows_safely(
     enabled: bool, run_key: RunKey | None = None, *, installed: bool | None = None
-) -> str:
+) -> ApplyOutcome | Literal["failed"]:
     """`apply_start_with_windows` that never raises: returns "set", "removed", "unchanged", "skipped", or "failed" (an
     `AutostartError`, logged as a warning with its fixed text). The one place the launcher (at start) and the settings
     API (at a save) apply the setting."""

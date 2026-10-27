@@ -326,6 +326,32 @@ def test_a_failed_run_key_is_tried_again_at_the_next_save(tmp_path: Path) -> Non
         rig.close()
 
 
+class SwitchableRunKey(FakeRunKey):
+    """Works until `broken` is set, then refuses like a locked registry."""
+
+    broken = False
+
+    def get(self, name: str) -> str | None:
+        if self.broken:
+            raise AutostartError("Reading the Run key failed (PermissionError)")
+        return super().get(name)
+
+
+def test_a_failure_after_an_earlier_success_is_tried_again_at_the_next_save(tmp_path: Path) -> None:
+    """SET-06: once a save failed, an unchanged setting is applied again, not reported as applied."""
+    key = SwitchableRunKey()
+    rig = Rig(tmp_path, run_key=key)
+    try:
+        assert put(rig, {**GOOD, "start_with_windows": True}).json()["start_with_windows_result"] == "applied"
+        key.broken = True
+        assert put(rig, GOOD).json()["start_with_windows_result"] == "failed"
+        key.broken = False
+        assert put(rig, GOOD).json()["start_with_windows_result"] == "applied"
+        assert key.get("ShelfSync") is None  # the retry removed the value the failed save left behind
+    finally:
+        rig.close()
+
+
 def test_the_log_retention_is_applied_only_when_it_changes(rig: Rig) -> None:
     """LOG-01: a save with the same retention doesn't prune."""
     assert put(rig, {**GOOD, "log_retention_days": 30}).status_code == 200  # same as the handler's 30

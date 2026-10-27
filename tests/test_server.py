@@ -265,3 +265,28 @@ def test_logging_starts_with_the_longest_retention_until_the_settings_are_read(
     monkeypatch.setattr(server, "configure_logging", spy)
     assert start(data_paths)[0] == server.EXIT_OK
     assert seen == [logs.MAX_LOG_RETENTION_DAYS] == [365]
+
+
+def test_a_stored_retention_that_is_not_valid_falls_back_at_start_up(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOG-01, SET-06: a hand-edited 0 neither stops the start nor deletes every rotated log; the default is used."""
+    from shelfsync import logs
+    from shelfsync.db.connection import connect
+    from shelfsync.db.migrate import migrate
+
+    data_paths.root.mkdir(parents=True, exist_ok=True)
+    connection = connect(data_paths.database)
+    migrate(connection)
+    connection.execute("INSERT INTO setting (key, value_json) VALUES ('log_retention_days', '0')")
+    connection.close()
+    seen: list[int] = []
+    real = logs.set_log_retention
+
+    def spy(handler: object, retention_days: int) -> None:
+        seen.append(retention_days)
+        real(handler, retention_days)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(server, "set_log_retention", spy)
+    assert start(data_paths)[0] == server.EXIT_OK
+    assert seen == [30]
