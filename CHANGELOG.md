@@ -2,6 +2,8 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-27 [#19](https://github.com/techaust/shelf_sync/pull/19) feat(stores): M2.1 store settings, store keys in Credential Manager, read-only Test connection; M2 security docs [SET-01, ERR-01]
+- 2026-10-27 [#18](https://github.com/techaust/shelf_sync/pull/18) feat(settings): M1b.3 Settings App API, log pruning by age, one installed-copy test; M1b runbooks and M2 plan [SET-06, LOG-01]
 - 2026-10-27 [#17](https://github.com/techaust/shelf_sync/pull/17) fix(release): one release script for CI and the PC; NSIS brand paths relative to the script [SYS-01]
 - 2026-10-27 [#16](https://github.com/techaust/shelf_sync/pull/16) feat(update): M1b.2 signed in-app updates, backup before migrations, Updates API [SYS-06, SYS-07, SET-04]
 - 2026-10-27 [#15](https://github.com/techaust/shelf_sync/pull/15) feat(packaging): M1b.1 per-user installer, embedded-Python build, release workflow [SYS-01, SYS-04, SYS-08]
