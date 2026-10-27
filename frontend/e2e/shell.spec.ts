@@ -213,18 +213,26 @@ test.describe("the shell (UI-SHELL)", () => {
   test("the theme menu overrides Windows and the choice survives a reload", async ({ page, request }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await signIn(page, request);
+    // A choice is also saved to the `theme` setting (m1b.4), and the saved one wins at the next load: each step waits
+    // for its save, so a reload (or the next test) never cuts it off.
+    const themeSaved = () =>
+      page.waitForResponse((r) => r.url().endsWith("/api/settings/app") && r.request().method() === "PUT" && r.ok());
     await page.getByRole("button", { name: "Theme: Same as Windows" }).click();
+    let saved = themeSaved();
     await page.getByRole("menuitemradio", { name: "Dark" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await saved;
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     // By keyboard: Enter on the button opens the menu on its first item, "Same as Windows"; Enter picks it.
     await page.getByRole("button", { name: "Theme: Dark" }).focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("menuitemradio", { name: "Same as Windows" })).toBeFocused();
+    saved = themeSaved();
     await page.keyboard.press("Enter");
     await expect(page.locator("html")).not.toHaveAttribute("data-theme");
     await expect(page.getByRole("button", { name: "Theme: Same as Windows" })).toBeFocused();
+    await saved;
   });
 
   test("at 1024 px the nav collapses to icons and keeps its names", async ({ page, request }) => {
