@@ -23,6 +23,19 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   bad_ticket: true,
   invalid_request: true,
   internal: true,
+  // Updates (M1b.2): 409 with one of these, 429 too_soon, 422 confirm_required
+  development_build: true,
+  busy: true,
+  no_key: true,
+  nothing_to_install: true,
+  no_previous: true,
+  no_backup: true,
+  files_changed: true,
+  manifest_invalid: true,
+  manifest_missing: true,
+  cannot_restart: true,
+  too_soon: true,
+  confirm_required: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 

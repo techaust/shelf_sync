@@ -14,6 +14,8 @@ dependencies = [
     # is chosen when it is imported, and the tray code imports it lazily); windows-toasts is Windows only (V29).
     "pystray==0.19.5",
     "Pillow==13.0.0",
+    # Ed25519 check of the signed update manifest (M1b.2, SYS-06); also the release tools and, from M2, AES-GCM.
+    "cryptography==50.0.2",
     "windows-toasts==1.3.1; sys_platform == 'win32'",
 ]
 

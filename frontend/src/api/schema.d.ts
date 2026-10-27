@@ -17,6 +17,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/secrets/github-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Token */
+        get: operations["get_token_api_secrets_github_token_get"];
+        /** Put Token */
+        put: operations["put_token_api_secrets_github_token_put"];
+        post?: never;
+        /** Delete Token */
+        delete: operations["delete_token_api_secrets_github_token_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/session": {
         parameters: {
             query?: never;
@@ -85,17 +104,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Updates */
+        get: operations["get_updates_api_updates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/updates/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check */
+        post: operations["check_api_updates_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/updates/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install */
+        post: operations["install_api_updates_install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/updates/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback */
+        post: operations["rollback_api_updates_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptedResponse */
+        AcceptedResponse: {
+            /**
+             * Accepted
+             * @default true
+             * @constant
+             */
+            accepted: true;
+        };
+        /** AvailableModel */
+        AvailableModel: {
+            /** Ready */
+            ready: boolean;
+            /** Version */
+            version: string;
+        };
         /** ErrorResponse */
         ErrorResponse: {
             /**
              * Error
              * @enum {string}
              */
-            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal";
+            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required";
+        };
+        /** GithubTokenRequest */
+        GithubTokenRequest: {
+            /** Value */
+            value: string;
+        };
+        /** GithubTokenStatus */
+        GithubTokenStatus: {
+            /** Expires At */
+            expires_at: string | null;
+            /** Set */
+            set: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -109,6 +224,47 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** LastCheckModel */
+        LastCheckModel: {
+            /** At */
+            at: string;
+            /** Detail */
+            detail: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "no_release" | "token_refused" | "rate_limited" | "not_public" | "unreachable" | "update_refused" | "update_failed";
+        };
+        /** ResultModel */
+        ResultModel: {
+            /** At */
+            at: string;
+            /** From Version */
+            from_version: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "install" | "rollback";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "updated" | "rolled_back" | "kept_old" | "not_switched" | "failed";
+            /** Reason */
+            reason: string | null;
+            /** To Version */
+            to_version: string;
+        };
+        /** RollbackRequest */
+        RollbackRequest: {
+            /**
+             * Confirm Data Loss
+             * @default false
+             */
+            confirm_data_loss: boolean;
+        };
         /** SignInRequest */
         SignInRequest: {
             /** Ticket */
@@ -120,6 +276,42 @@ export interface components {
             expires_in: number;
             /** Ticket */
             ticket: string;
+        };
+        /** TokenModel */
+        TokenModel: {
+            /** Expires At */
+            expires_at: string | null;
+            /** Notice */
+            notice: boolean;
+            /** Set */
+            set: boolean;
+        };
+        /** UpdatesResponse */
+        UpdatesResponse: {
+            available: components["schemas"]["AvailableModel"] | null;
+            /** Backup At */
+            backup_at: string | null;
+            /** Backup Available */
+            backup_available: boolean;
+            /** Busy */
+            busy: boolean;
+            /** Can Roll Back */
+            can_roll_back: boolean;
+            /** Checking */
+            checking: boolean;
+            /** Database Changed */
+            database_changed: boolean;
+            /** Development */
+            development: boolean;
+            /** Installed */
+            installed: string;
+            /** Key Available */
+            key_available: boolean;
+            last_check: components["schemas"]["LastCheckModel"] | null;
+            last_result: components["schemas"]["ResultModel"] | null;
+            /** Previous */
+            previous: string | null;
+            token: components["schemas"]["TokenModel"];
         };
         /** ValidationError */
         ValidationError: {
@@ -160,6 +352,75 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
+            };
+        };
+    };
+    get_token_api_secrets_github_token_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubTokenStatus"];
+                };
+            };
+        };
+    };
+    put_token_api_secrets_github_token_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_token_api_secrets_github_token_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -268,6 +529,135 @@ export interface operations {
             };
             /** @description Unauthorized */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_updates_api_updates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdatesResponse"];
+                };
+            };
+        };
+    };
+    check_api_updates_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    install_api_updates_install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rollback_api_updates_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RollbackRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -14,8 +14,9 @@ from fastapi import FastAPI
 
 from shelfsync import messages
 from shelfsync.api.app import create_app
+from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
-from shelfsync.db.migrate import MigrationError, migrate
+from shelfsync.db.migrate import MigrationError
 from shelfsync.db.settings import DEFAULTS, get_all_settings
 from shelfsync.logs import configure_logging, install_output_guards, remove_logging, report_ctrl_c
 from shelfsync.paths import (
@@ -33,6 +34,7 @@ from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 from shelfsync.secure.token import InstallToken
 from shelfsync.tray.exit_guard import STALL_FILE_NAME, remove_unsafe_entry
 from shelfsync.tray.instance import InstanceLock, default_instance_lock
+from shelfsync.update.service import build_update_service
 
 HOST = "127.0.0.1"  # never anything else (NFR-5, 06 section 2)
 
@@ -163,7 +165,7 @@ def _start(
     empty_tmp(paths)
     connection = connect(paths.database)
     try:
-        migrate(connection)
+        migrate_with_backup(connection, paths)  # SYS-07: a backup first when migrations are pending
         settings = get_all_settings(connection)
     finally:
         connection.close()
@@ -189,7 +191,7 @@ def _start(
             first = messages.ERR06_FALLBACK.format(preferred=preferred, port=port)
             notifier.notify(f"{first}\n{messages.ERR06_OLD_ADDRESS}")
         _log.info("ShelfSync listening on %s:%d", HOST, port)
-        serve(create_app(port, install_token, ui_dir=ui), sock)
+        serve(create_app(port, install_token, ui_dir=ui, updates=build_update_service(paths, secrets)), sock)
     finally:
         sock.close()
         paths.runtime_json.unlink(missing_ok=True)  # clean exit: nothing left to point a second launch at

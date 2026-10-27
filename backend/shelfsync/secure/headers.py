@@ -16,7 +16,27 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from shelfsync.secure.redact import redact
 
-ErrorCode = Literal["forbidden", "signed_out", "bad_token", "bad_ticket", "invalid_request", "internal"]
+ErrorCode = Literal[
+    "forbidden",
+    "signed_out",
+    "bad_token",
+    "bad_ticket",
+    "invalid_request",
+    "internal",
+    # Updates (M1b.2): 409 with one of these, 429 `too_soon`, 422 `confirm_required`
+    "development_build",
+    "busy",
+    "no_key",
+    "nothing_to_install",
+    "no_previous",
+    "no_backup",
+    "files_changed",
+    "manifest_invalid",
+    "manifest_missing",
+    "cannot_restart",
+    "too_soon",
+    "confirm_required",
+]
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; "

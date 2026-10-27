@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from shelfsync.api.app import create_app
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.token import INSTALL_TOKEN_NAME, InstallToken
+from shelfsync.update.service import UpdateService
 
 PORT = 47615
 HOST = f"127.0.0.1:{PORT}"
@@ -119,10 +120,15 @@ def asgi_http(
     return RawResponse(start["status"], list(start["headers"]), payload)
 
 
-def make_harness(port: int = PORT, store: MemorySecretStore | None = None, ui_dir: Path | None = None) -> Harness:
+def make_harness(
+    port: int = PORT,
+    store: MemorySecretStore | None = None,
+    ui_dir: Path | None = None,
+    updates: UpdateService | None = None,
+) -> Harness:
     """API only by default (ui_dir=None), so the result never depends on whether frontend/dist was built on this
     PC; the static-mount tests pass a folder of their own."""
     secret_store = store if store is not None else MemorySecretStore()
     clock = FakeClock()
-    app = create_app(port, InstallToken(secret_store), clock, ui_dir=ui_dir)
+    app = create_app(port, InstallToken(secret_store), clock, ui_dir=ui_dir, updates=updates)
     return Harness(app=app, store=secret_store, clock=clock, port=port)

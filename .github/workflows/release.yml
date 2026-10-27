@@ -120,8 +120,16 @@ jobs:
           ./packaging/test-installer.ps1 -Setup "$PWD\build\ShelfSync-Setup-$v.exe" -Version $v -Root (Join-Path $env:RUNNER_TEMP "installtest") -OlderSetup "$env:RUNNER_TEMP\Setup-0.0.1.exe" -NewerSetup "$env:RUNNER_TEMP\Setup-99.0.0.exe" -NewerVersion 99.0.0 -RemoveData
           if ($LASTEXITCODE -ne 0) { throw "the installer checks failed" }
 
-      # The manifest step is a placeholder: m1b.2's update/manifest.py writes manifest.json from build/files.txt and the
-      # lead wires it in at integration (the owner signs it offline, 06 section 6). Nothing is signed here.
+      # The unsigned manifest (06 section 6), written by the built folder's own Python (it has cryptography and the app):
+      # -I isolated, -B so nothing is written into the folder the Setup and zip were made from. The owner signs it
+      # offline with tools/release/sign.py; nothing is signed here.
+      - name: Write the unsigned manifest
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $built = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          & "build\ShelfSync-$v\python.exe" -I -B -m shelfsync.update.manifest --version $v --source-commit "${{ github.sha }}" --built-at $built --files-txt buildiles.txt --setup "build\ShelfSync-Setup-$v.exe" --zip "build\shelfsync-$v-win64.zip" --out build\manifest.json
+          if ($LASTEXITCODE -ne 0) { throw "couldn't write manifest.json" }
 
       - name: Keep the build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -131,6 +139,7 @@ jobs:
             build/ShelfSync-Setup-${{ steps.version.outputs.version }}.exe
             build/shelfsync-${{ steps.version.outputs.version }}-win64.zip
             build/files.txt
+            build/manifest.json
           if-no-files-found: error
           retention-days: 14
 
@@ -161,5 +170,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $v = "${{ needs.build.outputs.version }}"
-          gh release create "$env:GITHUB_REF_NAME" --repo "${{ github.repository }}" --draft --verify-tag --title "ShelfSync $v" --notes "Draft: unsigned. The manifest and its signature are added by the owner before this is published." "assets/ShelfSync-Setup-$v.exe" "assets/shelfsync-$v-win64.zip"
+          gh release create "$env:GITHUB_REF_NAME" --repo "${{ github.repository }}" --draft --verify-tag --title "ShelfSync $v" --notes "Draft: manifest.json is unsigned. The owner adds manifest.json.sig before this is published." "assets/ShelfSync-Setup-$v.exe" "assets/shelfsync-$v-win64.zip" "assets/manifest.json"
           if ($LASTEXITCODE -ne 0) { throw "couldn't create the draft release" }

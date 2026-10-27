@@ -257,3 +257,26 @@ def test_real_looking_subjects_parse_fully() -> None:
     ms = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, OID.1.3.6.1.4.1.311.60.2.1.3=US, C=US"
     assert build.subject_fields(ms)["CN"] == "Microsoft Corporation"
     assert build.subject_fields("") == {}
+
+
+def test_the_signature_check_drops_psmodulepath_and_reports_powershells_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-01: on GitHub's `shell: pwsh` steps Windows PowerShell inherits PowerShell 7's PSModulePath (release.yml's
+    first run failed there with no message); the child gets no PSModulePath, and a failure names PowerShell's error."""
+    import subprocess
+
+    seen: dict[str, dict[str, str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        seen["env"] = env
+        return subprocess.CompletedProcess(args, 1, "", "Get-AuthenticodeSignature: the module could not be loaded")
+
+    monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")
+    monkeypatch.setattr(build.subprocess, "run", fake_run)
+    with pytest.raises(build.BuildError, match="module could not be loaded"):
+        build.powershell_signatures(tmp_path)
+    assert not any(key.upper() == "PSMODULEPATH" for key in seen["env"])
+    assert seen["env"]["SHELFSYNC_BUILD_FOLDER"] == str(tmp_path)
