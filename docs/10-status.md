@@ -24,15 +24,15 @@ Under the owner's overnight instruction ([11](11-decisions.md) 2026-10-28), each
 - **[#20](https://github.com/techaust/shelf_sync/pull/20) M1b.4 Settings shell, Settings › Updates and Settings › App screens:** reviewed, fixed and re-reviewed (APPROVE); all local checks passed (548 screen tests, 1,763 backend tests, the release build with its installer tests); CI green (3 of 3), mergeable. **Not merged:** it waits for the owner's yes.
 - **M2.2 daily database backups, retention, restore command** (branch `feat/m2.2-db-backups`, local, not pushed):
   - the build and the first review's fixes are on the branch (full pytest 1,872 and the release build passed there);
-  - the re-review's fixes N1–N6 are commit `b5e6916` on the agent branch `worktree-agent-a225369f658fc52e6` (the builder's checks: ruff, format, mypy both platforms, 1,881 tests, bandit), **not yet on `feat/m2.2-db-backups`**.
+  - the re-review's fixes N1–N6 (the builder's checks: ruff, format, mypy both platforms, 1,881 tests, bandit) are cherry-picked onto the branch as `d47e8fc`, with the handover in `a05360f`; the full checks and the release build haven't run on the branch since.
 - No agent is running.
 
 ## Next
 1. Merge #20 (owner's yes), then update `main`.
-2. M2.2: cherry-pick `b5e6916` onto `feat/m2.2-db-backups`; move the branch onto `main` with `git rebase --onto main cb52f30` (this record PR already carries its two docs commits `f1799b3` and `cb52f30`); run every check and the release build; push, PR, merge on green.
+2. M2.2: move `feat/m2.2-db-backups` onto `main` with `git rebase --onto main cb52f30` (this record PR already carries its two docs commits `f1799b3` and `cb52f30`); run every check and the release build; push, PR, merge on green.
 3. M2.3 storage settings (Tier A) from [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md), then M2.4 backup export (Tier A) from [runs/m2.4-backup-export.md](runs/m2.4-backup-export.md); each with the early check, review, fixes and re-review.
 4. The M2.5a and M2.5b screens brief for the designer (plan in [runs/m2.0-plan.md](runs/m2.0-plan.md) §1).
-5. Remove the two finished agent worktrees: `agent-a133ea61ee2221031` (still locked by process 9612) and `agent-a225369f658fc52e6` (after step 2).
+5. Remove the two finished agent worktrees (CLAUDE.md, Git workflow): `agent-a133ea61ee2221031` (still locked by process 9612) and `agent-a225369f658fc52e6`.
 
 ## Waits on the owner
 1. **This record PR and #20:** push and merge, with your yes.
