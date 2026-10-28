@@ -1,9 +1,18 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CircleCheck, CircleDashed, HardDrive, Pause, Plug, TriangleAlert } from "lucide-react";
-import { type CSSProperties, type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ConnectionState, StorageHealth } from "../api/placeholder";
 import { identifierOf, type Store } from "../api/stores";
-import { healthKind, healthLine, outcomeLine } from "../lib/storeHealth";
+import { chipFocusAfterClose, healthKind, healthLine, isProblem, outcomeLine, popoverTitle } from "../lib/storeHealth";
 import { S } from "../lib/storesWording";
 import type { TestEntry } from "../lib/storeTests";
 import { localWhen, type WhenFormat } from "../lib/time";
@@ -14,11 +23,11 @@ import { Tip } from "./Tip";
 const IDLE: TestEntry = { running: false, result: null, error: null };
 
 /** A healthy or paused store: a read-out, focusable only so its tooltip can be reached from the keyboard. */
-function ReadOut({ tip, children }: { tip: string; children: ReactNode }) {
+function ReadOut({ tip, children, ref }: { tip: string; children: ReactNode; ref?: Ref<HTMLSpanElement> }) {
   return (
     <Tip content={tip}>
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a read-out that has to take focus to show its tooltip */}
-      <span className="health-chip" tabIndex={0}>
+      <span ref={ref} className="health-chip" tabIndex={0}>
         {children}
       </span>
     </Tip>
@@ -30,7 +39,8 @@ function ReadOut({ tip, children }: { tip: string; children: ReactNode }) {
  * tested, and one "Test connection" (ERR-01), as the approved mockup's healthPopover(). The popover is a non-modal
  * Radix dialog drawn in a portal on the page's own surfaces (not the ink app bar's), fixed under its chip; it takes the
  * focus when it opens and closes on Esc (the focus goes back to the chip), on a click outside, or when the focus
- * leaves it.
+ * leaves it. A test from inside it can make the store healthy while it is open: it then says so (a check, the latency,
+ * "<Store> is connected."), and on close the read-out chip that replaces the button takes the focus (StoreChip).
  */
 function StoreProblem({
   store,
@@ -51,6 +61,7 @@ function StoreProblem({
   const content = useRef<HTMLDivElement>(null);
   const kind = healthKind(store);
   const failed = kind === "failed";
+  const connected = kind === "connected";
   const change = (next: boolean) => {
     setOpen(next);
     if (!next) setPlace(null);
@@ -83,7 +94,7 @@ function StoreProblem({
     return () => window.removeEventListener("resize", measure);
   }, [open, box]);
 
-  const title = failed ? S.cantReach(store.name) : S.neverTested(store.name);
+  const title = popoverTitle(kind, store.name);
   const tested = when(store.health.tested_at);
   // Off screen until it is placed (not visibility: hidden, which would refuse the focus it takes when it opens).
   const style: CSSProperties = place ? { left: place.left, top: place.top } : { left: -10000, top: 0 };
@@ -95,6 +106,8 @@ function StoreProblem({
         ? outcomeLine(test.result)
         : healthLine(store.health);
     body = <TestResult line={line} at={test.result ? when(test.result.tested_at) : null} running={test.running} />;
+  } else if (connected) {
+    body = <TestResult line={healthLine(store.health)} at={tested} running={false} />;
   } else if (failed) {
     body = (
       <>
@@ -107,17 +120,30 @@ function StoreProblem({
   return (
     <Dialog.Root open={open} onOpenChange={change} modal={false}>
       <Dialog.Trigger asChild>
-        <button ref={trigger} type="button" className={`health-chip is-button${failed ? " is-down" : " is-unknown"}`}>
+        <button
+          ref={trigger}
+          type="button"
+          className={`health-chip is-button${failed ? " is-down" : connected ? "" : " is-unknown"}`}
+        >
           <StoreBadge store={identifierOf(store)} />
           {failed ? (
             <TriangleAlert className="icon" aria-hidden="true" />
+          ) : connected ? (
+            <CircleCheck className="icon" aria-hidden="true" />
           ) : (
             <CircleDashed className="icon" aria-hidden="true" />
           )}
-          <span className="health-chip__state">
-            {failed ? S.chip[store.health.state === "refused" ? "refused" : "unreachable"] : S.chip.unknown}
-          </span>
+          {connected ? (
+            store.health.latency_ms !== null ? (
+              <span className="health-chip__lat num">{`${store.health.latency_ms} ms`}</span>
+            ) : null
+          ) : (
+            <span className="health-chip__state">
+              {failed ? S.chip[store.health.state === "refused" ? "refused" : "unreachable"] : S.chip.unknown}
+            </span>
+          )}
           {failed ? <span className="sr-only">{`. ${S.showReason}`}</span> : null}
+          {connected ? <span className="sr-only"> connected</span> : null}
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>
@@ -129,6 +155,10 @@ function StoreProblem({
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             content.current?.focus();
+          }}
+          onCloseAutoFocus={(event) => {
+            // the button is about to be replaced by a read-out chip: StoreChip moves the focus there
+            if (!isProblem(kind)) event.preventDefault();
           }}
         >
           <Dialog.Title className="popover__title">{title}</Dialog.Title>
@@ -159,10 +189,24 @@ function StoreChip({
 }) {
   const [open, setOpen] = useState(false);
   const kind = healthKind(store);
+  const readOut = useRef<HTMLSpanElement>(null);
+  const wasOpen = useRef(false);
+
+  // The popover closed and the button became a read-out (a test inside it fixed the store): the focus, left on the
+  // page's body by the removed popover, goes to the chip that replaced the button. A click that put the focus
+  // somewhere else keeps it there.
+  useEffect(() => {
+    const closed = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (!closed) return;
+    if (chipFocusAfterClose(isProblem(kind), document.activeElement, document.body) === "chip")
+      readOut.current?.focus();
+  }, [open, kind]);
+
   const badge = <StoreBadge store={identifierOf(store)} />;
-  if (kind === "paused") {
+  if (kind === "paused" && !open) {
     return (
-      <ReadOut tip={S.chipPaused(store.name)}>
+      <ReadOut ref={readOut} tip={S.chipPaused(store.name)}>
         {badge}
         <Pause className="icon is-muted" aria-hidden="true" />
         <span className="health-chip__state">{S.chip.paused}</span>
@@ -173,7 +217,7 @@ function StoreChip({
     const ms = store.health.latency_ms;
     const tested = when(store.health.tested_at);
     return (
-      <ReadOut tip={`${S.chipConnected(store.name, ms)}. ${tested ? S.testedAt(tested) : ""}`.trim()}>
+      <ReadOut ref={readOut} tip={`${S.chipConnected(store.name, ms)}. ${tested ? S.testedAt(tested) : ""}`.trim()}>
         {badge}
         <CircleCheck className="icon" aria-hidden="true" />
         {ms !== null ? <span className="health-chip__lat num">{`${ms} ms`}</span> : null}

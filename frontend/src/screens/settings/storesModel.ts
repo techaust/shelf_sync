@@ -245,15 +245,98 @@ const FIELD_OF: Partial<Record<ErrorCode, StoreField>> = {
 export function placeError(failure: unknown, keysSent = true): Placed {
   if (failure instanceof ApiError) {
     const code = failure.code;
+    // a write (save, keys, pause, remove) refused because the store is held by a test or another change
+    if (code === "busy") return { field: "card", text: S.busyWrite, tone: "info" };
     if (code && Object.hasOwn(S.errors, code)) {
       const words = S.errors[code as keyof typeof S.errors];
       let field: Placed["field"] = FIELD_OF[code] ?? "card";
       if (code === "secrets_unavailable" && !keysSent) field = "card";
-      return { field, text: words, tone: code === "busy" ? "info" : "danger" };
+      return { field, text: words, tone: "danger" };
     }
     return { field: "card", text: S.refused(failure.status), tone: "danger" };
   }
   return { field: "card", text: S.noAnswer, tone: "danger" };
+}
+
+// ---------- what a Save sends (the card's decisions, kept out of React so each is tested) ----------
+
+type KeyPair = { consumer_key: string; consumer_secret: string };
+
+/** Whether "Save store" has anything to send. The spacing counts only when it was edited, and is compared in ms, so a
+ *  stored 155 ms (shown "0.16") is never "changed" by being shown. */
+export function isDirty(store: Store, edits: Partial<StoreForm>, keysTyped: boolean): boolean {
+  if (keysTyped) return true;
+  const stored = formFrom(store);
+  return (Object.keys(edits) as (keyof StoreForm)[]).some((key) => {
+    if (key === "spacing") return msFromSeconds(edits.spacing ?? "") !== store.spacing_ms;
+    return edits[key] !== stored[key];
+  });
+}
+
+export type SavePlan =
+  | { kind: "errors"; errors: StoreErrors; openKeys: boolean; openIdentifier: boolean }
+  | { kind: "none" }
+  | { kind: "keys"; keys: KeyPair }
+  | { kind: "patch"; body: UpdateStore; keysSent: boolean };
+
+/**
+ * What a Save on a saved store's card does (SET-01):
+ * - the fields are checked with the API's limits, and the typed keys (only when the pair is open) as a pair;
+ * - the address-change rule: a new host with no new keys sends nothing and asks for them at the pair (even when the
+ *   saved keys couldn't be read: they would go to the new server);
+ * - only what changed is sent; the spacing only when it was edited;
+ * - keys alone go by PUT /keys; keys with any field go in the same PATCH, so a new host and its keys arrive together.
+ */
+export function planSave(input: {
+  store: Store;
+  edits: Partial<StoreForm>;
+  keysOpen: boolean;
+  typedKey: string;
+  typedSecret: string;
+  takenCodes: readonly string[];
+}): SavePlan {
+  const { store, edits } = input;
+  const form: StoreForm = { ...formFrom(store), ...edits };
+  const spacingEdited = edits.spacing !== undefined;
+  const checked = checkForm(form, input.takenCodes);
+  const typed = input.keysOpen ? checkKeys(input.typedKey, input.typedSecret) : { keys: null, errors: {} };
+  const errors: StoreErrors = { ...(checked.errors ?? {}), ...typed.errors };
+  if (!spacingEdited) delete errors.spacing; // the stored value, shown rounded, is never refused
+  let openKeys = false;
+  const url = checked.values?.url ?? checkAddress(form.url);
+  if (url && hostChanged(store.url, url) && !typed.keys && !errors.keys) {
+    errors.keys = S.errors.keys_required;
+    openKeys = true;
+  }
+  if (errors.keys || errors.consumerKey || errors.consumerSecret) openKeys = true;
+  if (Object.keys(errors).length > 0 || !checked.values) {
+    return { kind: "errors", errors, openKeys, openIdentifier: Boolean(errors.code) };
+  }
+  const values = spacingEdited ? checked.values : { ...checked.values, spacing_ms: store.spacing_ms };
+  const body = changedFields(store, values);
+  const fieldsChanged = Object.keys(body).length > 0;
+  if (!fieldsChanged && !typed.keys) return { kind: "none" };
+  if (!fieldsChanged && typed.keys) return { kind: "keys", keys: typed.keys };
+  return typed.keys
+    ? { kind: "patch", body: { ...body, ...typed.keys }, keysSent: true }
+    : { kind: "patch", body, keysSent: false };
+}
+
+export type AddPlan = { kind: "errors"; errors: StoreErrors } | { kind: "create"; body: CreateStore };
+
+/** What "Add store" does: every field checked, and a key pair is required (a store is never added without keys). */
+export function planAdd(input: {
+  form: StoreForm;
+  typedKey: string;
+  typedSecret: string;
+  takenCodes: readonly string[];
+}): AddPlan {
+  const checked = checkForm(input.form, input.takenCodes);
+  const typed = checkKeys(input.typedKey, input.typedSecret);
+  const errors: StoreErrors = { ...(checked.errors ?? {}), ...typed.errors };
+  if (!typed.keys && !errors.keys && !errors.consumerKey && !errors.consumerSecret) errors.keys = S.pairNeeded;
+  if (Object.keys(errors).length > 0 || !checked.values || !typed.keys) return { kind: "errors", errors };
+  return { kind: "create", body: createBody(checked.values, typed.keys) };
 }
 
 // The health helpers (healthKind, outcomeLine, healthLine, testError) live in lib/storeHealth.ts: the shell's

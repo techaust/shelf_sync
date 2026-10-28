@@ -19,15 +19,13 @@ import {
   StoresLoading,
 } from "./StoresView";
 import {
-  changedFields,
-  checkForm,
-  checkKeys,
   codeInput,
-  createBody,
   formFrom,
-  hostChanged,
+  isDirty,
   newForm,
   placeError,
+  planAdd,
+  planSave,
   type StoreErrors,
   type StoreForm,
 } from "./storesModel";
@@ -123,7 +121,7 @@ function StoreCard({
   const stored = formFrom(store);
   // A field edited back to its saved value is no longer an edit, so a refresh shows the saved value again.
   const form: StoreForm = { ...stored, ...edits };
-  const dirty = (Object.keys(edits) as (keyof StoreForm)[]).some((key) => edits[key] !== stored[key]) || keysTyped;
+  const dirty = isDirty(store, edits, keysTyped);
   const keysSet = store.keys.consumer_key !== null && store.keys.consumer_secret !== null;
   const showKeys = keysOpen || (store.keys_readable && !keysSet);
 
@@ -136,46 +134,46 @@ function StoreCard({
   async function save(event: FormEvent) {
     event.preventDefault();
     if (saving) return;
-    const checked = checkForm(form, takenCodes);
-    const typedKeys = showKeys
-      ? checkKeys(keyRef.current?.value ?? "", secretRef.current?.value ?? "")
-      : { keys: null, errors: {} };
-    const found: StoreErrors = { ...(checked.errors ?? {}), ...typedKeys.errors };
-    // The address-change rule: a new host needs the new keys in the same request, asked for before anything is sent.
-    if (checked.values && hostChanged(store.url, checked.values.url) && !typedKeys.keys && !found.keys) {
-      found.keys = S.errors.keys_required;
-      setKeysOpen(true);
-    }
+    // what to send, decided without React (planSave, storesModel.test.ts)
+    const plan = planSave({
+      store,
+      edits,
+      keysOpen: showKeys,
+      typedKey: keyRef.current?.value ?? "",
+      typedSecret: secretRef.current?.value ?? "",
+      takenCodes,
+    });
     setSaved(null);
     setMessage(null);
-    if (Object.keys(found).length > 0 || !checked.values) {
-      setErrors(found);
-      if (found.code) setIdentOpen(true);
-      afterRender(() => focusFirstError(prefix, found));
+    if (plan.kind === "errors") {
+      setErrors(plan.errors);
+      if (plan.openKeys) setKeysOpen(true);
+      if (plan.openIdentifier) setIdentOpen(true);
+      afterRender(() => focusFirstError(prefix, plan.errors));
       return;
     }
-    const body = changedFields(store, checked.values);
-    const onlyKeys = Object.keys(body).length === 0;
-    if (onlyKeys && !typedKeys.keys) return; // nothing changed: the button says so (aria-disabled)
+    if (plan.kind === "none") return; // nothing changed: the button says so (aria-disabled)
     setErrors({});
     setSaving(true);
+    const keysSent = plan.kind === "keys" || plan.keysSent;
     try {
-      if (onlyKeys && typedKeys.keys) {
-        await putStoreKeys(api, store.id, typedKeys.keys.consumer_key, typedKeys.keys.consumer_secret);
+      if (plan.kind === "keys") {
+        await putStoreKeys(api, store.id, plan.keys.consumer_key, plan.keys.consumer_secret);
         await queryClient.invalidateQueries({ queryKey: STORES_QUERY_KEY });
       } else {
-        cache(await updateStore(api, store.id, typedKeys.keys ? { ...body, ...typedKeys.keys } : body));
+        cache(await updateStore(api, store.id, plan.body));
       }
-      if (typedKeys.keys || body.url) storeTests.forget(store.id); // the last test was of the old keys or address
+      // the last test was of the old keys or address
+      if (keysSent || (plan.kind === "patch" && plan.body.url)) storeTests.forget(store.id);
       clearKeys();
       setKeysOpen(false);
       setEdits({});
       setIdentOpen(false);
-      setSaved(onlyKeys ? S.keysSaved : S.saved);
+      setSaved(plan.kind === "keys" ? S.keysSaved : S.saved);
       // the key inputs it was typed in are gone: the focus stays in the card, on Save
       afterRender(() => document.getElementById(`${prefix}-save`)?.focus());
     } catch (failure) {
-      const placed = placeError(failure, typedKeys.keys !== null);
+      const placed = placeError(failure, keysSent);
       if (placed.field === "card") setMessage({ tone: placed.tone, text: placed.text });
       else setErrors({ [placed.field]: placed.text });
       if (placed.field === "keys") setKeysOpen(true);
@@ -290,25 +288,22 @@ function AddStoreCard({
   async function save(event: FormEvent) {
     event.preventDefault();
     if (saving) return;
-    const checked = checkForm(
+    const plan = planAdd({
       form,
-      stores.map((store) => store.code),
-    );
-    const keyText = keyRef.current?.value ?? "";
-    const secretText = secretRef.current?.value ?? "";
-    const typedKeys = checkKeys(keyText, secretText);
-    const found: StoreErrors = { ...(checked.errors ?? {}), ...typedKeys.errors };
-    if (!typedKeys.keys && !found.keys && !found.consumerKey && !found.consumerSecret) found.keys = S.pairNeeded;
+      typedKey: keyRef.current?.value ?? "",
+      typedSecret: secretRef.current?.value ?? "",
+      takenCodes: stores.map((store) => store.code),
+    });
     setMessage(null);
-    if (Object.keys(found).length > 0 || !checked.values || !typedKeys.keys) {
-      setErrors(found);
-      afterRender(() => focusFirstError(prefix, found));
+    if (plan.kind === "errors") {
+      setErrors(plan.errors);
+      afterRender(() => focusFirstError(prefix, plan.errors));
       return;
     }
     setErrors({});
     setSaving(true);
     try {
-      const added = await createStore(api, createBody(checked.values, typedKeys.keys));
+      const added = await createStore(api, plan.body);
       if (keyRef.current) keyRef.current.value = "";
       if (secretRef.current) secretRef.current.value = "";
       queryClient.setQueryData<Store[]>(STORES_QUERY_KEY, (list) => (list ? [...list, added] : [added]));

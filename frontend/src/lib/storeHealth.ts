@@ -83,3 +83,30 @@ export function outcomeLine(outcome: Outcome): ResultLine {
 export function healthLine(health: StoreHealthModel): ResultLine {
   return outcomeLine({ ...health, detail: null, warning: null });
 }
+
+/** A chip that is a button (it opens the reason and a test): its last test failed, or it was never tested. */
+export function isProblem(kind: HealthKind): boolean {
+  return kind === "failed" || kind === "unknown";
+}
+
+/**
+ * Where the focus goes when a chip's popover closes. If the chip is still a button, Radix gives the focus back to it
+ * ("leave"). If it became a read-out (the store is healthy or paused now), the button Radix would return to is gone:
+ * the read-out takes the focus ("chip"), unless a click outside already put it on something else.
+ */
+export function chipFocusAfterClose(
+  stillButton: boolean,
+  active: Element | null,
+  body: Element | null,
+): "chip" | "leave" {
+  if (stillButton) return "leave";
+  return active === null || active === body ? "chip" : "leave";
+}
+
+/** The health popover's title, by the chip's kind (ERR-01; "<Store> is connected." once a test inside it passed). */
+export function popoverTitle(kind: HealthKind, store: string): string {
+  if (kind === "failed") return S.cantReach(store);
+  if (kind === "connected") return S.isConnected(store);
+  if (kind === "paused") return S.pausedDone(store);
+  return S.neverTested(store);
+}

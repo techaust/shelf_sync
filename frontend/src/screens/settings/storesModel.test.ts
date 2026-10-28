@@ -220,8 +220,9 @@ describe("every API error code: the 13 wording, at its field", () => {
     expect(placeError(refused(409, code))).toMatchObject({ field, text, tone: "danger" });
   });
 
-  it("busy is information, not a failure", () => {
-    expect(placeError(refused(409, "busy"))).toEqual({ field: "card", text: S.errors.busy, tone: "info" });
+  it("busy on a write is information, with its own line (a test, a key save or a removal holds the store)", () => {
+    expect(placeError(refused(409, "busy"))).toEqual({ field: "card", text: S.busyWrite, tone: "info" });
+    expect(S.busyWrite).toBe("Another change to this store is running. Try again in a moment.");
   });
 
   it("secrets_unavailable without keys in the request is the card's (a remove, a pause)", () => {

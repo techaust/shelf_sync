@@ -92,7 +92,7 @@ export const S = {
     keys_required:
       "The address now points at a different server. Enter the new keys too, so the old ones aren't sent there.",
     secrets_unavailable: "Windows Credential Manager couldn't be used. Check the keys and try again.",
-    busy: "A test of this store is already running.",
+    busy: "A test of this store is already running.", // a refused Test connection (testError)
     too_many_stores: "ShelfSync keeps up to 50 stores. Remove one before adding another.",
   } satisfies Partial<Record<ErrorCode, string>>,
 
@@ -176,6 +176,9 @@ export const S = {
   loadRefused: (status: number) => `ShelfSync refused to show the stores (HTTP ${status}).`,
   staleNotice: "ShelfSync didn't answer just now, so this may be out of date.", // 13 Settings screens
   tryAgain: "Try again",
+  // proposed (m2.5a round 1): `busy` on a save, a key change or a removal (another test, key save or removal holds the
+  // store), where the test line would be wrong
+  busyWrite: "Another change to this store is running. Try again in a moment.",
 
   // ---------- the HealthArea (shell; 13 Shell and proposed (m2.5a)) ----------
   chip: {
@@ -185,6 +188,7 @@ export const S = {
     paused: "Paused",
   },
   neverTested: (store: string) => `${store} hasn't been tested yet.`,
+  isConnected: (store: string) => `${store} is connected.`, // a test inside the popover made it healthy
   neverTestedSub: "Test the connection to check its address and keys.",
   connectionsUnknown: "Connections can't be shown",
   showReason: "Show the reason",
