@@ -91,26 +91,27 @@
   }
 
   /* ---------- Backup: the daily backups' facts, read like a row of instruments ---------- */
+  /* one fact per row, label then value, so a long local time with its zone stays on one line */
   .backup-facts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     margin: 0;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    overflow: hidden;
   }
   .backup-facts > div {
     display: grid;
-    gap: var(--space-1);
-    align-content: start;
+    grid-template-columns: 9rem minmax(0, 1fr);
+    gap: var(--space-1) var(--space-4);
+    align-items: baseline;
     padding: var(--space-3) var(--space-4);
-    /* a hairline between neighbours; the outer border draws the rest */
-    box-shadow: -1px 0 0 var(--color-border);
+  }
+  .backup-facts > div + div {
+    border-top: 1px solid var(--color-border);
   }
   .backup-facts dt {
     color: var(--color-text-muted);
-    font-size: var(--text-caption);
-    line-height: var(--text-caption--line-height);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
   }
   .backup-facts dd {
     display: flex;
@@ -179,6 +180,9 @@
   }
   .transfer__title .icon {
     color: var(--color-text-muted);
+  }
+  .transfer__field {
+    max-width: 36rem;
   }
   .transfer__acts {
     display: flex;

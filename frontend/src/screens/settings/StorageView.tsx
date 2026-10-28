@@ -1,4 +1,15 @@
-import { BookOpen, HardDrive, KeyRound, LoaderCircle, Plug, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import {
+  BookOpen,
+  CircleCheck,
+  HardDrive,
+  KeyRound,
+  LoaderCircle,
+  Plug,
+  Plus,
+  RefreshCw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import type { FormEvent, ReactNode, RefObject } from "react";
 import type { S3Slot } from "../../api/storage";
 import { Alert, type AlertTone } from "../../components/Alert";
@@ -320,12 +331,14 @@ export function KeyPairPanel({
   const id = `storage-${slot}`;
   const busy = pair.saving || pair.removing;
   const removable = pair.set || !pair.readable;
+  // nothing saved (and that is known): only the two inputs, no row of "Not set"
+  const nothingSaved = pair.readable && pair.masks.first === null && pair.masks.second === null;
   return (
     <form className="key-pair" onSubmit={handlers.onSave} noValidate aria-label={ST.legend[slot]}>
       <SecretPair
         id={id}
         text={pairText(slot)}
-        masks={pair.masks}
+        masks={nothingSaved ? null : pair.masks}
         readable={pair.readable}
         open={pair.open}
         closable={removable}
@@ -381,6 +394,7 @@ export function KeyPairPanel({
       </p>
       {pair.done ? (
         <p className="secret-field__done" aria-hidden="true">
+          <CircleCheck className="icon" aria-hidden="true" />
           {pair.done}
         </p>
       ) : null}

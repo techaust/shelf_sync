@@ -462,7 +462,7 @@ export function ImportSection({ state, handlers }: { state: ImportState; handler
         </div>
       ) : null}
       {chosen?.encrypted ? (
-        <div className="form-grid">
+        <div className="transfer__field">
           <Passphrase
             id="backup-import-pass"
             label={<FileText text={B.importPassphrase(chosen.name)} name={chosen.name} />}
@@ -490,7 +490,7 @@ export function ImportSection({ state, handlers }: { state: ImportState; handler
           Icon={FileArchive}
           running={false}
           blocked={state.running || state.blocked}
-          primary={!chosen}
+          primary={false}
           type="button"
           onClick={() => {
             if (!state.running && !state.blocked) handlers.onPick();
