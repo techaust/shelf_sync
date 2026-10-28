@@ -28,7 +28,7 @@ Under the owner's overnight instruction ([11](11-decisions.md) 2026-10-28), each
 - No agent is running.
 
 ## Next
-1. Merge #20 (owner's yes), then update `main`.
+1. Merge #20 (owner's yes), then update `main`. Then rebase this record branch, `docs/end-of-day-2026-10-28`, onto `main` before its push: both add rows to `docs/13-content.md` in the same place, so keep both.
 2. M2.2: move `feat/m2.2-db-backups` onto `main` with `git rebase --onto main cb52f30` (this record PR already carries its two docs commits `f1799b3` and `cb52f30`); run every check and the release build; push, PR, merge on green.
 3. M2.3 storage settings (Tier A) from [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md), then M2.4 backup export (Tier A) from [runs/m2.4-backup-export.md](runs/m2.4-backup-export.md); each with the early check, review, fixes and re-review.
 4. The M2.5a and M2.5b screens brief for the designer (plan in [runs/m2.0-plan.md](runs/m2.0-plan.md) §1).
