@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Phase** | 4, Build. Phases 1–3 approved (2026-10-25, 2026-10-25, 2026-10-26). **M1a approved 2026-10-27** (PRs #7–#9, and #12 for the Quit fix found in its exit test). **M1b code done 2026-10-28** (#13, #15–#18, and #20 for the Settings screens, open); its exit test is the owner's ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)). **M2 started 2026-10-28:** plan in [runs/m2.0-plan.md](runs/m2.0-plan.md); M2.1 merged (#19); M2.2 in integration. Next: M2.2, M2.3, M2.4, then the M2.5 screens |
+| **Phase** | 4, Build. Phases 1–3 approved (2026-10-25, 2026-10-25, 2026-10-26). **M1a approved 2026-10-27** (PRs #7–#9, and #12 for the Quit fix found in its exit test). **M1b code done 2026-10-28** (#13, #15–#18, and #20 for the Settings screens); its exit test is the owner's ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)). **M2 started 2026-10-28:** plan in [runs/m2.0-plan.md](runs/m2.0-plan.md); M2.1 merged (#19); M2.2 in integration. Next: M2.2, M2.3, M2.4, then the M2.5 screens |
 | **Date** | 2026-10-25; status line updated 2026-10-27 |
 | **Rule** | Each phase and milestone ends with a short summary to the owner and **waits for "approved"** before the next starts. Nothing writes to the live stores before M6 |
 | **Traceability** | Every PRD ID has its milestone in the **M** column of [03](03-prd.md). The lists below are copied from there |
