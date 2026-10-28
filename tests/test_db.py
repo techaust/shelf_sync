@@ -112,6 +112,11 @@ def test_settings_default_in_code_and_store_json(connection: sqlite3.Connection)
         "log_retention_days": 30,
         "db_backups_kept": 7,
         "snapshot_retention_days": 30,
+        "s3_endpoint": "",
+        "s3_region": "",
+        "s3_bucket": "",
+        "keep_previous_files": 1,
+        "download_link_template": '[amazon_s3 object="{key}"]',
     }
     assert connection.execute("SELECT COUNT(*) FROM setting").fetchone()[0] == 0  # defaults are not rows
     set_setting(connection, "theme", "dark")
@@ -140,6 +145,11 @@ def test_settings_refuse_unknown_keys_and_wrong_types(connection: sqlite3.Connec
         "log_retention_days",
         "db_backups_kept",
         "snapshot_retention_days",
+        "s3_endpoint",
+        "s3_region",
+        "s3_bucket",
+        "keep_previous_files",
+        "download_link_template",
     }
     with pytest.raises(ValueError):
         set_setting(connection, "port", 47700)  # every existing rule still holds beside the new ones

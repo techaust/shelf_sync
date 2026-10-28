@@ -13,6 +13,17 @@ from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.token import INSTALL_TOKEN_NAME
+from tests.storage_support import (
+    GOOD_SETTINGS,
+    RO_ID,
+    RO_SECRET,
+    RW_ID,
+    RW_ID_2,
+    RW_SECRET,
+    RW_SECRET_2,
+    key_body,
+    make_storage_rig,
+)
 from tests.store_support import (
     KEY,
     KEY_2,
@@ -149,3 +160,57 @@ def test_the_store_flows_write_no_key_or_secret_anywhere_even_with_redaction_off
         assert value[3:] not in everything
     assert "store-a.example" not in everything  # a store is named by its code, never its address
     assert "Just a moment" not in everything and "woocommerce_rest_cannot_view" not in everything
+
+
+def test_the_storage_flows_write_no_s3_key_anywhere_even_with_redaction_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01, SET-02: saving both pairs, replacing one, a failed save, refused shapes (the request holds a key),
+    reading them back, the start-up read of an unreadable store, and removing them. No value, and no part of a secret,
+    reaches the log or the output."""
+    monkeypatch.setattr(logs, "redact", lambda text: text)
+    handler = logs.configure_logging(tmp_path, retention_days=1)
+    secrets = FailingSecretStore()
+    values = [RW_ID, RW_SECRET, RO_ID, RO_SECRET, RW_ID_2, RW_SECRET_2]
+    try:
+        rig = make_storage_rig(secrets)
+        client = rig.client
+        assert client.put("/api/settings/storage", headers=WRITE_HEADERS, json=GOOD_SETTINGS).status_code == 200
+        assert client.put("/api/secrets/s3-rw", headers=WRITE_HEADERS, json=key_body()).status_code == 204
+        assert (
+            client.put("/api/secrets/s3-ro", headers=WRITE_HEADERS, json=key_body(RO_ID, RO_SECRET)).status_code == 204
+        )
+        assert client.get("/api/settings/storage").status_code == 200
+        # refused and failed requests, which are the ones that get logged
+        assert client.put("/api/secrets/s3-rw", headers=WRITE_HEADERS, json={**key_body(), "x": 1}).status_code == 422
+        assert (
+            client.put("/api/secrets/s3-rw", headers=WRITE_HEADERS, json=key_body(RW_ID_2, "short")).status_code == 422
+        )
+        secrets.fail_set_on = secrets.sets + 2
+        replace = key_body(RW_ID_2, RW_SECRET_2)
+        assert client.put("/api/secrets/s3-rw", headers=WRITE_HEADERS, json=replace).status_code == 503
+        secrets.fail_set_on = None
+        assert client.put("/api/secrets/s3-rw", headers=WRITE_HEADERS, json=replace).status_code == 204
+        secrets.fail_get = True
+        assert client.get("/api/settings/storage").status_code == 200  # reads as not set; logs a warning
+        assert client.delete("/api/secrets/s3-ro", headers=WRITE_HEADERS).status_code == 503
+        rig.service.register_secrets()  # the start-up read of an unreadable store
+        secrets.fail_get = False
+        secrets.fail_delete = {"s3-ro-secret"}
+        assert client.delete("/api/secrets/s3-ro", headers=WRITE_HEADERS).status_code == 503
+        secrets.fail_delete = set()
+        assert client.delete("/api/secrets/s3-ro", headers=WRITE_HEADERS).status_code == 204
+        assert client.delete("/api/secrets/s3-rw", headers=WRITE_HEADERS).status_code == 204
+        handler.flush()
+    finally:
+        logs.remove_logging(handler)
+
+    log_text = (tmp_path / logs.LOG_FILE_NAME).read_text(encoding="utf-8")
+    assert "S3 keys couldn't be read" in log_text  # logging was on and did record the warnings
+    captured = capfd.readouterr()
+    everything = log_text + captured.out + captured.err
+    for value in values:
+        assert value not in everything
+        assert value[4:] not in everything
+    for secret in (RW_SECRET, RO_SECRET, RW_SECRET_2):
+        assert secret[: len(secret) // 2] not in everything

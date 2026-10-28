@@ -16,6 +16,7 @@ from shelfsync import messages
 from shelfsync.api.app import create_app
 from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
 from shelfsync.api.backup_settings import BackupSettingsService
+from shelfsync.api.storage import build_storage_service
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
 from shelfsync.db.daily import DailyBackups
@@ -208,6 +209,8 @@ def _start(
         _log.info("ShelfSync listening on %s:%d", HOST, port)
         stores = build_store_service(paths, secrets)
         stores.register_secrets()  # every stored key is masked in the log from the first line on (a failure only warns)
+        storage = build_storage_service(lambda: connect(paths.database), secrets)
+        storage.register_secrets()  # the S3 keys are masked in the log from the first line on (a failure only warns)
         app = create_app(
             port,
             install_token,
@@ -215,6 +218,7 @@ def _start(
             updates=build_update_service(paths, secrets),
             app_settings=AppSettingsService(lambda: connect(paths.database), port, handler, run_key, installed),
             stores=stores,
+            storage=storage,
             backups=BackupSettingsService(
                 lambda: connect(paths.database), DailyBackups(paths, lambda: connect(paths.database))
             ),

@@ -5,19 +5,24 @@ from shelfsync.api.app import create_app
 from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore, SecretStoreError
-from shelfsync.secure.token import InstallToken
+from shelfsync.secure.token import INSTALL_TOKEN_NAME, InstallToken
 from tests.support import PORT
 from tests.test_server import RecordingServe
 
 
 class CountingStore(MemorySecretStore):
-    """Counts reads; every read after the first one fails, as a store that goes away after start-up would."""
+    """Counts reads of the install token; every read after the first one fails, as a store that goes away after
+    start-up would. Other entries (the S3 keys, read once at start-up to be masked in the log) are counted apart."""
 
     def __init__(self) -> None:
         super().__init__()
         self.gets = 0
+        self.other_gets = 0
 
     def get(self, name: str) -> str | None:
+        if name != INSTALL_TOKEN_NAME:
+            self.other_gets += 1
+            return super().get(name)
         self.gets += 1
         if self.gets > 1:
             raise SecretStoreError("the store went away")
