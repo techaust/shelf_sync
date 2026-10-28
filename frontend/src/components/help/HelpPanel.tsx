@@ -1,9 +1,12 @@
 import { BookOpen, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { type MouseEvent, useEffect, useRef, useSyncExternalStore } from "react";
+import { lazy, type MouseEvent, Suspense, useEffect, useRef, useSyncExternalStore } from "react";
 import { type DialogBehaviour, dialogBehaviour } from "../dialog";
 import { Tip } from "../Tip";
-import { GuideBody, H } from "./guides";
 import { firstFocus, GUIDE_IDS, type GuideId, helpStore } from "./helpModel";
+import { H } from "./helpWording";
+
+/** The guides' bodies load the first time the panel shows one (m2.5b: the main chunk stays under Vite's warning). */
+const GuideBody = lazy(() => import("./guides").then((module) => ({ default: module.GuideBody })));
 
 export function useHelp() {
   return useSyncExternalStore(helpStore.subscribe, helpStore.get, helpStore.get);
@@ -122,7 +125,9 @@ export function HelpPanel() {
             <h3 className="guide__title" id="help-guide-title" ref={guideTitle} tabIndex={-1}>
               {H.guideTitles[guide]}
             </h3>
-            <GuideBody guide={guide} onLeave={() => helpStore.close()} />
+            <Suspense fallback={<GuideLoading />}>
+              <GuideBody guide={guide} onLeave={() => helpStore.close()} />
+            </Suspense>
           </section>
         ) : (
           <>
@@ -154,5 +159,16 @@ export function HelpPanel() {
         )}
       </div>
     </dialog>
+  );
+}
+
+/** While a guide's body loads (a moment, from this PC): quiet blocks in its place, no spinner (05 section 6). */
+function GuideLoading() {
+  return (
+    <div className="guide__loading" aria-busy="true">
+      <span className="sk is-line" />
+      <span className="sk is-line" />
+      <span className="sk is-block" />
+    </div>
   );
 }

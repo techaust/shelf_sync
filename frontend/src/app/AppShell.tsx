@@ -2,19 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Outlet, useLocation } from "react-router";
 import { fetchShellStatus, SHELL_STATUS_PLACEHOLDER, SHELL_STATUS_QUERY_KEY } from "../api/placeholder";
+import { AppBar } from "../components/AppBar";
+import { HealthArea } from "../components/HealthArea";
+import { HelpButton, HelpPanel } from "../components/help/HelpPanel";
+import { PauseButton } from "../components/PauseButton";
+import { SideNav } from "../components/SideNav";
+import { StatusStrip } from "../components/StatusStrip";
+import { ThemeMenu } from "../components/ThemeMenu";
+import { useCollapsedNav } from "../components/useCollapsedNav";
 import { storeTests } from "../lib/storeTests";
+import { RestartScreen, shellTakesOver } from "../screens/settings/RestartScreen";
 import { useSwitchPhase } from "../screens/settings/switchStore";
-import { RestartScreen, shellTakesOver } from "../screens/settings/UpdatesView";
-import { useRunStoreTest, useStoresQuery } from "../screens/settings/useStores";
 import { useThemeFromServer } from "../theme/useSavedTheme";
-import { AppBar } from "./AppBar";
-import { HealthArea } from "./HealthArea";
-import { HelpButton, HelpPanel } from "./help/HelpPanel";
-import { PauseButton } from "./PauseButton";
-import { SideNav } from "./SideNav";
-import { StatusStrip } from "./StatusStrip";
-import { ThemeMenu } from "./ThemeMenu";
-import { useCollapsedNav } from "./useCollapsedNav";
+import { useRunStoreTest, useStoresQuery } from "./useStores";
 
 /**
  * The AppShell (UI-SHELL, 05 section 5): app bar, side nav, status strip and the routed screen. Status comes from

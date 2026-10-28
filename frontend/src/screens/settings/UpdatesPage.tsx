@@ -6,8 +6,9 @@ import { getUpdates, installUpdate, rollBack, UPDATES_QUERY_KEY } from "../../ap
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { checkNow, pollAnswers, removeToken, saveToken } from "./actions";
+import { Restarting } from "./RestartScreen";
 import { type SwitchLine, switchStore } from "./switchStore";
-import { Restarting, RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
+import { RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
 import { describeUpdates } from "./updatesModel";
 import { U } from "./wording";
 

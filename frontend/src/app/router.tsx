@@ -1,7 +1,7 @@
 import { createHashRouter, Navigate } from "react-router";
-import { AppShell } from "../components/AppShell";
 import { Activity, Catalog, Cleanup, Dashboard, NotFound, Review, Upload } from "../screens/screens";
 import { DEFAULT_SETTINGS_SUB, Settings } from "../screens/settings/Settings";
+import { AppShell } from "./AppShell";
 
 /**
  * Hash routing (#/review), not history routing: the backend serves frontend/dist as plain files with no

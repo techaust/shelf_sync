@@ -166,3 +166,28 @@ describe("error codes", () => {
     expect((error as ApiError).message).toBe("GET /api/health answered HTTP 400");
   });
 });
+
+describe("sendRaw (m2.5b: a file as the answer)", () => {
+  it("is a checked write: X-ShelfSync: 1, and the Response comes back unread, headers and all", async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response("file text", { status: 200, headers: { "Content-Disposition": "attachment" } }),
+    );
+    const response = await createApiClient({ fetch: fetchMock }).sendRaw("POST", "/api/backup/export", { a: 1 });
+    expect(headersOf(sentInit(fetchMock))[CSRF_HEADER]).toBe("1");
+    expect(response.bodyUsed).toBe(false);
+    expect(response.headers.get("Content-Disposition")).toBe("attachment");
+    expect(await response.text()).toBe("file text");
+  });
+
+  it("a refusal is an ApiError with its code; a 401 signed_out signs the tab out", async () => {
+    const onSignedOut = vi.fn();
+    const refused = await failure(
+      createApiClient({ fetch: mockFetch(409, { error: "busy" }) }).sendRaw("POST", "/api/backup/export"),
+    );
+    expect(refused.code).toBe("busy");
+    await failure(
+      createApiClient({ fetch: mockFetch(401, { error: "signed_out" }), onSignedOut }).sendRaw("POST", "/api/x"),
+    );
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+  });
+});

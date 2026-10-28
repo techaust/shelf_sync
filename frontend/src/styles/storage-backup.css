@@ -1,0 +1,230 @@
+/* Settings › Storage and Settings › Backup (M2.5b), after the approved P3.4 mockup
+   (docs/05-design-system-appendix/mockup/css/app-b.css: .check-row, .test-row__hint, .secret-field__value), rebuilt
+   with tokens only: every colour, size, radius and duration is a token (generated/*.css). Imported by app.css. */
+
+@layer components {
+  .storage,
+  .backup {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+  .storage__title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .storage__title .icon {
+    color: var(--color-text-muted);
+  }
+
+  /* ---------- the two S3 key pairs: one panel each, side by side when there is room ---------- */
+  .key-pairs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    gap: var(--space-4);
+  }
+  .key-pair {
+    display: grid;
+    gap: var(--space-2);
+    align-content: start;
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+  .secret-pair__description {
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  /* inside a panel the two inputs stack, with Save and Cancel under them */
+  .key-pair .secret-pair__edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .key-pair .secret-pair__masks {
+    gap: var(--space-2) var(--space-6);
+  }
+  .key-pair .secret-pair__row {
+    gap: var(--space-3) var(--space-4);
+  }
+  .secret-pair__acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .secret-pair__acts .btn {
+    min-height: var(--target-min);
+  }
+  .key-pair .secret-field__done {
+    margin: 0;
+  }
+
+  /* where the Test button will be (m2.7): what isn't checked yet, and the guide */
+  .storage-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    border: 1px dashed var(--color-border-control);
+    border-radius: var(--radius-md);
+  }
+  .storage-note__icon {
+    flex: none;
+    color: var(--color-text-muted);
+  }
+  .storage-note__text {
+    display: grid;
+    gap: var(--space-1);
+    flex: 1 1 24rem;
+    min-width: 0;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  .storage-note__text p {
+    margin: 0;
+  }
+  .storage-note__text p + p {
+    color: var(--color-text-muted);
+  }
+
+  /* ---------- Backup: the daily backups' facts, read like a row of instruments ---------- */
+  .backup-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    margin: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .backup-facts > div {
+    display: grid;
+    gap: var(--space-1);
+    align-content: start;
+    padding: var(--space-3) var(--space-4);
+    /* a hairline between neighbours; the outer border draws the rest */
+    box-shadow: -1px 0 0 var(--color-border);
+  }
+  .backup-facts dt {
+    color: var(--color-text-muted);
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+  }
+  .backup-facts dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-weight: 500;
+  }
+  .backup-facts__size {
+    color: var(--color-text-muted);
+    font-weight: 400;
+  }
+
+  /* the card's last strip, like the stores' test row: how a backup is restored */
+  .restore-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  .restore-note p {
+    flex: 1 1 24rem;
+    min-width: 0;
+    margin: 0;
+    max-width: 72ch;
+    color: var(--color-text-muted);
+  }
+  .restore-note__icon {
+    flex: none;
+    color: var(--color-text-muted);
+  }
+
+  /* ---------- export and import: two parts of one card ---------- */
+  .transfer {
+    display: grid;
+  }
+  .transfer__part {
+    display: grid;
+    gap: var(--space-4);
+    align-content: start;
+    min-width: 0;
+    padding: var(--space-5);
+  }
+  .transfer__part + .transfer__part {
+    border-top: 1px solid var(--color-border);
+  }
+  .transfer__part > p {
+    margin: 0;
+    max-width: 72ch;
+  }
+  .transfer__title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-weight: 600;
+  }
+  .transfer__title .icon {
+    color: var(--color-text-muted);
+  }
+  .transfer__acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .check-row {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: var(--space-2);
+    min-height: var(--target-min);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+  .check-row input {
+    width: var(--space-4);
+    height: var(--space-4);
+    margin: 0;
+    accent-color: var(--color-btn-primary-bg);
+  }
+  .check-row:has(input:disabled) {
+    cursor: not-allowed;
+  }
+  .chosen-file {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    min-width: 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+  }
+  .chosen-file__icon {
+    flex: none;
+    color: var(--color-text-muted);
+  }
+  .file-name {
+    overflow-wrap: anywhere;
+  }
+
+  /* the Help panel's guide while its code loads */
+  .guide__loading {
+    display: grid;
+    gap: var(--space-3);
+  }
+}

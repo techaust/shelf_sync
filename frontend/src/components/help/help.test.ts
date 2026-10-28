@@ -7,8 +7,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { type DialogElement, dialogBehaviour, type Focusable } from "../dialog";
-import { H, S3PolicyGuideBody } from "./guides";
+import { S3PolicyGuideBody } from "./guides";
 import { BUCKET_PLACEHOLDER, bucketFor, copyText, createHelpStore, firstFocus, GUIDE_IDS, policies } from "./helpModel";
+import { H } from "./helpWording";
 
 type Listener = (event: { preventDefault(): void }) => void;
 function fakeDialog() {
@@ -55,11 +56,12 @@ describe("the Help panel's state", () => {
     expect(heard).toHaveBeenCalledTimes(4);
   });
 
-  it("the three guides, in the mockup's order and words", () => {
+  it("the mockup's three guides in its order and words, then the restore guide (m2.5b)", () => {
     expect(GUIDE_IDS.map((id) => H.guideTitles[id])).toEqual([
       "Make a Shop Manager key",
       "Set up the S3 access policy (IAM)",
       "Make a GitHub token for updates",
+      "Restore the database from a backup",
     ]);
   });
 });

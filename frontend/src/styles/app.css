@@ -13,6 +13,8 @@
 @import "./settings.css";
 /* Settings › Stores, the health popover and the Help panel: M2.5a */
 @import "./stores.css";
+/* Settings › Storage and Settings › Backup: M2.5b */
+@import "./storage-backup.css";
 
 @layer base {
   html {

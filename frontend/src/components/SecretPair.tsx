@@ -1,5 +1,5 @@
 import { CircleAlert, CircleDashed, KeyRound } from "lucide-react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { FieldError } from "./FieldError";
 
 export interface SecretPairText {
@@ -20,6 +20,10 @@ export interface SecretPairText {
  * Credential Manager couldn't be read (`readable` false), "Couldn't be read", never "Not set" then (11, 2026-10-28).
  * "Replace keys" opens two password inputs; they are uncontrolled (what is typed is never in React state or a value
  * attribute) and the card that owns them reads, sends and clears them as one pair.
+ *
+ * A pair that saves on its own (Settings › Storage's two S3 pairs, m2.5b) adds its buttons: `rowActions` beside
+ * "Replace keys" (Remove), `editActions` beside the open inputs (Save); `description` is one line on what the pair
+ * is for, under the legend.
  */
 export function SecretPair({
   id,
@@ -36,6 +40,9 @@ export function SecretPair({
   onOpen,
   onCancel,
   onTyped,
+  description,
+  rowActions,
+  editActions,
 }: {
   id: string;
   text: SecretPairText;
@@ -53,6 +60,9 @@ export function SecretPair({
   onOpen: () => void;
   onCancel: () => void;
   onTyped: () => void;
+  description?: string;
+  rowActions?: ReactNode;
+  editActions?: ReactNode;
 }) {
   const rows: [string, string | null][] = masks
     ? [
@@ -63,7 +73,12 @@ export function SecretPair({
   const input = (which: "first" | "second") => {
     const inputId = `${id}-${which}`;
     const error = errors[which];
-    const described = [error ? `${inputId}-error` : "", errors.pair ? `${id}-error` : "", `${id}-hint`]
+    const described = [
+      error ? `${inputId}-error` : "",
+      errors.pair ? `${id}-error` : "",
+      description ? `${id}-description` : "",
+      `${id}-hint`,
+    ]
       .filter(Boolean)
       .join(" ");
     return (
@@ -93,6 +108,11 @@ export function SecretPair({
   return (
     <fieldset className="field span-2 secret-pair">
       <legend className="field__label">{text.legend}</legend>
+      {description ? (
+        <p className="secret-pair__description" id={`${id}-description`}>
+          {description}
+        </p>
+      ) : null}
       {rows.length ? (
         <div className="secret-pair__row">
           <dl className="secret-pair__masks">
@@ -119,6 +139,7 @@ export function SecretPair({
           </dl>
           {!open ? (
             <button
+              id={`${id}-replace`}
               type="button"
               className="btn is-compact"
               aria-disabled={locked || undefined}
@@ -130,13 +151,23 @@ export function SecretPair({
               {text.replace}
             </button>
           ) : null}
+          {rowActions && !open ? rowActions : null}
         </div>
       ) : null}
       {open ? (
         <div className="secret-pair__edit">
           {input("first")}
           {input("second")}
-          {closable ? (
+          {editActions ? (
+            <div className="secret-pair__acts">
+              {editActions}
+              {closable ? (
+                <button type="button" className="btn is-compact" onClick={onCancel}>
+                  {text.cancel}
+                </button>
+              ) : null}
+            </div>
+          ) : closable ? (
             <button type="button" className="btn is-compact secret-pair__cancel" onClick={onCancel}>
               {text.cancel}
             </button>

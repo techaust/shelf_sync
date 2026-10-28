@@ -107,6 +107,9 @@ export interface ApiClient {
   request(method: HttpMethod, path: string, body?: unknown, signal?: AbortSignal): Promise<Response>;
   get<T>(path: string, signal?: AbortSignal): Promise<T>;
   send<T = void>(method: Exclude<HttpMethod, "GET" | "HEAD">, path: string, body?: unknown): Promise<T>;
+  /** A write whose answer the caller reads as it is: a file, as a Blob, with its headers (the backup export). A
+   *  refusal throws ApiError like `send`; the answer's body is never read here. */
+  sendRaw(method: Exclude<HttpMethod, "GET" | "HEAD">, path: string, body?: unknown): Promise<Response>;
 }
 
 async function errorCode(response: Response): Promise<ErrorCode | null> {
@@ -169,6 +172,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       const response = await checked(method, path, body);
       if (response.status === 204) return undefined as T;
       return (await response.json()) as T;
+    },
+    sendRaw(method: Exclude<HttpMethod, "GET" | "HEAD">, path: string, body?: unknown): Promise<Response> {
+      return checked(method, path, body);
     },
   };
 }
