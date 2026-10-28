@@ -3,8 +3,9 @@
 Behind the guard in `secure/middleware.py` (a session, and Origin plus `X-ShelfSync: 1` for the writes). Request bodies
 refuse unknown fields; a wrong shape is the fixed 422 `invalid_request` that never echoes the request.
 
-    GET    /api/settings/storage   the five settings, and `rw` and `ro`: each `{access_key_id, secret_access_key}` as a
-                                   mask, or null when not stored
+    GET    /api/settings/storage   the five settings, `rw` and `ro` (each `{access_key_id, secret_access_key}` as a
+                                   mask, or null when not stored) and `keys_readable` (false when Credential Manager
+                                   couldn't be read: the nulls then mean "unknown", not "not set")
     PUT    /api/settings/storage   all five (required, unknown fields refused); answers what was saved
     PUT    /api/secrets/s3-rw      `{access_key_id, secret_access_key}`, always a pair; 204; 503 secrets_unavailable
     PUT    /api/secrets/s3-ro      the same, for the read-only pair
@@ -96,6 +97,7 @@ class KeyMasks(BaseModel):
 class StorageResponse(StorageValues):
     rw: KeyMasks
     ro: KeyMasks
+    keys_readable: bool  # false: Credential Manager couldn't be read, so null masks don't mean "not set"
 
 
 class KeyPairRequest(BaseModel):
@@ -143,11 +145,14 @@ class StorageService:
             values = stored_values(connection, _VALIDATORS, _KEYS)
         finally:
             connection.close()
-        return StorageResponse(**values, rw=self._masks("rw"), ro=self._masks("ro"))
-
-    def _masks(self, slot: S3Slot) -> KeyMasks:
-        key_id, secret = self._credentials.masked(slot)
-        return KeyMasks(access_key_id=key_id, secret_access_key=secret)
+        rw_id, rw_secret, rw_readable = self._credentials.masks("rw")
+        ro_id, ro_secret, ro_readable = self._credentials.masks("ro")
+        return StorageResponse(
+            **values,
+            rw=KeyMasks(access_key_id=rw_id, secret_access_key=rw_secret),
+            ro=KeyMasks(access_key_id=ro_id, secret_access_key=ro_secret),
+            keys_readable=rw_readable and ro_readable,
+        )
 
     def save(self, new: StorageValues) -> StorageValues:
         with self._lock:

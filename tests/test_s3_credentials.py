@@ -15,15 +15,18 @@ from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import OWNED_SECRET_NAMES, MemorySecretStore, SecretStoreError
 from shelfsync.secure.credentials import (
+    CONSUMER_KEY,
+    CONSUMER_SECRET,
     S3_KEY_ID,
     S3_SECRET,
     S3Credentials,
+    StoreCredentials,
     is_valid_s3_pair,
     mask_s3_key_id,
     mask_s3_secret,
     s3_entries,
 )
-from shelfsync.secure.redact import MASK, redact
+from shelfsync.secure.redact import MASK, MIN_REGISTERED_LENGTH, clear_secrets, redact
 from shelfsync.tray.instance import FakeInstanceLock
 from tests.storage_support import RO_ID, RO_SECRET, RW_ID, RW_ID_2, RW_SECRET, RW_SECRET_2
 from tests.store_support import FailingSecretStore
@@ -56,13 +59,11 @@ def test_a_key_id_mask_is_the_first_four_dots_and_the_last_four_whatever_the_len
     assert mask_s3_key_id("short") == DOTS  # can't happen for a validated value; never a tail of a short one
 
 
-def test_a_secret_mask_is_dots_and_the_last_four_and_a_short_secret_shows_no_tail() -> None:
-    assert mask_s3_secret(RW_SECRET) == f"{DOTS}{RW_SECRET[-4:]}"
-    assert mask_s3_secret("a" * 31) == DOTS  # below an AWS secret's length: nothing of it shows
-    assert mask_s3_secret("a" * 32) == f"{DOTS}aaaa"
-    assert len(mask_s3_secret("a" * 40) or "") == len(mask_s3_secret("a" * 128) or "")
+def test_a_saved_secret_always_shows_the_same_four_dots_and_nothing_of_itself() -> None:
+    """The owner's decision of 2026-10-28 (D1): no last four, no length threshold."""
+    for secret in (RW_SECRET, "a" * 16, "a" * 31, "a" * 32, "a" * 40, "a/+=" * 32):
+        assert mask_s3_secret(secret) == DOTS
     assert mask_s3_secret(None) is None
-    assert RW_SECRET[:1] not in (mask_s3_secret(RW_SECRET) or "")[:4]  # no leading characters of the secret
 
 
 @given(st.from_regex(r"[A-Za-z0-9]{16,128}", fullmatch=True), st.from_regex(r"[A-Za-z0-9/+=]{16,128}", fullmatch=True))
@@ -70,8 +71,8 @@ def test_a_mask_never_holds_the_value_and_has_a_fixed_width(key_id: str, secret:
     masked_id, masked_secret = mask_s3_key_id(key_id), mask_s3_secret(secret)
     assert masked_id is not None and masked_secret is not None
     assert key_id not in masked_id and secret not in masked_secret
-    assert len(masked_id) == 12 and len(masked_secret) in (4, 8)
-    assert masked_secret.startswith(DOTS) and masked_id[4:8] == DOTS
+    assert len(masked_id) == 12 and masked_secret == DOTS
+    assert masked_id[4:8] == DOTS
 
 
 def test_save_registers_both_values_for_redaction_and_reads_back() -> None:
@@ -294,3 +295,65 @@ def test_a_put_back_that_also_fails_only_warns_and_the_write_error_still_reaches
         credentials.save("rw", RW_ID_2, RW_SECRET_2)
     assert caplog.text.count("couldn't be put back") == 2
     assert RW_ID not in caplog.text and RW_SECRET not in caplog.text and RW_SECRET_2 not in caplog.text
+
+
+# ---- R4: whatever is read to be masked is registered with the redaction; R10: "couldn't be read" is not "not set" ----
+
+
+def test_masks_registers_what_it_reads_whoever_stored_it() -> None:
+    """06 section 3: a value is registered when set or read. These were stored by an earlier run (nothing registered
+    in this process), and showing their masks registers them."""
+    clear_secrets()
+    secrets = _stored_s3_keys()
+    assert redact(RW_ID) != MASK and redact(RW_SECRET) != MASK
+    key_id, secret, readable = S3Credentials(secrets).masks("rw")
+    assert (key_id, secret, readable) == (mask_s3_key_id(RW_ID), DOTS, True)
+    assert redact(RW_ID) == MASK and redact(RW_SECRET) == MASK
+    assert redact(RO_ID) != MASK  # the other slot was not read
+
+
+def test_store_masks_registers_what_it_reads_whoever_stored_it() -> None:
+    from tests.store_support import KEY, SECRET
+
+    clear_secrets()
+    secrets = MemorySecretStore()
+    secrets.set("store-4-key", KEY)
+    secrets.set("store-4-secret", SECRET)
+    assert redact(KEY) != MASK and redact(SECRET) != MASK
+    key, secret, readable = StoreCredentials(secrets).masks(4)
+    assert readable and key is not None and secret is not None
+    assert redact(KEY) == MASK and redact(SECRET) == MASK
+
+
+def test_masks_say_when_credential_manager_could_not_be_read(caplog: pytest.LogCaptureFixture) -> None:
+    secrets = FailingSecretStore()
+    S3Credentials(secrets).save("rw", RW_ID, RW_SECRET)
+    StoreCredentials(secrets).save(1, "ck_" + "a" * 20, "cs_" + "b" * 20)
+    secrets.fail_get = True
+    caplog.set_level(logging.WARNING)
+    assert S3Credentials(secrets).masks("rw") == (None, None, False)
+    assert StoreCredentials(secrets).masks(1) == (None, None, False)
+    assert S3Credentials(secrets).masked("rw") == (None, None)  # the older shape is unchanged
+    secrets.fail_get = False
+    assert S3Credentials(secrets).masks("ro") == (None, None, True)  # nothing stored is readable and not set
+
+
+# ---- R5: the key shapes and the redaction's minimum length  ----
+
+
+def test_every_key_shape_is_at_least_as_long_as_the_shortest_value_the_redaction_registers() -> None:
+    """A value shorter than `MIN_REGISTERED_LENGTH` is never registered, so a shape that allowed one would let a
+    secret into the log. Both S3 shapes and both store shapes must refuse anything shorter."""
+    short = "A" * (MIN_REGISTERED_LENGTH - 1)
+    assert S3_KEY_ID.fullmatch(short) is None and S3_SECRET.fullmatch(short) is None
+    assert S3_KEY_ID.fullmatch(short + "A") and S3_SECRET.fullmatch(short + "A")  # the shortest accepted is registered
+    assert CONSUMER_KEY.fullmatch("ck_" + "a" * 20) and len("ck_" + "a" * 20) >= MIN_REGISTERED_LENGTH
+    assert CONSUMER_SECRET.fullmatch("cs_" + "a" * 20) and len("cs_" + "a" * 20) >= MIN_REGISTERED_LENGTH
+
+
+def test_a_shortest_pair_is_saved_and_fully_redacted() -> None:
+    clear_secrets()
+    key_id, secret = "K" * MIN_REGISTERED_LENGTH, "s/+=" * (MIN_REGISTERED_LENGTH // 4)
+    assert is_valid_s3_pair(key_id, secret) and len(secret) == MIN_REGISTERED_LENGTH
+    S3Credentials(MemorySecretStore()).save("ro", key_id, secret)
+    assert redact(f"id {key_id} secret {secret} end") == f"id {MASK} secret {MASK} end"

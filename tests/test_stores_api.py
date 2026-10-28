@@ -111,6 +111,7 @@ def test_adding_a_store_returns_it_with_masked_keys_and_stores_the_keys_in_crede
         "main_button": "Download",
         "state": "active",
         "keys": {"consumer_key": "ck_••••" + KEY[-4:], "consumer_secret": "cs_••••" + SECRET[-4:]},
+        "keys_readable": True,
         "health": {
             "state": "unknown",
             "reason": None,

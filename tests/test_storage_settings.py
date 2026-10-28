@@ -4,6 +4,8 @@ The S3 Test is not here: it needs boto3 (M2.7). One test pins that no such route
 
 import json
 import sqlite3
+import string
+import threading
 from contextlib import closing
 from typing import Any
 
@@ -16,6 +18,7 @@ from shelfsync.db.migrate import migrate
 from shelfsync.db.settings import (
     DEFAULT_LINK_TEMPLATE,
     DEFAULTS,
+    LOOPBACK_HOSTS,
     check_link_template,
     check_s3_bucket,
     check_s3_endpoint,
@@ -36,6 +39,7 @@ from tests.storage_support import (
     key_body,
     make_storage_rig,
 )
+from tests.store_support import FailingSecretStore
 from tests.support import WRITE_HEADERS
 
 DOTS = "••••"
@@ -103,6 +107,13 @@ def test_an_acceptable_endpoint_is_accepted(value: str) -> None:
         "https://s3.exämple.com",
         "https://" + "a" * 200 + ".example.com",
         "https://",
+        "https://[::1",  # urlsplit's own error, turned into this module's
+        "https://[s3.example.com]",
+        "http://[::1",
+        "https://host.example:",  # a port separator with no port
+        "http://localhost:",
+        "http://127.0.0.1:/",
+        "https://s3.example.com:/",
     ],
 )
 def test_an_unacceptable_endpoint_is_refused(value: str) -> None:
@@ -121,14 +132,59 @@ def test_other_regions_are_refused(value: str) -> None:
         check_s3_region(value)
 
 
-@pytest.mark.parametrize("value", ["", "abc", "my-bucket", "my.bucket.name", "a1b", "0" * 63, "a" + "-" * 61 + "b"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "abc",
+        "my-bucket",
+        "my.bucket.name",
+        "a1b",
+        "0" * 63,
+        "a" + "-" * 61 + "b",
+        "1.2.3",  # three numbers are not an IP address
+        "1.2.3.4.5",
+        "1.2.3.example",
+        "a-xn--b",  # the prefix rules are for the start only
+        "bucket-s3",
+        "s3alias-bucket",
+        "x.example.com",
+    ],
+)
 def test_a_bucket_is_empty_or_a_valid_name(value: str) -> None:
     check_s3_bucket(value)
 
 
 @pytest.mark.parametrize(
     "value",
-    ["a", "ab", "-ab", "ab-", ".ab", "ab.", "My-Bucket", "a_b", "a b", "a..b", "x" * 64, "ab\n", "ab/cd", "bücket"],
+    [
+        "a",
+        "ab",
+        "-ab",
+        "ab-",
+        ".ab",
+        "ab.",
+        "My-Bucket",
+        "a_b",
+        "a b",
+        "a..b",
+        "x" * 64,
+        "ab\n",
+        "ab/cd",
+        "bücket",
+        "192.168.5.4",  # formatted as an IP address (S3's naming rules)
+        "1.2.3.4",
+        "a.-b",
+        "a-.b",
+        "xn--bucket",  # reserved prefixes
+        "sthree-bucket",
+        "amzn-s3-demo-bucket",
+        "bucket-s3alias",  # reserved suffixes
+        "bucket--ol-s3",
+        "bucket.mrap",
+        "bucket--x-s3",
+        "bucket--table-s3",
+    ],
 )
 def test_other_buckets_are_refused(value: str) -> None:
     with pytest.raises(ValueError, match="s3_bucket"):
@@ -157,6 +213,15 @@ def test_a_template_with_key_once_is_accepted(value: str) -> None:
         "a{key}\nb",
         "a{key}\r",
         "x" * 196 + "{key}",
+        # R1: the template is filled with .replace, never str.format, so no other brace may be in it
+        "{key}{other}",
+        "{{key}}",
+        "{key} {",
+        "{key} }",
+        "{0}{key}",
+        "{key.__class__} {key}",
+        "{key}{}",
+        "}{key}",
     ],
 )
 def test_other_templates_are_refused(value: str) -> None:
@@ -188,26 +253,102 @@ def test_the_database_layer_applies_the_same_limits_and_exact_types() -> None:
         assert get_setting(connection, "s3_region") == "ap-south-1"  # a refused value changed nothing
 
 
-@given(st.text(max_size=300))
-def test_the_endpoint_check_only_ever_raises_value_error_and_accepts_only_safe_hosts(text: str) -> None:
+# R3: the candidates are built from parts (scheme, host, port, path), so the accepting branch really runs.
+# Host names are compared in lowercase: the check takes `urlsplit`'s lowercased host.
+
+_DNS_NAMES = st.from_regex(
+    r"[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?){0,3}\.[a-z]{2,6}", fullmatch=True
+)
+_LOOPBACK = st.sampled_from([*LOOPBACK_HOSTS, "LOCALHOST", "Localhost"])
+_ODD_HOSTS = st.sampled_from(
+    ["192.168.1.5", "0.0.0.0", "10.0.0.1", "[::1]", "[::1", "nodot", "user@host.example", "127.0.0.2", "a b.example"]
+)
+_PORTS = st.one_of(st.just(""), st.integers(1, 65535).map(lambda number: f":{number}"))
+_BAD_PORTS = st.one_of(st.just(":"), st.just(":0"), st.integers(65536, 99999).map(lambda number: f":{number}"))
+_PATHS = st.sampled_from(["", "/"])
+
+
+@st.composite
+def good_endpoints(draw: st.DrawFn) -> str:
+    """Valid by the rule: https to a named host, or either scheme to a loopback host; any valid port; no path."""
+    if draw(st.booleans()):
+        return f"https://{draw(_DNS_NAMES)}{draw(_PORTS)}{draw(_PATHS)}"
+    return f"{draw(st.sampled_from(['http', 'https']))}://{draw(_LOOPBACK)}{draw(_PORTS)}{draw(_PATHS)}"
+
+
+@st.composite
+def bad_endpoints(draw: st.DrawFn) -> str:
+    """Each one breaks exactly one rule."""
+    kind = draw(st.integers(0, 5))
+    host, port, path = draw(_DNS_NAMES), draw(_PORTS), draw(_PATHS)
+    if kind == 0:
+        return f"http://{host}{port}{path}"  # http to a named host
+    if kind == 1:
+        return f"{draw(st.sampled_from(['ftp', 'ws', 'file', 'HTTPS']))}://{host}{port}"
+    if kind == 2:
+        return f"https://{draw(_ODD_HOSTS)}{port}{path}"
+    if kind == 3:
+        return f"https://{host}{draw(_BAD_PORTS)}{path}"
+    if kind == 4:
+        return f"https://{host}{port}{draw(st.sampled_from(['/a', '/a/', '?x=1', '#f', '/?x', '//']))}"
+    return f"https://{draw(st.sampled_from(['u', 'u:p']))}@{host}{port}"
+
+
+@given(good_endpoints())
+def test_every_built_good_endpoint_is_accepted(value: str) -> None:
+    check_s3_endpoint(value)
+
+
+@given(bad_endpoints())
+def test_every_built_bad_endpoint_is_refused(value: str) -> None:
+    with pytest.raises(ValueError, match="s3_endpoint"):
+        check_s3_endpoint(value)
+
+
+@given(st.one_of(st.text(max_size=300), good_endpoints(), bad_endpoints(), st.builds(str.upper, good_endpoints())))
+def test_the_endpoint_check_only_ever_raises_value_error_and_whatever_it_accepts_is_safe(text: str) -> None:
     try:
         check_s3_endpoint(text)
     except ValueError:
         return
-    if text:
-        assert text.startswith(("https://", "http://"))
-        assert "@" not in text and "?" not in text and "#" not in text and " " not in text
-        if text.startswith("http://"):
-            assert text.split("/")[2].split(":")[0] in ("127.0.0.1", "localhost")
+    if text == "":
+        return
+    scheme, _, rest = text.partition("://")
+    netloc = rest.split("/")[0]
+    host, _, port = netloc.rpartition(":") if ":" in netloc else (netloc, "", "")
+    assert scheme in ("https", "http")  # the scheme itself is written in lowercase
+    assert "@" not in text and "?" not in text and "#" not in text and " " not in text
+    assert not netloc.endswith(":") and (port == "" or 1 <= int(port) <= 65535)
+    assert rest[len(netloc) :] in ("", "/")
+    if scheme == "http":
+        assert host.lower() in LOOPBACK_HOSTS
 
 
-@given(st.text(max_size=300))
-def test_the_template_check_only_accepts_one_key_on_one_line(text: str) -> None:
+_TEMPLATE_CHARS = st.text(
+    alphabet=st.sampled_from([*string.ascii_letters, *string.digits, *" !\"#$%&'()*+,-./:;<=>?@[]^_`|~é"]), max_size=90
+)
+
+
+@given(_TEMPLATE_CHARS, _TEMPLATE_CHARS)
+def test_a_template_with_one_key_and_no_other_brace_is_accepted(before: str, after: str) -> None:
+    check_link_template(f"{before}{{key}}{after}")
+
+
+@given(_TEMPLATE_CHARS, _TEMPLATE_CHARS, st.sampled_from(["{", "}", "{key}", "{0}", "{}", "{key.x}", "{{", "}}"]))
+def test_a_template_with_one_more_brace_or_key_is_refused(before: str, after: str, extra: str) -> None:
+    with pytest.raises(ValueError, match="download_link_template"):
+        check_link_template(f"{before}{{key}}{extra}{after}")
+
+
+@given(st.one_of(st.text(max_size=300), _TEMPLATE_CHARS.map(lambda text: f"{text}{{key}}")))
+def test_the_template_check_only_accepts_one_key_on_one_line_and_no_other_brace(text: str) -> None:
     try:
         check_link_template(text)
     except ValueError:
         return
-    assert text.count("{key}") == 1 and "\n" not in text and "\r" not in text and len(text) <= 200
+    assert text.count("{key}") == 1 and len(text) <= 200
+    assert "{" not in text.replace("{key}", "") and "}" not in text.replace("{key}", "")
+    assert "\n" not in text and "\r" not in text
 
 
 # ---- GET and PUT /api/settings/storage -------------------------------------------------------------------------------
@@ -224,6 +365,7 @@ def test_get_with_nothing_saved_gives_the_defaults_and_no_keys(rig: StorageRig) 
         "download_link_template": '[amazon_s3 object="{key}"]',
         "rw": {"access_key_id": None, "secret_access_key": None},
         "ro": {"access_key_id": None, "secret_access_key": None},
+        "keys_readable": True,
     }
 
 
@@ -348,12 +490,13 @@ def test_a_pair_is_stored_in_credential_manager_and_shown_masked_only(rig: Stora
     body = response.json()
     assert body["rw"] == {
         "access_key_id": f"{RW_ID[:4]}{DOTS}{RW_ID[-4:]}",
-        "secret_access_key": f"{DOTS}{RW_SECRET[-4:]}",
+        "secret_access_key": DOTS,
     }
     assert body["ro"] == {
         "access_key_id": f"{RO_ID[:4]}{DOTS}{RO_ID[-4:]}",
-        "secret_access_key": f"{DOTS}{RO_SECRET[-4:]}",
+        "secret_access_key": DOTS,
     }
+    assert body["keys_readable"] is True
 
 
 def test_no_response_ever_holds_a_raw_key_id_or_secret(rig: StorageRig) -> None:
@@ -453,7 +596,9 @@ def test_an_unreadable_credential_manager_is_503_on_a_write_and_not_set_on_a_rea
     assert rig.client.delete(S3_RW_PATH, headers=WRITE_HEADERS).status_code == 503
     body = rig.client.get(STORAGE_SETTINGS_PATH)
     assert body.status_code == 200 and body.json()["rw"] == {"access_key_id": None, "secret_access_key": None}
+    assert body.json()["keys_readable"] is False  # R10: "couldn't be read" is not "not set"
     rig.secrets.fail_get = False
+    assert rig.client.get(STORAGE_SETTINGS_PATH).json()["keys_readable"] is True
     assert rig.secrets.get("s3-rw-key-id") == RW_ID  # nothing changed
 
 
@@ -532,3 +677,98 @@ def test_the_default_app_has_an_in_memory_storage_service() -> None:
     assert client.put(S3_RW_PATH, json=key_body(), headers=WRITE_HEADERS).status_code == 204
     assert client.get(STORAGE_SETTINGS_PATH).json()["rw"]["access_key_id"] is not None
     assert isinstance(StorageService.development(), StorageService)
+
+
+# ---- R6: the lock. Two saves of the same pair never interleave  ----
+
+
+class BlockingSecretStore(FailingSecretStore):
+    """The first `set` tells the test it has started and then waits for the test to let it go. Every later one is
+    plain. It records the order of the writes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.written: list[tuple[str, str]] = []
+
+    def set(self, name: str, value: str) -> None:
+        self.written.append((name, value))
+        if len(self.written) == 1:
+            self.entered.set()
+            assert self.release.wait(10), "the test never let the first write go"
+        super().set(name, value)
+
+
+def test_a_second_save_of_a_pair_waits_for_the_first_and_the_stored_pair_is_one_whole_pair() -> None:
+    secrets = BlockingSecretStore()
+    service = StorageService.development(secrets)
+    errors: list[BaseException] = []
+
+    def save(key_id: str, secret: str) -> None:
+        try:
+            service.set_keys("rw", key_id, secret)
+        except BaseException as error:  # reported to the test thread below
+            errors.append(error)
+
+    first = threading.Thread(target=save, args=(RW_ID, RW_SECRET))
+    second = threading.Thread(target=save, args=(RW_ID_2, RW_SECRET_2))
+    first.start()
+    assert secrets.entered.wait(10)  # the first save is inside its first write
+    second.start()
+    second.join(0.5)  # the second can only be waiting: the first still holds the lock
+    assert second.is_alive()
+    assert secrets.written == [("s3-rw-key-id", RW_ID)]  # the second hasn't written anything
+    secrets.release.set()
+    first.join(10)
+    second.join(10)
+    assert not first.is_alive() and not second.is_alive() and errors == []
+    assert secrets.written == [
+        ("s3-rw-key-id", RW_ID),
+        ("s3-rw-secret", RW_SECRET),
+        ("s3-rw-key-id", RW_ID_2),
+        ("s3-rw-secret", RW_SECRET_2),
+    ]  # one whole save, then the other
+    assert (secrets.get("s3-rw-key-id"), secrets.get("s3-rw-secret")) == (RW_ID_2, RW_SECRET_2)
+
+
+def test_a_delete_also_waits_for_a_save_in_progress() -> None:
+    secrets = BlockingSecretStore()
+    service = StorageService.development(secrets)
+    saver = threading.Thread(target=service.set_keys, args=("ro", RO_ID, RO_SECRET))
+    saver.start()
+    assert secrets.entered.wait(10)
+    deleter = threading.Thread(target=service.delete_keys, args=("ro",))
+    deleter.start()
+    deleter.join(0.5)
+    assert deleter.is_alive()  # waiting, not deleting half a pair
+    secrets.release.set()
+    saver.join(10)
+    deleter.join(10)
+    assert not saver.is_alive() and not deleter.is_alive()
+    assert (secrets.get("s3-ro-key-id"), secrets.get("s3-ro-secret")) == (
+        None,
+        None,
+    )  # the save finished, then the delete
+
+
+# ---- R10 / R11 at the API  ----
+
+
+def test_a_saved_secret_shows_four_dots_whatever_its_length_and_the_key_id_its_ends(rig: StorageRig) -> None:
+    for secret in ("a" * 16, "a/+=" * 8, RW_SECRET, "Z" * 128):
+        assert rig.client.put(S3_RW_PATH, json=key_body(RW_ID, secret), headers=WRITE_HEADERS).status_code == 204
+        masks = rig.client.get(STORAGE_SETTINGS_PATH).json()["rw"]
+        assert masks["secret_access_key"] == DOTS
+        assert masks["access_key_id"] == f"{RW_ID[:4]}{DOTS}{RW_ID[-4:]}"
+
+
+def test_a_secret_stored_by_an_earlier_run_is_masked_and_registered_when_shown(rig: StorageRig) -> None:
+    """R4 at the API: nothing registered it in this process, and showing its mask does."""
+    from shelfsync.secure.redact import MASK, redact
+
+    rig.secrets.set("s3-ro-key-id", RO_ID)
+    rig.secrets.set("s3-ro-secret", RO_SECRET)
+    assert redact(RO_SECRET) != MASK
+    assert rig.client.get(STORAGE_SETTINGS_PATH).json()["ro"]["secret_access_key"] == DOTS
+    assert redact(RO_SECRET) == MASK and redact(RO_ID) == MASK

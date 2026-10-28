@@ -604,6 +604,8 @@ export interface components {
             download_link_template: string;
             /** Keep Previous Files */
             keep_previous_files: number;
+            /** Keys Readable */
+            keys_readable: boolean;
             ro: components["schemas"]["KeyMasks"];
             rw: components["schemas"]["KeyMasks"];
             /** S3 Bucket */
@@ -642,6 +644,8 @@ export interface components {
             /** Id */
             id: number;
             keys: components["schemas"]["KeysModel"];
+            /** Keys Readable */
+            keys_readable: boolean;
             /** Main Button */
             main_button: string;
             /** Name */

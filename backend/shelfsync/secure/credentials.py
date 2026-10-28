@@ -5,8 +5,14 @@ The S3 keys are further down (`S3Credentials`): four entries, `s3-rw-key-id`, `s
 
 Each store has two entries under ShelfSync's service, `store-<id>-key` and `store-<id>-secret` (the id is the store
 row's, never reused). Keys always travel as a pair. Every value is registered with the log redaction when it is stored
-and when it is read at start-up, so it is masked wherever it might end up. Masks show the two-letter prefix, four dots
-and the last four characters, and never the length. No message here holds a value.
+and when it is read (at start-up, for use, or to be masked for a screen), so it is masked wherever it might end up.
+
+Three kinds of mask, none of which shows the length of the value:
+- a store's consumer key and secret: the prefix (`ck_` or `cs_`), four dots and the last four characters;
+- an S3 key ID: the first four characters, four dots and the last four (an identifier; the AWS console lists it whole);
+- an S3 secret: four dots and nothing else (the owner's decision of 2026-10-28; it has no fixed prefix to show).
+
+No message here holds a value.
 """
 
 import logging
@@ -79,14 +85,24 @@ class StoreCredentials:
         register_secret(secret)
         return KeyPair(key, secret)
 
-    def masked(self, store_id: int) -> tuple[str | None, str | None]:
-        """What a screen may show: the two masks. A read failure shows both as not set."""
+    def masks(self, store_id: int) -> tuple[str | None, str | None, bool]:
+        """What a screen may show: the two masks, and whether Credential Manager could be read. A read failure gives
+        two `None` and `False`, so a screen can tell "couldn't be read" from "not set". Whatever is read is registered
+        with the log redaction before it is masked, whoever stored it (06 section 3: set or read)."""
         try:
             key, secret = self.read(store_id)
         except SecretStoreError as error:
             _log.warning("The keys of a store couldn't be read (%s)", type(error).__name__)
-            return None, None
-        return mask(key), mask(secret)
+            return None, None, False
+        for value in (key, secret):
+            if value is not None:
+                register_secret(value)
+        return mask(key), mask(secret), True
+
+    def masked(self, store_id: int) -> tuple[str | None, str | None]:
+        """The two masks; a read failure shows both as not set (`masks` also says whether it could be read)."""
+        key, secret, _readable = self.masks(store_id)
+        return key, secret
 
     def save(self, store_id: int, consumer_key: str, consumer_secret: str) -> None:
         """Write the pair. If the second write fails, the first is put back (or removed if there was none), then
@@ -159,7 +175,6 @@ S3_SECRET = re.compile(r"[A-Za-z0-9/+=]{16,128}")  # loose: the endpoint may be 
 S3Slot = Literal["rw", "ro"]  # read and write (daily use), read-only (calibration, the Test's read step)
 S3_SLOTS: tuple[S3Slot, S3Slot] = ("rw", "ro")
 S3_KEY_ID_SHOWS = 4  # a key ID is an identifier, not a secret (the AWS console lists it whole): first and last four
-S3_SECRET_SHOWS_TAIL_FROM = 32  # an AWS secret has 40 characters; a shorter one (S3-compatible) shows no tail at all
 
 
 def s3_entries(slot: S3Slot) -> tuple[str, str]:
@@ -181,13 +196,8 @@ def mask_s3_key_id(value: str | None) -> str | None:
 
 
 def mask_s3_secret(value: str | None) -> str | None:
-    """Four dots and the last four characters: a secret has no fixed prefix to show, and its first characters are as
-    random as the rest. A value too short to hide most of itself shows the dots alone."""
-    if value is None:
-        return None
-    if len(value) < S3_SECRET_SHOWS_TAIL_FROM:
-        return _DOTS
-    return f"{_DOTS}{value[-4:]}"
+    """Four dots, always: a saved secret shows nothing of itself (owner's decision, 2026-10-28)."""
+    return None if value is None else _DOTS
 
 
 @dataclass(frozen=True)
@@ -209,14 +219,24 @@ class S3Credentials:
         id_name, secret_name = s3_entries(slot)
         return self._secrets.get(id_name), self._secrets.get(secret_name)
 
-    def masked(self, slot: S3Slot) -> tuple[str | None, str | None]:
-        """What a screen may show. A read failure shows both as not set."""
+    def masks(self, slot: S3Slot) -> tuple[str | None, str | None, bool]:
+        """What a screen may show: the two masks, and whether Credential Manager could be read (a read failure gives two
+        `None` and `False`, so "couldn't be read" is not mistaken for "not set"). Whatever is read is registered with
+        the log redaction before it is masked, whoever stored it (06 section 3: set or read)."""
         try:
             key_id, secret = self.read(slot)
         except SecretStoreError as error:
             _log.warning("The S3 keys couldn't be read (%s)", type(error).__name__)
-            return None, None
-        return mask_s3_key_id(key_id), mask_s3_secret(secret)
+            return None, None, False
+        for value in (key_id, secret):
+            if value is not None:
+                register_secret(value)
+        return mask_s3_key_id(key_id), mask_s3_secret(secret), True
+
+    def masked(self, slot: S3Slot) -> tuple[str | None, str | None]:
+        """The two masks; a read failure shows both as not set (`masks` also says whether it could be read)."""
+        key_id, secret, _readable = self.masks(slot)
+        return key_id, secret
 
     def pair(self, slot: S3Slot) -> S3Pair | None:
         """Both values for use, or None when either is missing or the store can't be read."""
