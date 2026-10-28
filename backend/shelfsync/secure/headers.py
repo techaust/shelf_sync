@@ -44,6 +44,13 @@ ErrorCode = Literal[
     "keys_missing",
     "keys_required",
     "secrets_unavailable",
+    # Backup export and import (M2.4): 422 `export_invalid`, `passphrase_required`, `wrong_passphrase`; 409
+    # `export_too_new`, `import_needs_empty` (and `busy`, above); 503 `secrets_unavailable`
+    "export_invalid",
+    "passphrase_required",
+    "wrong_passphrase",
+    "export_too_new",
+    "import_needs_empty",
 ]
 
 CONTENT_SECURITY_POLICY = (

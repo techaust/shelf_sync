@@ -135,6 +135,12 @@ class StorageService:
         weakref.finalize(service, keeper.close)
         return service
 
+    @property
+    def lock(self) -> threading.Lock:
+        """The one lock every storage write holds (settings saves and key writes). The backup import (`api/backup.py`)
+        takes it too, so it can't interleave with a key write."""
+        return self._lock
+
     def register_secrets(self) -> None:
         """Start-up: every stored key goes into the log redaction. A failure only warns."""
         self._credentials.register_all()

@@ -15,6 +15,14 @@ from starlette.types import Scope
 
 from shelfsync import __version__
 from shelfsync.api.app_settings import AppSettingsService, make_app_settings_router
+from shelfsync.api.backup import (
+    BACKUP_EXPORT_PATH,
+    BACKUP_IMPORT_PATH,
+    EXPORT_BODY_MAX,
+    IMPORT_BODY_MAX,
+    ExportService,
+    make_backup_router,
+)
 from shelfsync.api.backup_settings import BackupSettingsService, make_backup_settings_router
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
@@ -23,6 +31,7 @@ from shelfsync.api.storage import StorageService, make_storage_router
 from shelfsync.api.stores import make_stores_router
 from shelfsync.api.updates import make_updates_router
 from shelfsync.paths import source_ui_dir
+from shelfsync.secure.body_limit import BodyLimit, BodyLimitMiddleware
 from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
 from shelfsync.secure.middleware import HEALTH_PATH, GuardMiddleware
 from shelfsync.secure.sessions import SessionStore
@@ -102,6 +111,7 @@ def create_app(
     stores: StoreService | None = None,
     backups: BackupSettingsService | None = None,
     storage: StorageService | None = None,
+    exports: ExportService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -116,7 +126,8 @@ def create_app(
     by accident. `backups` is the Settings > Backup service and the daily backup scheduler (M2.2); the default keeps
     the settings in memory and runs no schedule. The app starts the scheduler with the server and stops it with it.
     `storage` is the Settings > Storage service (M2.3): the S3 settings and key pairs; the default runs on an in-memory
-    database and secret store.
+    database and secret store. `exports` is the backup export and import service (M2.4); the default runs on an
+    in-memory database and secret store.
     """
     service = updates if updates is not None else UpdateService.development()
     backup_service = backups if backups is not None else BackupSettingsService.development()
@@ -167,6 +178,7 @@ def create_app(
     app.include_router(make_stores_router(stores if stores is not None else StoreService.in_memory()))
     app.include_router(make_backup_settings_router(backup_service))
     app.include_router(make_storage_router(storage if storage is not None else StorageService.development()))
+    app.include_router(make_backup_router(exports if exports is not None else ExportService.development()))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed
@@ -174,6 +186,15 @@ def create_app(
     if ui_dir is not None:
         _mount_ui(app, ui_dir)
 
+    # The two backup routes carry a body of a known size at most (SET-05): the one thing in the app that limits a body.
+    # Innermost, so the guard refuses a request without a session before any of this runs.
+    app.add_middleware(
+        BodyLimitMiddleware,
+        limits={
+            ("POST", BACKUP_IMPORT_PATH): BodyLimit(IMPORT_BODY_MAX, 422, "export_invalid"),
+            ("POST", BACKUP_EXPORT_PATH): BodyLimit(EXPORT_BODY_MAX, 422, "invalid_request"),
+        },
+    )
     # The last middleware added is the outermost: the headers wrap the guard, so a refusal carries them too.
     app.add_middleware(GuardMiddleware, port=port, sessions=sessions)
     app.add_middleware(SecurityHeadersMiddleware)
