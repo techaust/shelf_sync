@@ -110,6 +110,8 @@ def test_settings_default_in_code_and_store_json(connection: sqlite3.Connection)
         "start_with_windows": True,
         "notifications": True,
         "log_retention_days": 30,
+        "db_backups_kept": 7,
+        "snapshot_retention_days": 30,
     }
     assert connection.execute("SELECT COUNT(*) FROM setting").fetchone()[0] == 0  # defaults are not rows
     set_setting(connection, "theme", "dark")
@@ -130,7 +132,25 @@ def test_settings_refuse_unknown_keys_and_wrong_types(connection: sqlite3.Connec
         set_setting(connection, "port", "47615")
     with pytest.raises(TypeError):
         set_setting(connection, "port", True)  # a bool is not a port
-    assert set(DEFAULTS) == {"port", "theme", "start_with_windows", "notifications", "log_retention_days"}
+    assert set(DEFAULTS) == {
+        "port",
+        "theme",
+        "start_with_windows",
+        "notifications",
+        "log_retention_days",
+        "db_backups_kept",
+        "snapshot_retention_days",
+    }
+    with pytest.raises(ValueError):
+        set_setting(connection, "port", 47700)  # every existing rule still holds beside the new ones
+    with pytest.raises(ValueError):
+        set_setting(connection, "db_backups_kept", 0)
+    with pytest.raises(ValueError):
+        set_setting(connection, "db_backups_kept", 31)
+    with pytest.raises(ValueError):
+        set_setting(connection, "snapshot_retention_days", 366)
+    with pytest.raises(TypeError):
+        set_setting(connection, "snapshot_retention_days", True)
 
 
 def test_two_statements_on_one_line_are_split(connection: sqlite3.Connection, tmp_path: Path) -> None:

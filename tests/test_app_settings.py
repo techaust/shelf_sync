@@ -18,6 +18,9 @@ from shelfsync.platform.autostart import AutostartError, FakeRunKey
 from shelfsync.ports import DEFAULT_PORT
 from tests.support import ORIGIN, WRITE_HEADERS, Harness, make_harness
 
+APP_KEYS = tuple(AppSettingsValues.model_fields)  # the five App settings (the backup settings have their own API)
+APP_DEFAULTS: dict[str, Any] = {key: DEFAULTS[key] for key in APP_KEYS}
+
 GOOD: dict[str, Any] = {
     "port": 47616,
     "theme": "dark",
@@ -50,7 +53,7 @@ class Rig:
     def stored(self) -> dict[str, Any]:
         connection = connect(self.database)
         try:
-            return get_all_settings(connection)
+            return {key: value for key, value in get_all_settings(connection).items() if key in APP_KEYS}
         finally:
             connection.close()
 
@@ -70,7 +73,7 @@ def test_get_gives_the_defaults_and_whether_this_is_the_installed_copy(rig: Rig)
     """SET-06."""
     response = rig.client.get(APP_SETTINGS_PATH)
     assert response.status_code == 200
-    assert response.json() == {**DEFAULTS, "installed": True}
+    assert response.json() == {**APP_DEFAULTS, "installed": True}
 
 
 def test_put_saves_all_five_and_says_what_it_did(rig: Rig) -> None:
@@ -169,7 +172,7 @@ def test_every_field_refuses_what_is_outside_its_limits(rig: Rig, field: str, va
     response = put(rig, {**GOOD, field: value})
     assert response.status_code == 422
     assert response.json() == {"error": "invalid_request"}
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 @pytest.mark.parametrize(
@@ -193,14 +196,14 @@ def test_every_field_is_required(rig: Rig, missing: str) -> None:
     """SET-06."""
     body = {key: value for key, value in GOOD.items() if key != missing}
     assert put(rig, body).status_code == 422
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 def test_unknown_fields_are_refused_installed_included(rig: Rig) -> None:
     """SET-06: `installed` is read-only."""
     assert put(rig, {**GOOD, "extra": 1}).status_code == 422
     assert put(rig, {**GOOD, "installed": True}).status_code == 422
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 @pytest.mark.parametrize("body", [[], "text", 5, None])
@@ -225,7 +228,7 @@ def test_a_save_is_all_or_nothing(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(module, "set_setting", flaky)
     client = rig.harness.signed_in_client(raise_server_exceptions=False)
     assert client.put(APP_SETTINGS_PATH, json=GOOD, headers=WRITE_HEADERS).status_code == 500
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 # ---- the guard ----------------------------------------------------------------------------------------------------
@@ -236,7 +239,7 @@ def test_without_a_session_both_routes_are_401(rig: Rig) -> None:
     client = rig.harness.client()
     assert client.get(APP_SETTINGS_PATH).status_code == 401
     assert client.put(APP_SETTINGS_PATH, json=GOOD, headers=WRITE_HEADERS).status_code == 401
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 @pytest.mark.parametrize(
@@ -252,7 +255,7 @@ def test_without_a_session_both_routes_are_401(rig: Rig) -> None:
 def test_a_put_needs_the_origin_and_the_csrf_header(rig: Rig, headers: dict[str, str]) -> None:
     """SYS-03: a signed-in PUT without both is 403 and saves nothing."""
     assert put(rig, GOOD, headers).status_code == 403
-    assert rig.stored() == dict(DEFAULTS)
+    assert rig.stored() == APP_DEFAULTS
 
 
 def test_a_wrong_host_is_refused(rig: Rig) -> None:

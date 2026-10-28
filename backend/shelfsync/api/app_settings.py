@@ -63,23 +63,35 @@ class AppSettingsSaved(AppSettingsValues):
     start_with_windows_result: StartWithWindowsResult  # "not_installed": a development copy never writes the Run key
 
 
-_VALIDATORS: dict[str, TypeAdapter[Any]] = {
-    key: TypeAdapter(Annotated[field.annotation, field])  # type: ignore[arg-type]
-    for key, field in AppSettingsValues.model_fields.items()
-}
+def validators_for(model: type[BaseModel]) -> dict[str, TypeAdapter[Any]]:
+    """One validator per field of a settings model (its strict type and limits), for reading what is stored."""
+    return {
+        key: TypeAdapter(Annotated[field.annotation, field])  # type: ignore[arg-type]
+        for key, field in model.model_fields.items()
+    }
 
 
-def stored_app_settings(connection: sqlite3.Connection) -> dict[str, Any]:
-    """The five stored App settings. One that is out of range or of the wrong type (a hand-edited database) is the
-    default, with a warning naming the key only, so a read never fails. Start-up reads them through this too."""
+_VALIDATORS = validators_for(AppSettingsValues)
+
+
+def stored_values(
+    connection: sqlite3.Connection, validators: dict[str, TypeAdapter[Any]], keys: tuple[str, ...]
+) -> dict[str, Any]:
+    """The stored values of `keys`. One that is out of range or of the wrong type (a hand-edited database) is the
+    default, with a warning naming the key only, so a read never fails."""
     values: dict[str, Any] = {}
-    for key in _KEYS:
+    for key in keys:
         try:
-            values[key] = _VALIDATORS[key].validate_python(get_setting(connection, key))
+            values[key] = validators[key].validate_python(get_setting(connection, key))
         except ValueError:  # includes JSON errors and pydantic's validation errors
             _log.warning("The stored setting '%s' isn't valid; the default is used", key)
             values[key] = DEFAULTS[key]
     return values
+
+
+def stored_app_settings(connection: sqlite3.Connection) -> dict[str, Any]:
+    """The five stored App settings, each valid or its default. Start-up reads them through this too."""
+    return stored_values(connection, _VALIDATORS, _KEYS)
 
 
 class AppSettingsService:

@@ -90,7 +90,7 @@ def test_a_snapshot_of_a_database_that_cannot_be_opened_or_copied_is_a_backup_fa
     def fails(source: sqlite3.Connection, destination: Path, schema: int) -> None:
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(backup_module, "_write_checked_copy", fails)
+    monkeypatch.setattr(backup_module, "write_checked_copy", fails)
     with pytest.raises(BackupError):
         take_snapshot(paths, "0.0.2")
     assert list(paths.backups.glob("pre-rollback-*")) == []
