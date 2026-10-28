@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Outlet, useLocation } from "react-router";
 import { fetchShellStatus, SHELL_STATUS_PLACEHOLDER, SHELL_STATUS_QUERY_KEY } from "../api/placeholder";
-import { storeTests } from "../screens/settings/storeTests";
+import { storeTests } from "../lib/storeTests";
 import { useSwitchPhase } from "../screens/settings/switchStore";
 import { RestartScreen, shellTakesOver } from "../screens/settings/UpdatesView";
 import { useRunStoreTest, useStoresQuery } from "../screens/settings/useStores";

@@ -7,9 +7,9 @@
 // - "mockup": the approved P3.4 mockup (docs/05-design-system-appendix/mockup/js/screens-b.js, storesPage());
 // - "proposed (m2.5a)": new in this task, listed in docs/runs/m2.5a-stores-screens.md section 3 for the lead.
 
-import type { ErrorCode } from "../../api/client";
-import type { StoreShape } from "../../api/stores";
-import type { StoreColor } from "../../styles/storePalette";
+import type { ErrorCode } from "../api/client";
+import type { StoreShape } from "../api/stores";
+import type { StoreColor } from "../styles/storePalette";
 
 /** 13 test: the reason codes of a failed (or warned) Test connection. `<status>`, `<host>` and `<version>` are filled
  *  in from the answer; a value the answer doesn't have is left out (proposed (m2.5a): the three "without" forms). */

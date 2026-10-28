@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, ApiUnreachableError, type ErrorCode } from "../../api/client";
 import type { Store, StoreTest } from "../../api/stores";
+import { healthKind, outcomeLine, testError } from "../../lib/storeHealth";
+import { S } from "../../lib/storesWording";
 import {
   authorityOf,
   changedFields,
@@ -12,16 +14,12 @@ import {
   checkKeys,
   codeInput,
   formFrom,
-  healthKind,
   hostChanged,
   msFromSeconds,
   newForm,
-  outcomeLine,
   placeError,
   secondsFromMs,
-  testError,
 } from "./storesModel";
-import { S } from "./storesWording";
 
 const SAMPLE_STORE: Store = {
   id: 1,

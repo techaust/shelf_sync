@@ -6,6 +6,8 @@ import { createStore, deleteStore, putStoreKeys, STORES_QUERY_KEY, type Store, u
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { helpStore } from "../../components/help/helpModel";
+import { S } from "../../lib/storesWording";
+import { storeTests, useStoreTest } from "../../lib/storeTests";
 import {
   AddStoreButton,
   AddStoreView,
@@ -29,8 +31,6 @@ import {
   type StoreErrors,
   type StoreForm,
 } from "./storesModel";
-import { S } from "./storesWording";
-import { storeTests, useStoreTest } from "./storeTests";
 import { useRunStoreTest, useStoresQuery } from "./useStores";
 
 const openKeyGuide = () => helpStore.open("shop-manager-key");

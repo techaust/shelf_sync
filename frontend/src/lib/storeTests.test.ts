@@ -1,8 +1,8 @@
 // SET-01, ERR-01: the tab's store of running tests. A second Test connection while one runs does nothing (the card
 // and the popover share it), an answer or a refusal is kept for the screens, and the list is read again afterwards.
 import { describe, expect, it, vi } from "vitest";
-import { ApiError } from "../../api/client";
-import type { StoreTest } from "../../api/stores";
+import { ApiError } from "../api/client";
+import type { StoreTest } from "../api/stores";
 import { S } from "./storesWording";
 import { createStoreTests } from "./storeTests";
 

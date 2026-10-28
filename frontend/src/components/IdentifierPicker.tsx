@@ -1,6 +1,6 @@
 import { Check, Pencil } from "lucide-react";
 import { STORE_SHAPES, type StoreShape } from "../api/stores";
-import { S } from "../screens/settings/storesWording";
+import { S } from "../lib/storesWording";
 import { STORE_PALETTE, type StoreColor } from "../styles/storePalette";
 import { FieldError } from "./FieldError";
 import { StoreBadge, StoreDot } from "./StoreBadge";

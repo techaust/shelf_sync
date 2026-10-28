@@ -10,10 +10,10 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { type DialogElement, dialogBehaviour, type Focusable } from "../../components/dialog";
 import { HealthArea } from "../../components/HealthArea";
 import { TipProvider } from "../../components/Tip";
+import { S } from "../../lib/storesWording";
+import type { TestEntry } from "../../lib/storeTests";
 import { AddStoreView, type PairState, StoreCardView, StoresEmpty, StoresFailed, StoresLoading } from "./StoresView";
 import { formFrom, newForm } from "./storesModel";
-import { S } from "./storesWording";
-import type { TestEntry } from "./storeTests";
 
 const decode = (html: string) =>
   html.replaceAll("&#x27;", "'").replaceAll("&quot;", '"').replaceAll("&amp;", "&").replaceAll("&gt;", ">");

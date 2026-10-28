@@ -1,18 +1,14 @@
 import {
   BookOpen,
-  CircleAlert,
   CircleCheck,
-  CircleDashed,
   LoaderCircle,
   Pause,
   Play,
-  Plug,
   Plus,
   RefreshCw,
   Save,
   Store as StoreIcon,
   Trash2,
-  TriangleAlert,
 } from "lucide-react";
 import type { FormEvent, ReactNode, RefObject } from "react";
 import { identifierOf, type Store } from "../../api/stores";
@@ -21,25 +17,12 @@ import { FieldError } from "../../components/FieldError";
 import { IdentifierPicker, type IdentifierValue } from "../../components/IdentifierPicker";
 import { SecretPair, type SecretPairText } from "../../components/SecretPair";
 import { StoreBadge } from "../../components/StoreBadge";
-import { formatDateTime, parseUtc } from "../../lib/time";
-import {
-  healthKind,
-  healthLine,
-  KEY_MAX_LENGTH,
-  outcomeLine,
-  type ResultLine,
-  type StoreErrors,
-  type StoreForm,
-} from "./storesModel";
-import { S } from "./storesWording";
-import type { TestEntry } from "./storeTests";
-
-/** A stored UTC time as Windows local time with the zone's name, or null. */
-export type WhenFormat = (iso: string | null | undefined) => string | null;
-export const localWhen: WhenFormat = (iso) => {
-  const at = parseUtc(iso);
-  return at ? formatDateTime(at) : null;
-};
+import { TestButton, TestResult } from "../../components/StoreTest";
+import { healthKind, healthLine, outcomeLine, type ResultLine } from "../../lib/storeHealth";
+import { S } from "../../lib/storesWording";
+import type { TestEntry } from "../../lib/storeTests";
+import { localWhen, type WhenFormat } from "../../lib/time";
+import { KEY_MAX_LENGTH, type StoreErrors, type StoreForm } from "./storesModel";
 
 export const PAIR_TEXT: SecretPairText = {
   legend: S.keysLegend,
@@ -318,69 +301,12 @@ function SaveButton({
 
 // ---------- Test connection ----------
 
-const LINE_ICON: Record<ResultLine["tone"], typeof CircleCheck> = {
-  success: CircleCheck,
-  warning: CircleAlert,
-  danger: TriangleAlert,
-  neutral: CircleDashed,
-};
-
 /** What the test row says: a running test, a refused one, this tab's last answer, or the saved health. */
 export function testLineOf(store: Store, entry: TestEntry, when: WhenFormat): { line: ResultLine; at: string | null } {
   if (entry.error)
     return { line: { tone: entry.error.tone === "info" ? "neutral" : "danger", text: entry.error.text }, at: null };
   if (entry.result) return { line: outcomeLine(entry.result), at: when(entry.result.tested_at) };
   return { line: healthLine(store.health), at: when(store.health.tested_at) };
-}
-
-export function TestResult({ line, at, running }: { line: ResultLine; at: string | null; running: boolean }) {
-  if (running) {
-    return (
-      <p className="test-result is-running">
-        <LoaderCircle className="icon is-spinning" aria-hidden="true" />
-        <span>{S.testing}</span>
-      </p>
-    );
-  }
-  const Icon = LINE_ICON[line.tone];
-  return (
-    <p className={`test-result is-${line.tone}`}>
-      <Icon className="icon" aria-hidden="true" />
-      <span>
-        <span className="num">{line.text}</span>
-        {at ? <span className="test-result__when num">{S.testedAt(at)}</span> : null}
-      </span>
-    </p>
-  );
-}
-
-export function TestButton({
-  running,
-  onTest,
-  compact = false,
-}: {
-  running: boolean;
-  onTest: () => void;
-  compact?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      className={`btn${compact ? " is-compact" : ""}`}
-      aria-disabled={running || undefined}
-      aria-busy={running || undefined}
-      onClick={() => {
-        if (!running) onTest();
-      }}
-    >
-      {running ? (
-        <LoaderCircle className="icon is-spinning" aria-hidden="true" />
-      ) : (
-        <Plug className="icon" aria-hidden="true" />
-      )}
-      {S.test}
-    </button>
-  );
 }
 
 function GuideButton({ onGuide }: { onGuide: () => void }) {

@@ -64,3 +64,11 @@ export function parseUtc(value: string | null | undefined): Date | null {
   const at = new Date(value);
   return Number.isNaN(at.getTime()) ? null : at;
 }
+
+/** A stored UTC time as Windows local time with the zone's name, or null (the views take it as a prop, so tests can
+ *  pass a fixed one). */
+export type WhenFormat = (iso: string | null | undefined) => string | null;
+export const localWhen: WhenFormat = (iso) => {
+  const at = parseUtc(iso);
+  return at ? formatDateTime(at) : null;
+};

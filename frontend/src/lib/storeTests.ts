@@ -4,8 +4,8 @@
 // tested with fake sends (storeTests.test.ts).
 
 import { useSyncExternalStore } from "react";
-import type { StoreTest } from "../../api/stores";
-import { testError } from "./storesModel";
+import type { StoreTest } from "../api/stores";
+import { testError } from "./storeHealth";
 
 export interface TestEntry {
   running: boolean;

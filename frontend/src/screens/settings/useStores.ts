@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { listStores, STORES_QUERY_KEY, testStore } from "../../api/stores";
 import { useServices } from "../../app/services";
-import { storeTests } from "./storeTests";
+import { storeTests } from "../../lib/storeTests";
 import { useSwitchPhase } from "./switchStore";
 
 export function useStoresQuery() {

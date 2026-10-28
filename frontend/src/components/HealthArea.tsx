@@ -3,11 +3,12 @@ import { CircleCheck, CircleDashed, HardDrive, Pause, Plug, TriangleAlert } from
 import { type CSSProperties, type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionState, StorageHealth } from "../api/placeholder";
 import { identifierOf, type Store } from "../api/stores";
-import { localWhen, TestButton, TestResult, type WhenFormat } from "../screens/settings/StoresView";
-import { healthKind, healthLine, outcomeLine } from "../screens/settings/storesModel";
-import { S } from "../screens/settings/storesWording";
-import type { TestEntry } from "../screens/settings/storeTests";
+import { healthKind, healthLine, outcomeLine } from "../lib/storeHealth";
+import { S } from "../lib/storesWording";
+import type { TestEntry } from "../lib/storeTests";
+import { localWhen, type WhenFormat } from "../lib/time";
 import { StoreBadge } from "./StoreBadge";
+import { TestButton, TestResult } from "./StoreTest";
 import { Tip } from "./Tip";
 
 const IDLE: TestEntry = { running: false, result: null, error: null };
