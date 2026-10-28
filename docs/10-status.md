@@ -3,77 +3,61 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-10-27, 17:55 IST (end of the second session of the day).
+2026-10-28, 13:55 IST (end of the overnight session that started 2026-10-27, 18:46 IST).
 
 ## Done
-- **M1a approved by the owner** after its exit test, run from Windows PowerShell outside the Claude app:
-  - Open, View logs, a second start and Quit all work from the tray.
-  - The Windows checks passed outside Claude.
-  - V31 verified: Defender made the EICAR file unreadable at once and removed it after about 15 s.
-- **M1a.5, the Quit fix ([#12](https://github.com/techaust/shelf_sync/pull/12)).** In the exit test, one Quit once stopped the server but left the program and its icon running until a second click; it wasn't reproduced in three tries. The fix:
-  - tray actions run off the icon's loop;
-  - the tray's stop checks that its loop ended, and hides the icon if not;
-  - shut-down log lines;
-  - a `faulthandler` safety exit (45 s, then 10 s) with a stall report read back through `redact`.
-
-  Analyst, builder, then three reviewer passes, all APPROVE with every finding fixed. The owner's re-test outside Claude passed.
-- **M1b started.**
-  - The analyst drafted the plan and the updater brief, saved in [runs/m1b.2-updater.md](runs/m1b.2-updater.md) §0–§1.
-  - The owner decided the update token is optional, the test account, real test releases, where the signing key lives, that "Remove my data" also clears Credential Manager, about 3.5 days, and portable NSIS.
-  - The owner approved the M1b package list (rows in [11](11-decisions.md)).
-- **M1b.0, Python 3.14 ([#13](https://github.com/techaust/shelf_sync/pull/13)).** 3.12.10 (April 2025) was 3.12's last release with Windows builds, so the owner moved ShelfSync to 3.14.
-  - The owner installed 3.14.8 from python.org.
-  - The re-lock changed no package.
-  - CI gets 3.14.8 through `actions/setup-python` v7.0.0 (owner's yes) with `UV_PYTHON_DOWNLOADS: never`.
-  - CI green on 3.14.8.
-- **Record:**
-  - [04-A](04-architecture-appendix/A-stack-verification.md): V31 verified; V11 and V12 updated for 3.14; new rows V34 (pystray stop), V35 (faulthandler) and V36 (the Claude app keeps a private copy of `%LOCALAPPDATA%`).
-  - [06 §3](06-security.md): the stall file; [06 §5](06-security.md): the optional token.
-  - [03](03-prd.md) SYS-06 and SET-04; the [ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendment and [ADR 0002](adr/0002-embedded-python-nsis.md).
-  - 02, 04 and 09 for 3.14.
-  - CLAUDE.md: Python 3.14.8, `UV_PYTHON_DOWNLOADS=never`, and the outside-Claude rule.
-  - The roadmap, CHANGELOG #11–#13, and the run files.
+Under the owner's overnight instruction ([11](11-decisions.md) 2026-10-28), each task went brief → build → review → fixes → re-review, with every local check and the release build passed before its push.
 
 | PR | What | CI |
 |---|---|---|
-| [#12](https://github.com/techaust/shelf_sync/pull/12) | M1a.5 Quit always exits | green (704 tests, the symlink tests included) |
-| [#13](https://github.com/techaust/shelf_sync/pull/13) | M1b.0 Python 3.14; M1a closed; M1b decisions | green on 3.14.8 |
+| [#15](https://github.com/techaust/shelf_sync/pull/15) | M1b.1 per-user installer, embedded-Python build, release workflow | green |
+| [#16](https://github.com/techaust/shelf_sync/pull/16) | M1b.2 signed in-app updates, backup before migrations, Updates API | green |
+| [#17](https://github.com/techaust/shelf_sync/pull/17) | One release script (`packaging/release-build.ps1`) for CI and this PC | green |
+| [#18](https://github.com/techaust/shelf_sync/pull/18) | M1b.3 Settings › App API, log pruning by age, one installed-copy test; the M1b runbooks; the M2 plan | green |
+| [#19](https://github.com/techaust/shelf_sync/pull/19) | M2.1 store settings, store keys in Credential Manager, read-only Test connection; M2 security docs and runbooks | green |
+| [#20](https://github.com/techaust/shelf_sync/pull/20) | M1b.4 Settings shell, Settings › Updates and Settings › App screens (548 screen tests, 1,763 backend tests and the release build passed here first) | green |
+
+- **M1b code is complete**; the exit test is the owner's ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)).
+- **M2 plan** ([runs/m2.0-plan.md](runs/m2.0-plan.md)): m2.1 merged; briefs written for m2.2, m2.3 and m2.4.
+- **Record:** 11 rows for tonight's decisions; 13 wording for M1b.3, M1b.4 and M2.1; 05 palette keys; 06 entry names, IAM policies and residual risks; 07 MockTransport; runbooks `keys-and-policies.md`, `key-rotation.md` and the M1b set.
 
 ## In progress
-Nothing. No agent is running. This record update is on the branch `docs/end-of-day-2026-10-27-c`.
+- **M2.2 daily database backups, retention, restore command** (branch `feat/m2.2-db-backups`, local, not pushed):
+  - the build and the first review's fixes are on the branch (full pytest 1,872 and the release build passed there);
+  - the re-review's fixes N1–N6 (the builder's checks: ruff, format, mypy both platforms, 1,881 tests, bandit) are cherry-picked onto the branch as `d47e8fc`, with the handover in `a05360f`; the full checks and the release build haven't run on the branch since.
+- No agent is running.
 
 ## Next
-1. **m1b.1 brief** (installer and packaging, Tier B), at medium.
-2. **m1b.2 final brief** (updater, Tier A), at **Opus 5.5, high** (12 §3 key step 1), from the analyst's draft in [runs/m1b.2-updater.md](runs/m1b.2-updater.md).
-3. Then the m1b.1 and m1b.2 builders side by side, under the shared-file contracts in that file's §0.
+1. M2.2: move `feat/m2.2-db-backups` onto `main` with `git rebase --onto main cb52f30` (this record PR already carries its two docs commits `f1799b3` and `cb52f30`); run every check and the release build; push, PR, merge on green.
+2. M2.3 storage settings (Tier A) from [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md), then M2.4 backup export (Tier A) from [runs/m2.4-backup-export.md](runs/m2.4-backup-export.md); each with the early check, review, fixes and re-review.
+3. The M2.5a and M2.5b screens brief for the designer (plan in [runs/m2.0-plan.md](runs/m2.0-plan.md) §1).
+4. Remove the two finished agent worktrees (CLAUDE.md, Git workflow): `agent-a133ea61ee2221031` (still locked by process 9612) and `agent-a225369f658fc52e6`.
 
 ## Waits on the owner
-1. **This record update:** push and merge it, with your yes.
-2. **Model menu:** start the next session on **Opus 5.5, medium**; switch to **high** only when the m1b.2 final brief starts.
-3. **Restart this PC once** when convenient. Two leftover worktree folders couldn't be deleted because a file in them was in use: `.claude/worktrees/agent-a4a26e3752a5edaf4` and `.claude/worktrees/agent-a3ab7c793b83446b9`. Git no longer tracks either, so the lead removes them after the restart.
-4. **Review** the "Lead (proposed)" rows in [11](11-decisions.md) when convenient.
+1. **Model menu:** the lead ran at **high** all night (left there by the overnight instruction). Start the next session on **Opus 5.5, medium**.
+2. **The M1b exit test** ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)), outside the Claude app, including step 16, the Windows checks (`uv run pytest -m windows --no-cov`).
+3. **Packages for S3 (m2.7) and the test stack (m2.8):** boto3 (run time) and moto with `s3` and `server` (dev). Nothing S3 is built until you say yes ([runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q1).
+4. **The other M2 questions** in [runs/m2.0-plan.md](runs/m2.0-plan.md) §3: the import rule, the test-stack transport, store colours, how to read the bucket's versioning state.
+5. **Review** the "Lead (proposed)" rows in [11](11-decisions.md), most of them dated 2026-10-27 and 2026-10-28.
 
 ## Not verified
-- **The original stuck Quit:** never reproduced. The fix is proven only against simulated failures, and the safety exit is there in case.
-- **A cold crash toast's time** against the safety exit's 10 s last stage (m1b.1 times it).
-- **Whether HKCU registry writes are also virtualized** inside the Claude app's package. The Windows checks passed both inside and outside Claude.
-- **The real tray menu, clicked by an agent:** agents still can't click it; the owner's clicks proved it today.
-- Unchanged from before: a second Windows user for V33; IPv6 listeners; the cross-port `SameSite` and preflight parts of V32 in a browser; 2× full-page screenshots of the real app.
+- **M2.2's N1–N6 fixes** passed only the builder's checks in its worktree; the release build and `npm run schema:check` haven't run on them yet (the builder says no API shape changed).
+- **The Settings screens (#20) in the installed app**, outside Claude: only the dev server and the reviewer's screenshots in the built-in browser.
+- **The store Test connection against the live stores:** never run (no live reads without your yes); the fake answers are built from the WooCommerce docs (m2.0 R14). Whether a Shop Manager key can read `system_status` (R1) is checked in the M2 exit test.
+- **Store entries in Credential Manager outside Claude** (m2.0 R9): the `-m windows` checks haven't been run outside Claude since M2.1.
+- **A daily backup at a real 02:00, and across a real DST change:** only fake clocks.
+- Unchanged from before: a second Windows user for V33; IPv6 listeners; the cross-port `SameSite` and preflight parts of V32 in a browser; 2× full-page screenshots of the real app; the original stuck Quit (never reproduced).
 
 ## Open follow-ups
-- **M1b carry-overs** (into m1b.1 and m1b.3, listed in [runs/m1b.2-updater.md](runs/m1b.2-updater.md) §0):
-  - a data-folder lock file for a second logon session;
-  - ShelfSync's own toast AUMID;
-  - `UI_DIR` from `paths.py`, and a missing UI as an error when installed;
-  - **the Run value must start ShelfSync in the tray without opening a tab** (found by the analyst);
-  - logs pruned by age;
-  - the `httpx` deprecation warning from `starlette.testclient`;
-  - the optional install-folder image check and a socket-owner re-check.
-- **Wording for 13:** the Updates empty state must change, because the token is now optional. Plus the updater's new messages (m1b.2 and m1b.4).
-- **M2:** modals with the native `<dialog>`; store, S3 and GitHub secrets in Credential Manager registered with `redact`; BAK-01 must never delete a pre-migration backup that a kept version needs.
+- **A `-Suffix` build still writes the real `ShelfSync` Run value and AUMID** if installed and started interactively ([11](11-decisions.md) 2026-10-28, m1b.3 finding 7).
+- **`tools/release/rehearse.py`** doesn't run against a current build; repaired before the next rehearsal (m2.1 review L3).
+- **`packaging/smoke.py` gains a `hashlib.scrypt` call** in M2.4 (m2.0 R6).
+- **The OneDrive Desktop lags after a delete:** `packaging/test-installer.ps1` now waits up to 10 s for the shortcuts to go; watch it in CI.
 - **Token task:** move the duplicated dark rules in `app.css` into component tokens.
 
 ## Usage
-- The 5-hour window was at **18 %** at the end of this session (a new window from about 16:30 IST; it peaked around 49 % in the previous one), so up to two agents can run at once.
-- **Model audit for today:** 9 runs, all Opus or Sonnet 5.5 at the planned effort. The lead stayed at medium all session.
-- Four analyst and builder runs are flagged "no skill loaded" because no 09 §3 skill fits them. The two `general-purpose` runs are the read-only helpers that `code-review` starts (the 12 §3 exception).
+- The 5-hour window is at **1 %** (a new window; it resets at 18:09 IST). The owner lifted the 80 % pause for the overnight run only; the two-agent limit held throughout.
+- **Model audit since 2026-10-27** (`node tools/model-audit.mjs 2026-10-27`): 45 runs, all Opus or Sonnet 5.5, never Fable.
+  - **The lead ran at high** for the overnight work (flagged as a note; the 12 §3 rule is medium outside the five key steps).
+  - **7 runs flagged "no skill loaded":** five builders and two analysts; no 09 §3 skill fits their tasks (Context7 was optional and not needed).
+  - The `general-purpose` runs are the read-only helpers that `code-review` and `security-review` start (the 12 §3 exception).

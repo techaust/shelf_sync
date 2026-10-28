@@ -52,6 +52,7 @@ Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public durin
 - Work on a branch → push → PR → merge on green. **Every push and every PR merge needs the owner's yes until the owner says otherwise.**
 - PRs are squash-merged (auto-merge isn't available: wait for green, then merge by hand). A branch cut from another branch's pre-squash head is moved with `git rebase --onto main <old base>`, and the full checks run again before its push.
 - Agents work in their own git worktrees and never push; the lead integrates.
+- A finished agent's worktree can stay locked by the Claude app's process. Check `git -C <worktree> status` shows nothing uncommitted, then `git worktree remove -f -f <worktree>` and `git branch -D <its branch>`; only after its commits are integrated.
 - Commit identity (repo-local): `TecHaust Technologies <admin@techaust.com>`. Conventional commits citing PRD IDs, e.g. `feat(match): edition-word penalty [MAT-05]`.
 
 ## Stack (summary; full list `docs/09-tooling.md` §7, pins in `docs/04-architecture.md` §2 at M1)
