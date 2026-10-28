@@ -467,6 +467,8 @@ export function StoresPage() {
         danger
         busy={removeBusy}
         error={removeError}
+        // the removed card's Remove is gone: the focus goes to the Stores sub-page title, not the page's h1
+        fallbackFocus={() => document.querySelector<HTMLElement>(".settings-main [data-nav-focus]")}
         onCancel={() => setRemoveOpen(false)}
         onConfirm={() => void remove()}
       >

@@ -5,7 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import { getStorage, STORAGE_QUERY_KEY } from "../../api/storage";
 import { useServices } from "../../app/services";
@@ -106,7 +106,19 @@ function PolicyBlock({ title, text }: { title: string; text: string }) {
       </p>
       {/* Shown whole (it wraps; nothing to scroll), so no tab stop; Copy's fallback focuses and selects it. */}
       <section className="policy__code" tabIndex={-1} aria-label={H.policyLabel(title)} ref={region}>
-        <pre ref={pre}>{text}</pre>
+        <pre ref={pre}>
+          {/* one block per line, so a line that wraps hangs under its own indent (the copied text is `text`) */}
+          {text.split("\n").map((line, n) => (
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: the lines of a fixed text, never reordered
+              key={n}
+              className="policy__line"
+              style={{ "--indent": `${line.length - line.trimStart().length}ch` } as CSSProperties}
+            >
+              {line}
+            </span>
+          ))}
+        </pre>
       </section>
     </div>
   );

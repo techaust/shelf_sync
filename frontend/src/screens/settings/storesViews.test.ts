@@ -6,7 +6,7 @@ import { type ComponentProps, createRef, type FunctionComponent, createElement a
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Store } from "../../api/stores";
-import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { ConfirmDialog, confirmFallback, type QueryRoot } from "../../components/ConfirmDialog";
 import { type DialogElement, dialogBehaviour, type Focusable } from "../../components/dialog";
 import { HealthArea } from "../../components/HealthArea";
 import { TipProvider } from "../../components/Tip";
@@ -154,8 +154,8 @@ describe("a store card, in each state", () => {
 
   it("keys saved: the two masks in mono and Replace keys; no secret, no input", () => {
     const html = card(SAMPLE);
-    expect(html).toContain('<span class="mono">ck_••••a1b2</span>');
-    expect(html).toContain('<span class="mono">cs_••••c3d4</span>');
+    expect(html).toContain('<span class="mono secret-pair__mask">ck_••••a1b2</span>');
+    expect(html).toContain('<span class="mono secret-pair__mask">cs_••••c3d4</span>');
     expect(html).toContain(">Replace keys</button>");
     expect(html).not.toContain('type="password"');
     expect(html).toContain(S.keysHint);
@@ -381,6 +381,47 @@ describe("the Remove dialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     made.close();
     expect(log).toEqual(["Cancel", "Remove"]);
+  });
+
+  it("after a removal the focus goes to the Stores sub-page title; every other dialog keeps the default", () => {
+    const seen: string[] = [];
+    const root: QueryRoot = {
+      querySelector: (selectors: string) => {
+        seen.push(selectors);
+        return { tagName: selectors === ".settings-main [data-nav-focus]" ? "H2" : "H1" } as unknown as Element;
+      },
+    };
+    const storesTitle = () => root.querySelector(".settings-main [data-nav-focus]") as HTMLElement | null;
+    expect((confirmFallback(storesTitle, root) as unknown as Element).tagName).toBe("H2");
+    expect((confirmFallback(undefined, root) as unknown as Element).tagName).toBe("H1");
+    expect(seen).toEqual([".settings-main [data-nav-focus]", "[data-nav-focus], h1"]);
+    // a custom target that isn't there falls back to the default
+    expect((confirmFallback(() => null, root) as unknown as Element).tagName).toBe("H1");
+  });
+
+  it("the removed opener: dialogBehaviour hands the focus to that fallback", () => {
+    const listeners = new Map<string, (event: { preventDefault(): void }) => void>();
+    const dialog = {
+      open: false as boolean,
+      showModal: () => {
+        dialog.open = true;
+      },
+      close: () => {
+        dialog.open = false;
+      },
+      addEventListener: (type: string, listener: (event: { preventDefault(): void }) => void) =>
+        listeners.set(type, listener),
+      removeEventListener: (type: string) => listeners.delete(type),
+    } satisfies DialogElement;
+    const log: string[] = [];
+    const made = dialogBehaviour(dialog, {
+      onCancel: vi.fn(),
+      isBusy: () => false,
+      fallback: () => ({ focus: () => log.push("Stores title") }),
+    });
+    made.open(null, { focus: () => log.push("Remove"), isConnected: false });
+    made.close();
+    expect(log).toEqual(["Stores title"]);
   });
 
   it("while the removal is sent, Esc waits (nothing is half-removed)", () => {

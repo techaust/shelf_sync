@@ -522,11 +522,10 @@ export function AddStoreButton({
   buttonRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
-    <div>
-      <button ref={buttonRef} type="button" className="btn" onClick={onAdd}>
-        <Plus className="icon" aria-hidden="true" />
-        {S.addStore}
-      </button>
-    </div>
+    // full width under the cards, as the approved mockup draws it
+    <button ref={buttonRef} type="button" className="btn stores__add" onClick={onAdd}>
+      <Plus className="icon" aria-hidden="true" />
+      {S.addStore}
+    </button>
   );
 }

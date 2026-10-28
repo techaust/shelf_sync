@@ -156,6 +156,24 @@
   .secret-pair__masks dd {
     margin: 0;
   }
+  /* a saved mask sits on a filled tile, as the approved mockup's .secret-field__value */
+  .secret-pair__mask {
+    display: inline-block;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-fill-subtle);
+  }
+  :root[data-theme="dark"] .secret-pair__mask {
+    background: var(--color-surface-alt);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .secret-pair__mask {
+      background: var(--color-surface-alt);
+    }
+  }
+  .stores__add {
+    width: 100%;
+  }
   .secret-pair__edit {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
@@ -482,6 +500,13 @@
     line-height: var(--app-text-code--line-height);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* a hanging indent: a wrapped line continues two characters in from its own indent, never at column 0
+     (--indent is the line's leading spaces, set on each line) */
+  .policy__line {
+    display: block;
+    padding-left: calc(var(--indent, 0ch) + 2ch);
+    text-indent: calc(-1 * (var(--indent, 0ch) + 2ch));
   }
   .policy__code:focus {
     outline: none;

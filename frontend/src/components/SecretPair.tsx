@@ -106,7 +106,7 @@ export function SecretPair({
                       {text.unreadable}
                     </span>
                   ) : mask ? (
-                    <span className="mono">{mask}</span>
+                    <span className="mono secret-pair__mask">{mask}</span>
                   ) : (
                     <span className="band-pill is-neutral">
                       <CircleDashed className="icon" aria-hidden="true" />
