@@ -104,9 +104,11 @@ _log = logging.getLogger("shelfsync.backup")
 BACKUP_EXPORT_PATH = "/api/backup/export"
 BACKUP_IMPORT_PATH = "/api/backup/import"
 # The body an import may carry, in bytes: the file text (1 MiB at most, `MAX_FILE_CHARS`; a v1 file is tens of
-# kilobytes) and the JSON around it. `secure/body_limit.py` enforces it before the app reads a byte. Format v2 (the
-# catalog, M3) raises both numbers.
-IMPORT_BODY_MAX = MAX_FILE_CHARS + 64 * 1024
+# kilobytes) as a JSON string, and the JSON around it. A genuine file is ASCII (`ensure_ascii`), so `JSON.stringify`
+# at most doubles it (only `"` and `\` get a backslash): the text cap is the limit that binds, and this one only
+# stops a body that couldn't be a file. `secure/body_limit.py` enforces it before the app reads a byte. Format v2
+# (the catalog, M3) raises both numbers.
+IMPORT_BODY_MAX = 2 * MAX_FILE_CHARS + 64 * 1024
 EXPORT_BODY_MAX = 64 * 1024  # a passphrase of at most 4096 characters, escaped, and the field names
 LEFT_OUT_HEADER = "X-ShelfSync-Left-Out"
 
@@ -309,19 +311,20 @@ class ExportService:
         half way through. A Credential Manager failure while secrets are wanted is `secrets_unavailable`; a database
         that can't be read is `backup_failed`."""
         left_out = ""
-        with SECRETS_WRITE_LOCK, closing(self._connect()) as connection:
+        with SECRETS_WRITE_LOCK:
             try:
-                connection.execute("BEGIN")  # one read snapshot for the settings, the stores and the schema
-            except sqlite3.OperationalError as error:
+                with closing(self._connect()) as connection:
+                    connection.execute("BEGIN")  # one read snapshot for the settings, the stores and the schema
+                    try:
+                        settings = stored_values(connection, _SETTINGS_VALIDATORS, SETTINGS_KEYS)
+                        storage = stored_values(connection, _STORAGE_VALIDATORS, STORAGE_KEYS)
+                        rows = read_stores(connection)
+                        schema = highest_applied_schema(connection)
+                    finally:
+                        _rollback(connection)
+            except sqlite3.OperationalError as error:  # opening, BEGIN or a read failed: no detail
                 _log.warning("A backup couldn't read the database (%s)", type(error).__name__)
                 raise ApiError(503, "backup_failed") from None
-            try:
-                settings = stored_values(connection, _SETTINGS_VALIDATORS, SETTINGS_KEYS)
-                storage = stored_values(connection, _STORAGE_VALIDATORS, STORAGE_KEYS)
-                rows = read_stores(connection)
-                schema = highest_applied_schema(connection)
-            finally:
-                _rollback(connection)
             payload: dict[str, Any] = {
                 "settings": settings,
                 "stores": [{field: getattr(row, field) for field in STORE_FIELDS} for row in rows],
@@ -435,9 +438,10 @@ class ExportService:
                 raise ApiError(503, "secrets_unavailable") from None
             written: list[int] = []
             touched_secrets = False
-            connection = self._connect()
+            connection: sqlite3.Connection | None = None
             try:
                 try:
+                    connection = self._connect()  # inside the try: a database that can't be opened is 503 too
                     connection.execute("BEGIN IMMEDIATE")
                     if live_store_count(connection) > 0:
                         raise ApiError(409, "import_needs_empty")
@@ -447,7 +451,8 @@ class ExportService:
                     connection.execute("COMMIT")
                     wrote_token = payload.secrets is not None and payload.secrets.github_token is not None
                 except BaseException as error:
-                    _rollback(connection)
+                    if connection is not None:
+                        _rollback(connection)
                     self._undo(written, before if touched_secrets else {})
                     if isinstance(error, SecretStoreError):
                         raise ApiError(503, "secrets_unavailable") from None
@@ -458,7 +463,8 @@ class ExportService:
                         raise ApiError(503, "backup_failed") from None
                     raise
             finally:
-                connection.close()
+                if connection is not None:
+                    connection.close()
             if wrote_token and self._forget_expiry is not None:  # committed: the cached expiry was the old token's
                 try:
                     self._forget_expiry()

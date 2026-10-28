@@ -652,7 +652,7 @@ def test_importing_twice_is_refused_the_second_time(source: Install, target: Ins
 
 
 def test_a_file_text_over_the_1_mib_cap_is_export_invalid(target: Install) -> None:
-    assert MAX_FILE_CHARS == 1024 * 1024 and IMPORT_BODY_MAX == MAX_FILE_CHARS + 64 * 1024
+    assert MAX_FILE_CHARS == 1024 * 1024 and IMPORT_BODY_MAX == 2 * MAX_FILE_CHARS + 64 * 1024
     response = import_response(target, " " * (MAX_FILE_CHARS + 1))
     assert (response.status_code, response.json()) == (422, {"error": "export_invalid"})
     assert rows(target, "store") == []

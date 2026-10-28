@@ -262,3 +262,16 @@ class CommitFails:
 
     def close(self) -> None:
         self._real.close()
+
+
+class ReadsFail(CommitFails):
+    """A connection whose SELECTs fail (BEGIN and the rest work): a read that breaks half way through an export."""
+
+    def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
+        if sql.lstrip().upper().startswith("SELECT"):
+            raise sqlite3.OperationalError("database disk image is malformed")
+        return self._real.execute(sql, *args)
+
+
+def cant_open() -> sqlite3.Connection:
+    raise sqlite3.OperationalError("unable to open database file")

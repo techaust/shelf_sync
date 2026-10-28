@@ -12,11 +12,12 @@ import pytest
 
 from shelfsync import server
 from shelfsync.api import backup as api_backup
-from shelfsync.api.backup import ExportService
+from shelfsync.api.backup import IMPORT_BODY_MAX, ExportService
 from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure import backup_crypto
+from shelfsync.secure.backup_crypto import MAX_FILE_CHARS
 from shelfsync.secure.credentials import SECRETS_WRITE_LOCK
 from shelfsync.store_service import MAX_STORES
 from tests.backup_support import (
@@ -27,6 +28,8 @@ from tests.backup_support import (
     PASSPHRASE,
     CommitFails,
     Install,
+    ReadsFail,
+    cant_open,
     entries,
     export_text,
     file_for,
@@ -443,3 +446,70 @@ def test_a_file_with_exactly_the_most_stores_imports(target: Install) -> None:
     ]
     response = import_response(target, file_for({**payload, "stores": many}))
     assert response.status_code == 200 and response.json()["stores"] == MAX_STORES
+
+
+# ---- re-review S1: the text cap is the limit that binds ----
+
+
+def test_a_just_under_1_mib_file_full_of_quotes_passes_the_body_limit_and_is_judged_by_the_text_cap(
+    target: Install, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = '"' * (MAX_FILE_CHARS - 100)  # every quote is two bytes in the JSON body
+    body = json.dumps({"file": text, "passphrase": None})
+    assert len(body) > MAX_FILE_CHARS + 64 * 1024  # more than the old limit allowed: the fix matters
+    assert len(body) <= IMPORT_BODY_MAX and IMPORT_BODY_MAX == 2 * MAX_FILE_CHARS + 64 * 1024
+    reached: list[int] = []
+    real = api_backup.parse_envelope
+
+    def watching(candidate: str) -> dict[str, Any]:
+        reached.append(len(candidate))
+        return real(candidate)
+
+    monkeypatch.setattr(api_backup, "parse_envelope", watching)
+    response = target.client.post(
+        IMPORT, headers={**WRITE_HEADERS, "Content-Type": "application/json"}, content=body.encode()
+    )
+    assert reached == [MAX_FILE_CHARS - 100]  # the body limit let it through; the text reached the parser
+    assert (response.status_code, response.json()) == (
+        422,
+        {"error": "export_invalid"},
+    )  # not a file: the parser's word
+    assert rows(target, "store") == []
+
+
+# ---- re-review S2: a database that can't be opened or read is 503 backup_failed ----
+
+
+def test_an_export_whose_reads_fail_after_begin_is_503_backup_failed(
+    source: Install, caplog: pytest.LogCaptureFixture
+) -> None:
+    source.exports._connect = lambda: ReadsFail(source.open_db())
+    with caplog.at_level(logging.WARNING):
+        response = source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": None})
+    assert (response.status_code, response.json()) == (503, {"error": "backup_failed"})
+    assert "couldn't read the database (OperationalError)" in caplog.text and "malformed" not in caplog.text
+    source.exports._connect = source.open_db
+    assert source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": PASSPHRASE}).status_code == 200
+
+
+def test_an_export_that_cant_open_the_database_is_503_backup_failed(source: Install) -> None:
+    source.exports._connect = cant_open
+    for passphrase in (None, PASSPHRASE):
+        response = source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": passphrase})
+        assert (response.status_code, response.json()) == (503, {"error": "backup_failed"})
+    source.exports._connect = source.open_db
+    assert source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": None}).status_code == 200
+
+
+def test_an_import_that_cant_open_the_database_is_503_backup_failed_and_leaves_nothing(
+    source: Install, target: Install
+) -> None:
+    text = export_text(source, PASSPHRASE)
+    target.secrets.set("github-token", "github_pat_" + "old" * 10)
+    before = snapshot_of(target)
+    target.exports._connect = cant_open
+    response = import_response(target, text, PASSPHRASE)
+    assert (response.status_code, response.json()) == (503, {"error": "backup_failed"})
+    assert snapshot_of(target) == before and target.expiry_resets == []
+    target.exports._connect = target.open_db
+    assert import_response(target, text, PASSPHRASE).status_code == 200  # nothing was left half done
