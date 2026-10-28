@@ -49,6 +49,10 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   wrong_passphrase: true,
   export_too_new: true,
   import_needs_empty: true,
+  // M2.4 review: 422 export_not_encrypted; 503 backup_failed; 409 too_many_stores
+  export_not_encrypted: true,
+  backup_failed: true,
+  too_many_stores: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 

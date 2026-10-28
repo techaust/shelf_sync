@@ -5,7 +5,7 @@ a file."""
 import json
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,7 @@ from shelfsync.db.settings import set_setting
 from shelfsync.secure.backup_crypto import canonical, dumps, seal
 from shelfsync.secure.token import InstallToken
 from shelfsync.store_service import StoreService
+from shelfsync.update.service import UpdateService
 from tests.storage_support import GOOD_SETTINGS, RO_ID, RO_SECRET, RW_ID, RW_SECRET
 from tests.store_support import KEY, KEY_2, SECRET, SECRET_2, FailingSecretStore, new_store_body
 from tests.support import WRITE_HEADERS, FakeClock, Harness
@@ -45,6 +46,8 @@ class Install:
     exports: ExportService
     open_db: Callable[[], sqlite3.Connection]
     path: Path
+    updates: UpdateService | None = None  # on the same secret store; its token writes take the shared lock
+    expiry_resets: list[int] = field(default_factory=list)  # one entry per `forget_expiry` the import called
 
 
 def make_install(
@@ -66,13 +69,31 @@ def make_install(
     open_connection = opener
     stores = StoreService(open_connection=open_connection, secrets=secret_store)
     storage = StorageService(open_connection, secret_store)
-    exports = ExportService(open_connection, secret_store, storage.lock, now=now)
+    updates = UpdateService.development(secret_store)
+    resets: list[int] = []
+
+    def forget_expiry() -> None:
+        resets.append(1)
+        updates.forget_expiry()
+
+    exports = ExportService(open_connection, secret_store, now=now, forget_expiry=forget_expiry)
     clock = FakeClock()
     app = create_app(
         47615, InstallToken(secret_store), clock, ui_dir=None, stores=stores, storage=storage, exports=exports
     )
     harness = Harness(app=app, store=secret_store, clock=clock)
-    return Install(harness, harness.signed_in_client(), secret_store, stores, storage, exports, open_connection, path)
+    return Install(
+        harness,
+        harness.signed_in_client(),
+        secret_store,
+        stores,
+        storage,
+        exports,
+        open_connection,
+        path,
+        updates,
+        resets,
+    )
 
 
 def populate(install: Install) -> None:
@@ -134,6 +155,11 @@ def rows(install: Install, table: str) -> list[tuple[Any, ...]]:
         return connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()  # nosec B608  # test names only
     finally:
         connection.close()
+
+
+def snapshot_of(install: Install) -> tuple[Any, ...]:
+    """Everything an import may change in an install: the rows, the settings and every secret entry."""
+    return (rows(install, "store"), rows(install, "setting"), entries(install))
 
 
 def export_text(install: Install, passphrase: str | None = None) -> str:
@@ -219,13 +245,14 @@ def tampered(text: str, change: Callable[[dict[str, Any]], object]) -> str:
 
 class CommitFails:
     """A connection that behaves like the real one but fails when asked to COMMIT (after the Credential Manager writes
-    that come before it)."""
+    that come before it), or to run another statement given as `fail_on` ("BEGIN IMMEDIATE", "BEGIN")."""
 
-    def __init__(self, real: sqlite3.Connection) -> None:
+    def __init__(self, real: sqlite3.Connection, fail_on: str = "COMMIT") -> None:
         self._real = real
+        self._fail_on = fail_on
 
     def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
-        if sql.strip().upper() == "COMMIT":
+        if sql.strip().upper() == self._fail_on:
             raise sqlite3.OperationalError("disk I/O error")
         return self._real.execute(sql, *args)
 

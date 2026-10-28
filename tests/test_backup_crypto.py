@@ -68,7 +68,7 @@ def test_the_decided_costs_cipher_and_sizes_are_pinned() -> None:
     assert (backup_crypto.CIPHER, backup_crypto.KDF_NAME) == ("AES-256-GCM", "scrypt")
     assert (backup_crypto.SALT_BYTES, backup_crypto.NONCE_BYTES, backup_crypto.KEY_BYTES) == (16, 12, 32)
     assert (backup_crypto.PASSPHRASE_MIN, backup_crypto.PASSPHRASE_MAX) == (12, 1024)
-    assert backup_crypto.MAX_FILE_CHARS == 32 * 1024 * 1024
+    assert backup_crypto.MAX_FILE_CHARS == 1024 * 1024  # format v1; v2 (the catalog) raises it
 
 
 def test_real_parameters_round_trip_and_match_an_independent_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -547,3 +547,20 @@ def test_base64_must_be_in_its_one_canonical_form() -> None:
     assert backup_crypto._unb64("QQ==") == b"A"
     with pytest.raises(ExportInvalid):
         backup_crypto._unb64("QR==")
+
+
+@pytest.mark.parametrize("error", [ValueError("limit"), MemoryError(), OverflowError()])
+def test_scrypt_failing_is_key_derivation_failed_with_the_type_name_only(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def boom(*args: object, **kwargs: object) -> bytes:
+        raise error
+
+    monkeypatch.setattr(backup_crypto.hashlib, "scrypt", boom)
+    with pytest.raises(backup_crypto.KeyDerivationFailed) as caught:
+        make()
+    assert str(caught.value) == type(error).__name__
+    with pytest.raises(backup_crypto.KeyDerivationFailed):
+        open_envelope(_saved_file_cached(), PASSPHRASE)
+    with pytest.raises(PassphraseInvalid):  # a bad passphrase is still its own refusal, before scrypt
+        backup_crypto.derive_key("short", b"x" * 16)

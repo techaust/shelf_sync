@@ -90,10 +90,14 @@ def test_no_length_and_two_lengths_are_refused() -> None:
     assert app.calls == 0
 
 
-def test_a_server_that_sends_more_than_it_declared_gets_the_app_a_disconnect() -> None:
+def test_a_body_longer_than_declared_gets_the_routes_own_error_and_the_apps_answer_is_dropped() -> None:
+    """R9. A real server (h11, httptools) ends a request at its declared length, so this can't happen through one; if
+    it did, the app is told the client went away, whatever it says is dropped, and the fixed 422 is sent."""
     app = Probe()
-    call(app, length(b"10"), [b"x" * 60, b"x" * 60])  # declared 10, sent 120: past the limit of 100
+    status, body = call(app, length(b"10"), [b"x" * 60, b"x" * 60])  # declared 10, sent 120: past the limit of 100
+    assert (status, json.loads(body)) == (422, {"error": "export_invalid"})
     assert app.disconnected and app.received <= 100
+    assert b"ok" not in body  # the probe's own 200 never reached the client
 
 
 def test_other_methods_paths_and_scopes_are_untouched() -> None:

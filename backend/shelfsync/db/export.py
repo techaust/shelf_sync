@@ -63,11 +63,6 @@ def read_stores(connection: sqlite3.Connection) -> list[StoreRow]:
     return list_live(connection)
 
 
-def live_store_count(connection: sqlite3.Connection) -> int:
-    row = connection.execute("SELECT COUNT(*) FROM store WHERE removed_at IS NULL").fetchone()
-    return int(row[0])
-
-
 def write_import(
     connection: sqlite3.Connection,
     *,

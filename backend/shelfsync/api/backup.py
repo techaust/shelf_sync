@@ -4,11 +4,18 @@ Behind the guard in `secure/middleware.py` (a session, and Origin plus `X-ShelfS
 is the fixed 422 `invalid_request` that never echoes the request.
 
     POST /api/backup/export   {passphrase: str | null} -> 200 `application/json`, the `.ssbak` file, with
-                              `Content-Disposition: attachment; filename="shelfsync-export-<local date>.ssbak"`;
-                              409 busy (one key derivation at a time, process-wide); 503 secrets_unavailable
-    POST /api/backup/import   {file: <the file's text, up to 32 MiB>, passphrase: str | null} -> 200
-                              `{stores, settings, secrets}` (counts); 422 export_invalid, passphrase_required,
-                              wrong_passphrase; 409 export_too_new, import_needs_empty, busy; 503 secrets_unavailable
+                              `Content-Disposition: attachment; filename="shelfsync-export-<local date>.ssbak"` and,
+                              when a secret had to be left out, `X-ShelfSync-Left-Out` (below); 409 busy (one key
+                              derivation or file parse at a time, process-wide); 503 secrets_unavailable, backup_failed
+    POST /api/backup/import   {file: <the file's text, up to 1 MiB>, passphrase: str | null} -> 200
+                              `{stores, settings, secrets, encrypted}` (counts, and whether the file was encrypted);
+                              422 export_invalid, passphrase_required, wrong_passphrase, export_not_encrypted (a
+                              passphrase was sent with a plain file); 409 export_too_new, import_needs_empty, busy;
+                              503 secrets_unavailable, backup_failed
+
+`X-ShelfSync-Left-Out` lists the kinds of secret an encrypted export could not include because they weren't in the
+shape an import accepts or were half a pair, as `stores:SA,SB;s3:rw,ro;github` (store codes only, never a value); the
+header is absent when nothing was left out.
 
 The file format and its crypto are in `secure/backup_crypto.py`, the database side in `db/export.py`. The payload
 (version 1) is `{settings, stores, storage, catalog: null, secrets}`; `secrets` (each store's key pair by code, the two
@@ -54,12 +61,11 @@ from shelfsync.db.export import (
     StoreImport,
     highest_applied_schema,
     highest_known_schema,
-    live_store_count,
     read_stores,
     write_import,
 )
 from shelfsync.db.migrate import migrate
-from shelfsync.db.stores import CodeTaken, UrlTaken
+from shelfsync.db.stores import CodeTaken, UrlTaken, live_store_count
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore, SecretStoreError
 from shelfsync.secure.backup_crypto import (
     MAX_FILE_CHARS,
@@ -67,6 +73,7 @@ from shelfsync.secure.backup_crypto import (
     PASSPHRASE_MIN,
     ExportInvalid,
     ExportTooNew,
+    KeyDerivationFailed,
     PassphraseInvalid,
     PassphraseRequired,
     WrongPassphrase,
@@ -81,6 +88,7 @@ from shelfsync.secure.backup_crypto import (
 )
 from shelfsync.secure.credentials import (
     S3_SLOTS,
+    SECRETS_WRITE_LOCK,
     S3Credentials,
     StoreCredentials,
     is_valid_pair,
@@ -88,17 +96,19 @@ from shelfsync.secure.credentials import (
     s3_entries,
 )
 from shelfsync.secure.redact import register_secret, temporary_secret
+from shelfsync.store_service import MAX_STORES
 from shelfsync.update.service import GITHUB_TOKEN_ENTRY, is_valid_token
 
 _log = logging.getLogger("shelfsync.backup")
 
 BACKUP_EXPORT_PATH = "/api/backup/export"
 BACKUP_IMPORT_PATH = "/api/backup/import"
-# The body an import may carry, in bytes. The file text is at most 32 MiB characters; as JSON text it can grow (every
-# quote in it is escaped), so the body is allowed twice that and a little more. `secure/body_limit.py` enforces it.
-IMPORT_BODY_MAX = 2 * MAX_FILE_CHARS + 64 * 1024
+# The body an import may carry, in bytes: the file text (1 MiB at most, `MAX_FILE_CHARS`; a v1 file is tens of
+# kilobytes) and the JSON around it. `secure/body_limit.py` enforces it before the app reads a byte. Format v2 (the
+# catalog, M3) raises both numbers.
+IMPORT_BODY_MAX = MAX_FILE_CHARS + 64 * 1024
 EXPORT_BODY_MAX = 64 * 1024  # a passphrase of at most 4096 characters, escaped, and the field names
-MAX_STORES = 50  # far more than anyone adds; a bound for a file that isn't honest
+LEFT_OUT_HEADER = "X-ShelfSync-Left-Out"
 
 
 def _passphrase_rule(value: str) -> str:
@@ -136,6 +146,7 @@ class ImportResult(BaseModel):
     stores: int  # stores added
     settings: int  # settings written
     secrets: int  # Credential Manager entries written (two per key pair, one for the token)
+    encrypted: bool  # the file was encrypted (so it could carry secrets)
 
 
 # ---- the payload, version 1 ----------------------------------------------------------------------------------------
@@ -213,6 +224,7 @@ def _one_derivation() -> Iterator[None]:
 class ExportedFile:
     text: str
     filename: str
+    left_out: str = ""  # the `X-ShelfSync-Left-Out` value; "" when nothing was left out
 
 
 def _refusal(error: Exception) -> ApiError:
@@ -222,6 +234,9 @@ def _refusal(error: Exception) -> ApiError:
         return ApiError(422, "passphrase_required")
     if isinstance(error, WrongPassphrase):
         return ApiError(422, "wrong_passphrase")
+    if isinstance(error, KeyDerivationFailed):
+        _log.warning("A backup key couldn't be derived (%s)", error)  # the message is the exception's type name
+        return ApiError(503, "backup_failed")
     return ApiError(422, "export_invalid")
 
 
@@ -232,23 +247,24 @@ def _rollback(connection: sqlite3.Connection) -> None:
 
 class ExportService:
     """What the routes talk to. `connect` opens a connection to the database (one per call, closed after); `secrets` is
-    Credential Manager (a fake in tests); `lock` is `StorageService`'s lock, so an import or an export never interleaves
-    with a storage key write."""
+    Credential Manager (a fake in tests). An export reads, and an import writes, under `SECRETS_WRITE_LOCK`, the lock
+    every other secrets write takes, so neither interleaves with a key write. `forget_expiry` is called after an import
+    commits a GitHub token (the cached expiry belonged to the old one)."""
 
     def __init__(
         self,
         connect: Callable[[], sqlite3.Connection],
         secrets: SecretStore,
-        lock: threading.Lock,
         *,
         now: Callable[[], datetime] = utc_now,
+        forget_expiry: Callable[[], None] | None = None,
     ) -> None:
         self._connect = connect
         self._secrets = secrets
         self._store_keys = StoreCredentials(secrets)
         self._s3 = S3Credentials(secrets)
-        self._lock = lock
         self._now = now
+        self._forget_expiry = forget_expiry
         self._keeper: sqlite3.Connection | None = None  # holds a development database's memory open
 
     @classmethod
@@ -262,7 +278,7 @@ class ExportService:
 
         keeper = connect()
         migrate(keeper)
-        service = cls(connect, secrets if secrets is not None else MemorySecretStore(), threading.Lock())
+        service = cls(connect, secrets if secrets is not None else MemorySecretStore())
         service._keeper = keeper
         weakref.finalize(service, keeper.close)
         return service
@@ -271,25 +287,34 @@ class ExportService:
 
     def export(self, passphrase: str | None) -> ExportedFile:
         with temporary_secret(passphrase, minimum=PASSPHRASE_MIN) if passphrase is not None else nullcontext():
-            payload, schema = self._collect(include_secrets=passphrase is not None)
+            payload, schema, left_out = self._collect(include_secrets=passphrase is not None)
             created = self._now()
             body = canonical(payload)
             if passphrase is None:
                 envelope = seal(body, None, created_at=to_iso(created), app_version=__version__, schema=schema)
             else:
-                with _one_derivation():
-                    envelope = seal(
-                        body, passphrase, created_at=to_iso(created), app_version=__version__, schema=schema
-                    )
+                try:
+                    with _one_derivation():
+                        envelope = seal(
+                            body, passphrase, created_at=to_iso(created), app_version=__version__, schema=schema
+                        )
+                except KeyDerivationFailed as error:
+                    raise _refusal(error) from None
         name = f"shelfsync-export-{created.astimezone().strftime('%Y-%m-%d')}.ssbak"
         _log.info("A backup file was exported (%s)", "encrypted" if passphrase is not None else "without secrets")
-        return ExportedFile(dumps(envelope), name)
+        return ExportedFile(dumps(envelope), name, left_out)
 
-    def _collect(self, *, include_secrets: bool) -> tuple[dict[str, Any], int]:
-        """The payload and the schema number, read under the storage lock so a key write can't land half way through. A
-        Credential Manager failure while secrets are wanted is `secrets_unavailable`."""
-        with self._lock, closing(self._connect()) as connection:
-            connection.execute("BEGIN")  # one read snapshot for the settings, the stores and the schema
+    def _collect(self, *, include_secrets: bool) -> tuple[dict[str, Any], int, str]:
+        """The payload, the schema number and the left-out line, read under the secrets lock so a key write can't land
+        half way through. A Credential Manager failure while secrets are wanted is `secrets_unavailable`; a database
+        that can't be read is `backup_failed`."""
+        left_out = ""
+        with SECRETS_WRITE_LOCK, closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN")  # one read snapshot for the settings, the stores and the schema
+            except sqlite3.OperationalError as error:
+                _log.warning("A backup couldn't read the database (%s)", type(error).__name__)
+                raise ApiError(503, "backup_failed") from None
             try:
                 settings = stored_values(connection, _SETTINGS_VALIDATORS, SETTINGS_KEYS)
                 storage = stored_values(connection, _STORAGE_VALIDATORS, STORAGE_KEYS)
@@ -305,7 +330,7 @@ class ExportService:
             }
             if include_secrets:
                 try:
-                    payload["secrets"] = self._read_secrets([(row.id, row.code) for row in rows])
+                    payload["secrets"], left_out = self._read_secrets([(row.id, row.code) for row in rows])
                 except SecretStoreError:
                     raise ApiError(503, "secrets_unavailable") from None
         try:
@@ -313,33 +338,40 @@ class ExportService:
         except ValueError:  # its text would hold the values: never passed on
             _log.error("The data to export isn't in the shape an import accepts")
             raise RuntimeError("The data to export isn't in the shape an import accepts.") from None
-        return payload, schema
+        return payload, schema, left_out
 
-    def _read_secrets(self, stores: list[tuple[int, str]]) -> dict[str, Any]:
-        """Every secret ShelfSync keeps for the owner, and nothing else (the install token is not among them). A value
-        that isn't in the shape the file requires is left out, with a warning that names no value."""
+    def _read_secrets(self, stores: list[tuple[int, str]]) -> tuple[dict[str, Any], str]:
+        """Every secret ShelfSync keeps for the owner, and nothing else (the install token is not among them), and the
+        `X-ShelfSync-Left-Out` line. A value that isn't in the shape the file requires, or one half of a pair, is left
+        out, with a warning that names no value."""
+        stores_out: list[str] = []
+        s3_out: list[str] = []
+        github_out = False
         by_store: dict[str, Any] = {}
         for store_id, code in stores:
             key, secret = self._store_keys.read(store_id)
-            if key is None or secret is None:
-                continue
-            register_secret(key)
-            register_secret(secret)
-            if is_valid_pair(key, secret):
+            for value in (key, secret):
+                if value is not None:
+                    register_secret(value)
+            if key is None and secret is None:
+                continue  # no keys saved: nothing to leave out
+            if key is not None and secret is not None and is_valid_pair(key, secret):
                 by_store[code] = {"consumer_key": key, "consumer_secret": secret}
             else:
                 _log.warning("The keys of store %s aren't in a shape that can be exported; they were left out", code)
+                stores_out.append(code)
         s3: dict[str, Any] = {}
         for slot in S3_SLOTS:
             key_id, secret = self._s3.read(slot)
+            for value in (key_id, secret):
+                if value is not None:
+                    register_secret(value)
             pair = None
-            if key_id is not None and secret is not None:
-                register_secret(key_id)
-                register_secret(secret)
-                if is_valid_s3_pair(key_id, secret):
-                    pair = {"access_key_id": key_id, "secret_access_key": secret}
-                else:
-                    _log.warning("The %s S3 keys aren't in a shape that can be exported; they were left out", slot)
+            if key_id is not None and secret is not None and is_valid_s3_pair(key_id, secret):
+                pair = {"access_key_id": key_id, "secret_access_key": secret}
+            elif key_id is not None or secret is not None:
+                _log.warning("The %s S3 keys aren't in a shape that can be exported; they were left out", slot)
+                s3_out.append(slot)
             s3[slot] = pair
         token = self._secrets.get(GITHUB_TOKEN_ENTRY)
         if token is not None:
@@ -347,31 +379,40 @@ class ExportService:
             if not is_valid_token(token):
                 _log.warning("The GitHub token isn't in a shape that can be exported; it was left out")
                 token = None
-        return {"stores": by_store, "s3": s3, "github_token": token}
+                github_out = True
+        parts = []
+        if stores_out:
+            parts.append("stores:" + ",".join(stores_out))
+        if s3_out:
+            parts.append("s3:" + ",".join(s3_out))
+        if github_out:
+            parts.append("github")
+        return {"stores": by_store, "s3": s3, "github_token": token}, ";".join(parts)
 
     # ---- import ----------------------------------------------------------------------------------------------------
 
     def import_file(self, text: str, passphrase: str | None) -> ImportResult:
         """The whole import, in the order the module's docstring gives. Nothing is written until everything before the
-        write has passed."""
+        write has passed. The parse, the key derivation and the validation run one at a time in the whole process (a
+        second request is `busy`), so concurrent imports can't add up their memory."""
         with temporary_secret(passphrase, minimum=PASSPHRASE_MIN) if passphrase is not None else nullcontext():
             try:
                 if len(text) > MAX_FILE_CHARS:
                     raise ExportInvalid("The file is too long.")
-                envelope = parse_envelope(text)
-                check_header(envelope, max_schema=highest_known_schema())
-                encrypted = envelope["encryption"] is not None
-                if encrypted and passphrase is None:
-                    raise PassphraseRequired("The file is encrypted.")
-                if encrypted:
-                    with _one_derivation():
-                        body = open_envelope(envelope, passphrase)
-                else:
-                    body = open_envelope(envelope, None)
-                payload = self._validated(body, encrypted=encrypted)
-            except (ExportInvalid, ExportTooNew, PassphraseRequired, WrongPassphrase) as error:
+                with _one_derivation():
+                    envelope = parse_envelope(text)
+                    check_header(envelope, max_schema=highest_known_schema())
+                    encrypted = envelope["encryption"] is not None
+                    if encrypted and passphrase is None:
+                        raise PassphraseRequired("The file is encrypted.")
+                    if not encrypted and passphrase is not None:
+                        # Not ignored: a passphrase for a plain file may mean the file was swapped for a plain one.
+                        raise ApiError(422, "export_not_encrypted")
+                    body = open_envelope(envelope, passphrase)
+                    payload = self._validated(body, encrypted=encrypted)
+            except (ExportInvalid, ExportTooNew, PassphraseRequired, WrongPassphrase, KeyDerivationFailed) as error:
                 raise _refusal(error) from None
-            return self._write(payload)
+            return self._write(payload, encrypted=encrypted)
 
     @staticmethod
     def _validated(body: bytes, *, encrypted: bool) -> Payload:
@@ -383,10 +424,11 @@ class ExportService:
             raise ExportInvalid("The file's secrets don't match its encryption.")
         return payload
 
-    def _write(self, payload: Payload) -> ImportResult:
+    def _write(self, payload: Payload, *, encrypted: bool) -> ImportResult:
         stores = [StoreImport(**entry.model_dump()) for entry in payload.stores]
         settings = {**payload.settings.model_dump(), **payload.storage.model_dump()}
-        with self._lock:
+        wrote_token = False
+        with SECRETS_WRITE_LOCK:  # the lock first, then the database's write lock, as everywhere
             try:
                 before = self._entries_before(payload.secrets)
             except SecretStoreError:
@@ -395,14 +437,15 @@ class ExportService:
             touched_secrets = False
             connection = self._connect()
             try:
-                connection.execute("BEGIN IMMEDIATE")
                 try:
+                    connection.execute("BEGIN IMMEDIATE")
                     if live_store_count(connection) > 0:
                         raise ApiError(409, "import_needs_empty")
                     written = write_import(connection, settings=settings, stores=stores, created_at=to_iso(self._now()))
                     touched_secrets = True
                     entries = self._write_secrets(payload.secrets, stores, written)  # before the commit
                     connection.execute("COMMIT")
+                    wrote_token = payload.secrets is not None and payload.secrets.github_token is not None
                 except BaseException as error:
                     _rollback(connection)
                     self._undo(written, before if touched_secrets else {})
@@ -410,11 +453,19 @@ class ExportService:
                         raise ApiError(503, "secrets_unavailable") from None
                     if isinstance(error, UrlTaken | CodeTaken):
                         raise ApiError(422, "export_invalid") from None
+                    if isinstance(error, sqlite3.OperationalError):  # a locked or failing database: no detail
+                        _log.warning("A backup import couldn't use the database (%s)", type(error).__name__)
+                        raise ApiError(503, "backup_failed") from None
                     raise
             finally:
                 connection.close()
+            if wrote_token and self._forget_expiry is not None:  # committed: the cached expiry was the old token's
+                try:
+                    self._forget_expiry()
+                except Exception as error:  # the import is done; a stale expiry corrects itself at the next check
+                    _log.warning("The token's expiry couldn't be reset (%s)", type(error).__name__)
         _log.info("A backup file was imported (%d stores)", len(stores))
-        return ImportResult(stores=len(stores), settings=len(settings), secrets=entries)
+        return ImportResult(stores=len(stores), settings=len(settings), secrets=entries, encrypted=encrypted)
 
     def _entries_before(self, secrets: PayloadSecrets | None) -> dict[str, str | None]:
         """What the entries an import may overwrite hold now (the S3 pairs and the token it will write), so a failure
@@ -484,11 +535,10 @@ def make_backup_router(service: ExportService) -> APIRouter:
     @router.post(BACKUP_EXPORT_PATH, response_model=None, responses=_FILE_RESPONSE)
     def export_backup(body: ExportRequest) -> Response:
         exported = service.export(body.passphrase)
-        return Response(
-            content=exported.text,
-            media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="{exported.filename}"'},
-        )
+        headers = {"Content-Disposition": f'attachment; filename="{exported.filename}"'}
+        if exported.left_out:
+            headers[LEFT_OUT_HEADER] = exported.left_out
+        return Response(content=exported.text, media_type="application/json", headers=headers)
 
     @router.post(BACKUP_IMPORT_PATH, response_model=ImportResult, responses=_ERRORS)
     def import_backup(body: ImportRequest) -> ImportResult:

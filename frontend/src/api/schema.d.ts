@@ -510,7 +510,7 @@ export interface components {
              * Error
              * @enum {string}
              */
-            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty";
+            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty" | "export_not_encrypted" | "backup_failed" | "too_many_stores";
         };
         /** ExportRequest */
         ExportRequest: {
@@ -572,6 +572,8 @@ export interface components {
         };
         /** ImportResult */
         ImportResult: {
+            /** Encrypted */
+            encrypted: boolean;
             /** Secrets */
             secrets: number;
             /** Settings */

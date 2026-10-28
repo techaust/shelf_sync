@@ -47,7 +47,12 @@ def test_an_encrypted_export_imports_every_secret_into_another_credential_manage
     populate(source)
     target = make_install(tmp_path, "target", secrets=second)  # type: ignore[arg-type]
     response = import_response(target, export_text(source, PASSPHRASE), PASSPHRASE)
-    assert response.status_code == 200 and response.json() == {"stores": 2, "settings": 12, "secrets": 9}
+    assert response.status_code == 200 and response.json() == {
+        "stores": 2,
+        "settings": 12,
+        "secrets": 9,
+        "encrypted": True,
+    }
     ids = [s["id"] for s in target.client.get("/api/stores").json()["stores"]]
     keys = StoreCredentials(second)
     assert [keys.read(i) for i in ids] == [(KEY, SECRET), (KEY_2, SECRET_2)]

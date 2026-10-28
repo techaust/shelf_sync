@@ -7,7 +7,6 @@ through the whole API.
 import json
 import logging
 import re
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -17,8 +16,9 @@ import pytest
 from shelfsync.api import backup as api_backup
 from shelfsync.api.backup import IMPORT_BODY_MAX, ExportService, Payload
 from shelfsync.api.storage import StorageValues
-from shelfsync.db.export import SETTINGS_KEYS, STORAGE_KEYS, STORE_FIELDS, live_store_count
+from shelfsync.db.export import SETTINGS_KEYS, STORAGE_KEYS, STORE_FIELDS
 from shelfsync.db.settings import DEFAULTS, get_setting, set_setting
+from shelfsync.db.stores import live_store_count
 from shelfsync.secure import backup_crypto
 from shelfsync.secure.backup_crypto import MAX_FILE_CHARS, open_envelope, parse_envelope
 from shelfsync.secure.credentials import S3Credentials, StoreCredentials
@@ -176,7 +176,7 @@ def test_an_export_of_an_empty_install_is_valid_and_imports_into_another(tmp_pat
     for passphrase in (None, PASSPHRASE):
         response = import_response(other, export_text(empty, passphrase), passphrase)
         assert response.status_code == 200
-        assert response.json() == {"stores": 0, "settings": 12, "secrets": 0}
+        assert response.json() == {"stores": 0, "settings": 12, "secrets": 0, "encrypted": passphrase is not None}
 
 
 def test_every_export_of_the_same_install_differs_but_opens_the_same(source: Install) -> None:
@@ -266,7 +266,7 @@ def test_a_bad_request_never_echoes_the_passphrase(source: Install) -> None:
 def test_a_plain_file_round_trips_the_settings_and_the_stores_but_no_secret(source: Install, target: Install) -> None:
     response = import_response(target, export_text(source))
     assert response.status_code == 200
-    assert response.json() == {"stores": 2, "settings": 12, "secrets": 0}
+    assert response.json() == {"stores": 2, "settings": 12, "secrets": 0, "encrypted": False}
     listed = target.client.get("/api/stores").json()["stores"]
     assert [
         (s["code"], s["name"], s["url"], s["shape"], s["color"], s["spacing_ms"], s["main_button"], s["state"])
@@ -293,7 +293,8 @@ def test_a_plain_file_round_trips_the_settings_and_the_stores_but_no_secret(sour
 def test_an_encrypted_file_round_trips_every_secret(source: Install, target: Install) -> None:
     response = import_response(target, export_text(source, PASSPHRASE), PASSPHRASE)
     assert response.status_code == 200
-    assert response.json() == {"stores": 2, "settings": 12, "secrets": 9}  # 2 + 2 store keys, 2 + 2 S3, 1 token
+    # 2 + 2 store keys, 2 + 2 S3, 1 token
+    assert response.json() == {"stores": 2, "settings": 12, "secrets": 9, "encrypted": True}
     listed = target.client.get("/api/stores").json()["stores"]
     keys = StoreCredentials(target.secrets)
     assert [keys.read(s["id"]) for s in listed] == [(KEY, SECRET), (KEY_2, SECRET_2)]
@@ -384,8 +385,13 @@ def test_an_encrypted_file_without_a_passphrase_is_passphrase_required(source: I
     assert snapshot(target) == before
 
 
-def test_a_passphrase_given_for_a_plain_file_is_ignored(source: Install, target: Install) -> None:
-    assert import_response(target, export_text(source), PASSPHRASE).status_code == 200
+def test_a_passphrase_sent_with_a_plain_file_is_refused(source: Install, target: Install) -> None:
+    """R3: a plain file where the owner expected an encrypted one may be a swapped file: never imported silently."""
+    before = snapshot(target)
+    response = import_response(target, export_text(source), PASSPHRASE)
+    assert (response.status_code, response.json()) == (422, {"error": "export_not_encrypted"})
+    assert snapshot(target) == before and target.expiry_resets == []
+    assert import_response(target, export_text(source)).json()["encrypted"] is False  # without one it imports
 
 
 def test_a_plain_file_that_holds_secrets_is_refused(target: Install) -> None:
@@ -645,7 +651,8 @@ def test_importing_twice_is_refused_the_second_time(source: Install, target: Ins
 # ---- size limits ----
 
 
-def test_a_file_text_over_32_mib_is_export_invalid(target: Install) -> None:
+def test_a_file_text_over_the_1_mib_cap_is_export_invalid(target: Install) -> None:
+    assert MAX_FILE_CHARS == 1024 * 1024 and IMPORT_BODY_MAX == MAX_FILE_CHARS + 64 * 1024
     response = import_response(target, " " * (MAX_FILE_CHARS + 1))
     assert (response.status_code, response.json()) == (422, {"error": "export_invalid"})
     assert rows(target, "store") == []
@@ -711,7 +718,9 @@ def test_while_a_derivation_runs_another_export_or_import_is_busy(source: Instal
         busy_import = import_response(target, text, PASSPHRASE)
         assert (busy_import.status_code, busy_import.json()) == (409, {"error": "busy"})
         assert source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": None}).status_code == 200  # no KDF
-        assert import_response(target, export_text(source)).status_code == 200  # a plain import has none either
+        plain = import_response(target, export_text(source))  # a plain import parses under the slot too (R2)
+        assert (plain.status_code, plain.json()) == (409, {"error": "busy"})
+        assert rows(target, "store") == []
     finally:
         api_backup._KDF_SLOT.release()
     assert source.client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": PASSPHRASE}).status_code == 200
@@ -793,9 +802,9 @@ def test_a_failed_commit_removes_the_entries_already_written(source: Install, ta
     target.secrets.set("github-token", "github_pat_" + "old" * 10)
     before = snapshot(target)
     target.exports._connect = lambda: CommitFails(target.open_db())
-    with pytest.raises(sqlite3.OperationalError):
-        target.client.post(IMPORT, headers=WRITE_HEADERS, json={"file": text, "passphrase": PASSPHRASE})
-    assert snapshot(target) == before
+    response = import_response(target, text, PASSPHRASE)
+    assert (response.status_code, response.json()) == (503, {"error": "backup_failed"})  # R6: no detail in the body
+    assert snapshot(target) == before and target.expiry_resets == []
 
 
 def test_a_credential_manager_that_cant_be_read_stops_an_import_before_anything_is_written(

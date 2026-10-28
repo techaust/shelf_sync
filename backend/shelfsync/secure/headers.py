@@ -51,6 +51,11 @@ ErrorCode = Literal[
     "wrong_passphrase",
     "export_too_new",
     "import_needs_empty",
+    # M2.4 review: 422 `export_not_encrypted` (a passphrase sent with a plain file); 503 `backup_failed` (the key
+    # derivation or the database failed); 409 `too_many_stores` (50 live stores already)
+    "export_not_encrypted",
+    "backup_failed",
+    "too_many_stores",
 ]
 
 CONTENT_SECURITY_POLICY = (

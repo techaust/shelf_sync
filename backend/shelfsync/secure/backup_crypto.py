@@ -53,7 +53,10 @@ NONCE_BYTES = 12
 TAG_BYTES = 16
 PASSPHRASE_MIN = 12
 PASSPHRASE_MAX = 1024
-MAX_FILE_CHARS = 32 * 1024 * 1024  # the longest file text an import reads
+# The longest file text an import reads, for format version 1 (settings, stores, storage and secrets: tens of
+# kilobytes at most, with 50 stores). Format version 2 adds the catalog (M3) and raises this; until then a bigger file
+# isn't one of ours.
+MAX_FILE_CHARS = 1024 * 1024
 
 _CREATED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -83,6 +86,10 @@ class WrongPassphrase(ExportError):
     apart, by design)."""
 
 
+class KeyDerivationFailed(ExportError):
+    """scrypt refused or ran out of memory. The message is the exception's type name and nothing else."""
+
+
 class PassphraseInvalid(ValueError):
     """A passphrase outside 12 to 1024 characters (counted after NFC)."""
 
@@ -105,15 +112,21 @@ def check_passphrase(passphrase: str) -> str:
 
 
 def derive_key(passphrase: str, salt: bytes) -> bytes:
-    return hashlib.scrypt(
-        passphrase_bytes(passphrase),
-        salt=salt,
-        n=SCRYPT_N,
-        r=SCRYPT_R,
-        p=SCRYPT_P,
-        maxmem=SCRYPT_MAXMEM,
-        dklen=KEY_BYTES,
-    )
+    """The AES key. `PassphraseInvalid` for a passphrase outside the limits; `KeyDerivationFailed` when scrypt itself
+    fails (an OpenSSL without scrypt or without the memory, a ValueError, a MemoryError)."""
+    password = passphrase_bytes(passphrase)
+    try:
+        return hashlib.scrypt(
+            password,
+            salt=salt,
+            n=SCRYPT_N,
+            r=SCRYPT_R,
+            p=SCRYPT_P,
+            maxmem=SCRYPT_MAXMEM,
+            dklen=KEY_BYTES,
+        )
+    except (ValueError, MemoryError, OverflowError) as error:
+        raise KeyDerivationFailed(type(error).__name__) from None
 
 
 def canonical(value: Any) -> bytes:

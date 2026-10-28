@@ -55,7 +55,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 _lock = threading.Lock()
-_secrets: set[str] = set()
+_secrets: set[str] = (
+    set()
+)  # permanent: only `register_secret` writes here, and nothing removes a value but `clear_secrets`
+_temporary: dict[str, int] = {}  # value -> how many `temporary_secret` blocks hold it right now (always above 0)
 _registered_pattern: re.Pattern[str] | None = None
 
 
@@ -74,35 +77,42 @@ def register_secret(value: str) -> bool:
 
 
 def _rebuild_pattern() -> None:
-    """Recompile the pattern for the registered values (the caller holds `_lock`). Longest first, so a secret that
-    contains another one is masked whole."""
+    """Recompile the pattern for the permanent values and every value a temporary block holds (the caller holds
+    `_lock`). Longest first, so a secret that contains another one is masked whole."""
     global _registered_pattern
-    if not _secrets:
+    values = _secrets | _temporary.keys()
+    if not values:
         _registered_pattern = None
         return
-    ordered = sorted(_secrets, key=len, reverse=True)
+    ordered = sorted(values, key=len, reverse=True)
     _registered_pattern = re.compile("|".join(re.escape(item) for item in ordered))
 
 
 @contextmanager
 def temporary_secret(value: str, *, minimum: int = MIN_REGISTERED_LENGTH) -> Iterator[None]:
-    """Mask this exact value while the block runs, then forget it (a backup passphrase lives for one request). A value
-    that was already registered (a stored secret) stays registered. A value shorter than `minimum` is not registered
-    at all: the caller names the shortest value it accepts (12 for a passphrase)."""
-    added = False
-    if len(value) >= minimum:
+    """Mask this exact value while the block runs (a backup passphrase lives for one request). It is dropped when the
+    last block holding it ends, unless `register_secret` also holds it (a stored secret that equals it stays masked,
+    whichever came first). Blocks may overlap and end in any order: each counts once. A value shorter than `minimum` is
+    not masked at all: the caller names the shortest value it accepts (12 for a passphrase)."""
+    held = len(value) >= minimum
+    if held:
         with _lock:
-            if value not in _secrets:
-                _secrets.add(value)
-                added = True
+            count = _temporary.get(value, 0)
+            _temporary[value] = count + 1
+            if count == 0 and value not in _secrets:  # the pattern changes only when the value is new to it
                 _rebuild_pattern()
     try:
         yield
     finally:
-        if added:
+        if held:
             with _lock:
-                _secrets.discard(value)
-                _rebuild_pattern()
+                remaining = _temporary.get(value, 1) - 1  # 1 if `clear_secrets` ran inside the block
+                if remaining > 0:
+                    _temporary[value] = remaining
+                else:
+                    _temporary.pop(value, None)
+                    if value not in _secrets:
+                        _rebuild_pattern()
 
 
 def clear_secrets() -> None:
@@ -110,6 +120,7 @@ def clear_secrets() -> None:
     global _registered_pattern
     with _lock:
         _secrets.clear()
+        _temporary.clear()
         _registered_pattern = None
 
 
