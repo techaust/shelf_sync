@@ -69,7 +69,7 @@ def test_save_registers_both_values_for_redaction_and_reads_back() -> None:
     assert secrets.get("store-3-key") == KEY and secrets.get("store-3-secret") == SECRET
     pair = credentials.pair(3)
     assert pair is not None and (pair.consumer_key, pair.consumer_secret) == (KEY, SECRET)
-    assert credentials.masked(3) == (f"ck_{DOTS}{KEY[-4:]}", f"cs_{DOTS}{SECRET[-4:]}")
+    assert credentials.masks(3) == (f"ck_{DOTS}{KEY[-4:]}", f"cs_{DOTS}{SECRET[-4:]}", True)
     assert redact(f"{KEY} {SECRET}") == f"{MASK} {MASK}"
 
 
@@ -128,7 +128,7 @@ def test_pair_and_masked_survive_an_unreadable_store_and_say_nothing_is_set(capl
     credentials.save(1, KEY, SECRET)
     secrets.fail_get = True
     caplog.set_level(logging.WARNING)
-    assert credentials.pair(1) is None and credentials.masked(1) == (None, None)
+    assert credentials.pair(1) is None and credentials.masks(1) == (None, None, False)
     assert "Fake" not in caplog.text or KEY not in caplog.text
     assert KEY not in caplog.text and SECRET not in caplog.text
 

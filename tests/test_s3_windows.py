@@ -35,7 +35,7 @@ def test_four_entries_are_set_read_replaced_and_deleted_and_nothing_is_left(
     assert credentials.read("rw") == (RW_ID, RW_SECRET) and credentials.read("ro") == (RO_ID, RO_SECRET)
     pair = credentials.pair("ro")
     assert pair is not None and pair.key_id == RO_ID
-    assert credentials.masked("rw") == (mask_s3_key_id(RW_ID), mask_s3_secret(RW_SECRET))
+    assert credentials.masks("rw") == (mask_s3_key_id(RW_ID), mask_s3_secret(RW_SECRET), True)
 
     credentials.save("rw", RW_ID_2, RW_SECRET_2)  # replaced, not duplicated; the other pair is untouched
     assert credentials.read("rw") == (RW_ID_2, RW_SECRET_2)

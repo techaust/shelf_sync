@@ -226,3 +226,20 @@ def test_property_text_with_no_secret_comes_out_unchanged(text: str) -> None:
     """LOG-01: no secret, no change."""
     clear_secrets()
     assert redact(text) == text
+
+
+def test_registering_a_value_again_does_not_rebuild_the_pattern() -> None:
+    """S2: every GET of the Storage and Stores settings registers what it reads, so a repeat must be cheap: the compiled
+    pattern is the same object, and a new value does rebuild it."""
+    from shelfsync.secure import redact as redact_module
+
+    clear_secrets()
+    assert register_secret("A" * 16) is True
+    first = redact_module._registered_pattern
+    assert first is not None
+    assert register_secret("A" * 16) is True  # still reports success
+    assert redact_module._registered_pattern is first
+    assert register_secret("B" * 16) is True
+    assert redact_module._registered_pattern is not first
+    assert redact("A" * 16 + " " + "B" * 16) == f"{MASK} {MASK}"
+    clear_secrets()

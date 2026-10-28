@@ -99,11 +99,6 @@ class StoreCredentials:
                 register_secret(value)
         return mask(key), mask(secret), True
 
-    def masked(self, store_id: int) -> tuple[str | None, str | None]:
-        """The two masks; a read failure shows both as not set (`masks` also says whether it could be read)."""
-        key, secret, _readable = self.masks(store_id)
-        return key, secret
-
     def save(self, store_id: int, consumer_key: str, consumer_secret: str) -> None:
         """Write the pair. If the second write fails, the first is put back (or removed if there was none), then
         `SecretStoreError` is raised, so a pair is never half replaced. Both values are registered for redaction first:
@@ -232,11 +227,6 @@ class S3Credentials:
             if value is not None:
                 register_secret(value)
         return mask_s3_key_id(key_id), mask_s3_secret(secret), True
-
-    def masked(self, slot: S3Slot) -> tuple[str | None, str | None]:
-        """The two masks; a read failure shows both as not set (`masks` also says whether it could be read)."""
-        key_id, secret, _readable = self.masks(slot)
-        return key_id, secret
 
     def pair(self, slot: S3Slot) -> S3Pair | None:
         """Both values for use, or None when either is missing or the store can't be read."""

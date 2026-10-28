@@ -83,7 +83,7 @@ def test_save_registers_both_values_for_redaction_and_reads_back() -> None:
     assert credentials.read("ro") == (None, None)
     pair = credentials.pair("rw")
     assert pair is not None and (pair.key_id, pair.secret) == (RW_ID, RW_SECRET)
-    assert credentials.masked("rw") == (mask_s3_key_id(RW_ID), mask_s3_secret(RW_SECRET))
+    assert credentials.masks("rw") == (mask_s3_key_id(RW_ID), mask_s3_secret(RW_SECRET), True)
     assert redact(f"{RW_ID} {RW_SECRET}") == f"{MASK} {MASK}"
 
 
@@ -154,7 +154,7 @@ def test_pair_and_masked_survive_an_unreadable_store_and_say_nothing_is_set(capl
     credentials.save("rw", RW_ID, RW_SECRET)
     secrets.fail_get = True
     caplog.set_level(logging.WARNING)
-    assert credentials.pair("rw") is None and credentials.masked("rw") == (None, None)
+    assert credentials.pair("rw") is None and credentials.masks("rw") == (None, None, False)
     assert len(caplog.records) == 2 and RW_ID not in caplog.text and RW_SECRET not in caplog.text
 
 
@@ -163,7 +163,7 @@ def test_one_missing_entry_means_no_pair() -> None:
     secrets.set("s3-ro-key-id", RO_ID)
     credentials = S3Credentials(secrets)
     assert credentials.pair("ro") is None
-    assert credentials.masked("ro") == (mask_s3_key_id(RO_ID), None)
+    assert credentials.masks("ro") == (mask_s3_key_id(RO_ID), None, True)
 
 
 # ---- start-up -------------------------------------------------------------------------------------------------------
@@ -333,7 +333,6 @@ def test_masks_say_when_credential_manager_could_not_be_read(caplog: pytest.LogC
     caplog.set_level(logging.WARNING)
     assert S3Credentials(secrets).masks("rw") == (None, None, False)
     assert StoreCredentials(secrets).masks(1) == (None, None, False)
-    assert S3Credentials(secrets).masked("rw") == (None, None)  # the older shape is unchanged
     secrets.fail_get = False
     assert S3Credentials(secrets).masks("ro") == (None, None, True)  # nothing stored is readable and not set
 
@@ -349,6 +348,12 @@ def test_every_key_shape_is_at_least_as_long_as_the_shortest_value_the_redaction
     assert S3_KEY_ID.fullmatch(short + "A") and S3_SECRET.fullmatch(short + "A")  # the shortest accepted is registered
     assert CONSUMER_KEY.fullmatch("ck_" + "a" * 20) and len("ck_" + "a" * 20) >= MIN_REGISTERED_LENGTH
     assert CONSUMER_SECRET.fullmatch("cs_" + "a" * 20) and len("cs_" + "a" * 20) >= MIN_REGISTERED_LENGTH
+    # S3: a value one character under the minimum (15 in all) fails both store patterns, and so does the longest value
+    # their own rule refuses (prefix + 19), which is also shorter than a validated key
+    for prefix, pattern in (("ck_", CONSUMER_KEY), ("cs_", CONSUMER_SECRET)):
+        under = prefix + "a" * (MIN_REGISTERED_LENGTH - 1 - len(prefix))
+        assert len(under) == MIN_REGISTERED_LENGTH - 1 and pattern.fullmatch(under) is None
+        assert pattern.fullmatch(prefix + "a" * 19) is None
 
 
 def test_a_shortest_pair_is_saved_and_fully_redacted() -> None:
