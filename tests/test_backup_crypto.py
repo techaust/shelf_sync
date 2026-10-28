@@ -540,3 +540,10 @@ def _saved_file_cached() -> dict[str, Any]:
     if "file" not in _CACHE:
         _CACHE["file"] = _saved_file()
     return _CACHE["file"]
+
+
+def test_base64_must_be_in_its_one_canonical_form() -> None:
+    """`QQ==` and `QR==` decode to the same byte; only the first is what this module writes."""
+    assert backup_crypto._unb64("QQ==") == b"A"
+    with pytest.raises(ExportInvalid):
+        backup_crypto._unb64("QR==")
