@@ -64,9 +64,8 @@ def register_secret(value: str) -> bool:
     if len(value) < MIN_REGISTERED_LENGTH:
         return False
     with _lock:
-        if (
-            value in _secrets
-        ):  # already registered (every GET of the Storage and Stores settings registers what it reads)
+        # Already registered: every GET of the Storage and Stores settings registers what it reads.
+        if value in _secrets:
             return True
         _secrets.add(value)
         # Longest first, so a secret that contains another one is masked whole.

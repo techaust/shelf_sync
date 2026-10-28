@@ -32,7 +32,7 @@
 
 ## 3. Secrets
 - In **Windows Credential Manager** (keyring), one entry per secret; never in SQLite, settings, `runtime.json` or logs.
-- The UI shows them **masked** (`ck_••••a91f`) and can only **replace** them (write-only endpoint); a secret never travels back to the browser.
+- The UI shows them **masked** (store keys `ck_••••a91f`; an S3 key ID its first and last four, `AKIA••••9XYZ`; an S3 secret only `••••`; never the length) and can only **replace** them (write-only endpoint); a secret never travels back to the browser.
 - **Log redaction:** one `redact` step, applied to every final log line (tracebacks included), every HTTP error body and every other output path, masks anything shaped like `ck_…`, `cs_…`, AWS keys, GitHub tokens, the install token and the session cookie. A test sends known secrets through every log path and fails if any appears.
 - **The one raw file:** the launcher's stall report, `tmp\shutdown-stall.txt` (M1a.5), is written by Python's `faulthandler` without `redact`. It holds only thread ids, file paths, line numbers and function names, never values. The next start reads it back through the redacting log handler (capped at 64 KB, and never through a link), then removes it with the rest of `tmp\`.
 - Errors from the stores and AWS are stripped of signatures and auth headers before they're shown or logged.
