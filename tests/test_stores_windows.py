@@ -38,7 +38,7 @@ def test_six_entries_are_set_read_replaced_and_deleted_and_nothing_is_left(
         assert credentials.read(store_id) == (KEY, SECRET)
         pair = credentials.pair(store_id)
         assert pair is not None and pair.consumer_key == KEY
-    assert credentials.masked(12) == (f"ck_••••{KEY[-4:]}", f"cs_••••{SECRET[-4:]}")
+    assert credentials.masks(12) == (f"ck_••••{KEY[-4:]}", f"cs_••••{SECRET[-4:]}", True)
 
     credentials.save(2, KEY_2, SECRET_2)  # replaced, not duplicated; the others are untouched
     assert credentials.read(2) == (KEY_2, SECRET_2)

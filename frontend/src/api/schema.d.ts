@@ -36,6 +36,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/secrets/s3-ro": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put S3 Ro */
+        put: operations["put_s3_ro_api_secrets_s3_ro_put"];
+        post?: never;
+        /** Delete S3 Ro */
+        delete: operations["delete_s3_ro_api_secrets_s3_ro_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/secrets/s3-rw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put S3 Rw */
+        put: operations["put_s3_rw_api_secrets_s3_rw_put"];
+        post?: never;
+        /** Delete S3 Rw */
+        delete: operations["delete_s3_rw_api_secrets_s3_rw_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/session": {
         parameters: {
             query?: never;
@@ -133,6 +169,24 @@ export interface paths {
         get: operations["get_backup_settings_api_settings_backup_get"];
         /** Put Backup Settings */
         put: operations["put_backup_settings_api_settings_backup_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Storage */
+        get: operations["get_storage_api_settings_storage_get"];
+        /** Put Storage */
+        put: operations["put_storage_api_settings_storage_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -470,6 +524,20 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** KeyMasks */
+        KeyMasks: {
+            /** Access Key Id */
+            access_key_id: string | null;
+            /** Secret Access Key */
+            secret_access_key: string | null;
+        };
+        /** KeyPairRequest */
+        KeyPairRequest: {
+            /** Access Key Id */
+            access_key_id: string;
+            /** Secret Access Key */
+            secret_access_key: string;
+        };
         /** KeysModel */
         KeysModel: {
             /** Consumer Key */
@@ -530,6 +598,39 @@ export interface components {
             /** Ticket */
             ticket: string;
         };
+        /** StorageResponse */
+        StorageResponse: {
+            /** Download Link Template */
+            download_link_template: string;
+            /** Keep Previous Files */
+            keep_previous_files: number;
+            /** Keys Readable */
+            keys_readable: boolean;
+            ro: components["schemas"]["KeyMasks"];
+            rw: components["schemas"]["KeyMasks"];
+            /** S3 Bucket */
+            s3_bucket: string;
+            /** S3 Endpoint */
+            s3_endpoint: string;
+            /** S3 Region */
+            s3_region: string;
+        };
+        /**
+         * StorageValues
+         * @description The five settings. Strict types, so `true` is never a count and `7` is never a bucket.
+         */
+        StorageValues: {
+            /** Download Link Template */
+            download_link_template: string;
+            /** Keep Previous Files */
+            keep_previous_files: number;
+            /** S3 Bucket */
+            s3_bucket: string;
+            /** S3 Endpoint */
+            s3_endpoint: string;
+            /** S3 Region */
+            s3_region: string;
+        };
         /** StoreModel */
         StoreModel: {
             /** Code */
@@ -543,6 +644,8 @@ export interface components {
             /** Id */
             id: number;
             keys: components["schemas"]["KeysModel"];
+            /** Keys Readable */
+            keys_readable: boolean;
             /** Main Button */
             main_button: string;
             /** Name */
@@ -775,6 +878,158 @@ export interface operations {
             };
         };
     };
+    put_s3_ro_api_secrets_s3_ro_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyPairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_s3_ro_api_secrets_s3_ro_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_s3_rw_api_secrets_s3_rw_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyPairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_s3_rw_api_secrets_s3_rw_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     sign_in_api_session_post: {
         parameters: {
             query?: never;
@@ -982,6 +1237,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupSettingsValues"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_storage_api_settings_storage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageResponse"];
+                };
+            };
+        };
+    };
+    put_storage_api_settings_storage_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageValues"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageValues"];
                 };
             };
             /** @description Unprocessable Content */

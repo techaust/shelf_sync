@@ -19,6 +19,7 @@ from shelfsync.api.backup_settings import BackupSettingsService, make_backup_set
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
+from shelfsync.api.storage import StorageService, make_storage_router
 from shelfsync.api.stores import make_stores_router
 from shelfsync.api.updates import make_updates_router
 from shelfsync.paths import source_ui_dir
@@ -100,6 +101,7 @@ def create_app(
     app_settings: AppSettingsService | None = None,
     stores: StoreService | None = None,
     backups: BackupSettingsService | None = None,
+    storage: StorageService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -113,6 +115,8 @@ def create_app(
     (M2.1); the default runs on an in-memory database and secret store, so no test touches a file or Credential Manager
     by accident. `backups` is the Settings > Backup service and the daily backup scheduler (M2.2); the default keeps
     the settings in memory and runs no schedule. The app starts the scheduler with the server and stops it with it.
+    `storage` is the Settings > Storage service (M2.3): the S3 settings and key pairs; the default runs on an in-memory
+    database and secret store.
     """
     service = updates if updates is not None else UpdateService.development()
     backup_service = backups if backups is not None else BackupSettingsService.development()
@@ -162,6 +166,7 @@ def create_app(
     )
     app.include_router(make_stores_router(stores if stores is not None else StoreService.in_memory()))
     app.include_router(make_backup_settings_router(backup_service))
+    app.include_router(make_storage_router(storage if storage is not None else StorageService.development()))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

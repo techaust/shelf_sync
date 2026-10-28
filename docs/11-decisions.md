@@ -10,6 +10,11 @@ One row per decision. A decided question is never asked again; to change one, ad
 
 | Date | Decision | Who | Applied in |
 |---|---|---|---|
+| 2026-10-28 | A saved S3 secret is shown as a constant `••••`, nothing of the secret itself; an S3 key ID shows its first and last four (`AKIA••••9XYZ`) | Owner | [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md) §3 (R11); [06](06-security.md) §3 |
+| 2026-10-28 | The S3 region has no default (`""`): the owner types it on the Storage screen, so nothing about the bucket's location goes into the public repo | Owner | [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md) §3 |
+| 2026-10-28 | Storage settings (m2.3): region and bucket may be saved empty (all five fields still required); the endpoint is `https` to a dotted DNS name, or `http`/`https` to `127.0.0.1` or `localhost` only, with no userinfo, query, fragment, empty port or path beyond `/`; the bucket follows S3's naming rules plus RFC 1123's no `.-`/`-.`; the link template holds `{key}` once and no other brace, and is filled with `.replace("{key}", key)`, never `str.format`; a failed key save puts the earlier pair back; one lock serialises storage writes (m2.4's import and m2.7's reads take it too) | Lead (proposed) | [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md) §3 |
+| 2026-10-28 | Masks are always read with a `keys_readable` flag (`GET /api/settings/storage` and every store body): an unreadable Credential Manager shows "Couldn't be read", never "Not set"; every value read for masking is registered with `redact` | Lead (proposed) | [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md) §3 (R4, R10, S1) |
+| 2026-10-28 | `StoreCredentials` and `S3Credentials` keep their own pair code (about 40 lines alike) until one Tier A refactor with its own review, at the latest at the M2-exit `simplify` | Lead (proposed) | [runs/m2.3-storage-settings.md](runs/m2.3-storage-settings.md) §3 |
 | 2026-10-25 | Name ShelfSync; a new private GitHub repo | Owner | [02 §1](02-plan.md) |
 | 2026-10-25 | Project folder `ShelfSync` → `shelf_sync`; the GitHub repo is `shelf_sync`; the product name stays ShelfSync | Owner | [02 §1](02-plan.md), [03 D-1](03-prd.md) |
 | 2026-10-25 | Single user, this PC, Windows only | Owner | [03 D-2](03-prd.md) |

@@ -143,6 +143,7 @@ class StoreModel(BaseModel):
     main_button: str
     state: Literal["active", "paused"]
     keys: KeysModel
+    keys_readable: bool  # false: Credential Manager couldn't be read, so null masks don't mean "no keys saved"
     health: HealthModel
 
 
@@ -191,6 +192,7 @@ def to_model(view: StoreView) -> StoreModel:
         main_button=row.main_button,
         state=row.state,  # type: ignore[arg-type]
         keys=KeysModel(consumer_key=view.consumer_key, consumer_secret=view.consumer_secret),
+        keys_readable=view.keys_readable,
         health=HealthModel(
             state=row.health,  # type: ignore[arg-type]
             reason=row.health_reason,

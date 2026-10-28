@@ -109,6 +109,7 @@ class StoreView:
     row: StoreRow
     consumer_key: str | None  # masked
     consumer_secret: str | None  # masked
+    keys_readable: bool = True  # False: Credential Manager couldn't be read, so the two `None` mean "unknown"
 
 
 @dataclass(frozen=True)
@@ -165,8 +166,8 @@ class StoreService:
     # ---- reads -----------------------------------------------------------------------------------------------------
 
     def _view(self, row: StoreRow) -> StoreView:
-        key, secret = self._credentials.masked(row.id)
-        return StoreView(row, key, secret)
+        key, secret, readable = self._credentials.masks(row.id)
+        return StoreView(row, key, secret, readable)
 
     def list(self) -> list[StoreView]:
         with closing(self._open()) as connection:
