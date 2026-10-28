@@ -1,20 +1,51 @@
-import { useCallback, useState } from "react";
-import { applyTheme, browserThemeHost, readPreference, savePreference, type ThemePreference } from "./theme";
+import { useSyncExternalStore } from "react";
+import {
+  applyTheme,
+  browserThemeHost,
+  readPreference,
+  savePreference,
+  type ThemeHost,
+  type ThemePreference,
+} from "./theme";
 
 /**
- * The theme preference for the theme menu. Nothing is written while React renders: early.ts applied the stored
- * preference before the first render, and a new choice is applied once, in the event that makes it. A Windows switch
- * while on "system" needs no listener here: "system" leaves <html> without data-theme, so the stylesheet's media
- * query follows Windows by itself.
+ * One theme preference for the whole tab, shared by the app bar's ThemeMenu and Settings › App (UI-SET), so the two
+ * always show the same value. A choice is applied once, in the event that makes it (localStorage keeps it for the
+ * next page load, before React renders: early.ts). A Windows switch while on "system" needs no listener: "system"
+ * leaves <html> without data-theme, so the stylesheet's media query follows Windows by itself.
  */
-export function useTheme(): { preference: ThemePreference; setPreference: (next: ThemePreference) => void } {
-  const [preference, setPreferenceState] = useState<ThemePreference>(() => readPreference(browserThemeHost));
+export function createThemeStore(host: ThemeHost) {
+  let preference: ThemePreference | null = null;
+  const listeners = new Set<() => void>();
+  const get = (): ThemePreference => {
+    if (preference === null) preference = readPreference(host);
+    return preference;
+  };
+  return {
+    get,
+    /** Applies and remembers `next`; listeners hear of it only when it changed. */
+    set(next: ThemePreference): void {
+      savePreference(host, next);
+      applyTheme(host, next);
+      if (next === get()) return;
+      preference = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
 
-  const setPreference = useCallback((next: ThemePreference) => {
-    savePreference(browserThemeHost, next);
-    applyTheme(browserThemeHost, next);
-    setPreferenceState(next);
-  }, []);
+export type ThemeStore = ReturnType<typeof createThemeStore>;
 
-  return { preference, setPreference };
+export const themeStore: ThemeStore = createThemeStore(browserThemeHost);
+
+export function useTheme(store: ThemeStore = themeStore): {
+  preference: ThemePreference;
+  setPreference: (next: ThemePreference) => void;
+} {
+  const preference = useSyncExternalStore(store.subscribe, store.get, store.get);
+  return { preference, setPreference: store.set };
 }

@@ -1,6 +1,6 @@
 // The seven screens as M1a.3 ships them: each one's title and its empty state (05 section 6). The screens
 // themselves come in later milestones (Dashboard M3-M5, Upload and Review M4-M5, Catalog M3, Cleanup M3,
-// Activity M5, Settings M1b-M2). Wording is the approved mockup's (13 section 6), with ERR-07 from 13 section 3.
+// Activity M5; Settings is in settings/, from M1b). Wording is the approved mockup's (13 section 6), with ERR-07 from 13 section 3.
 // An action is shown only where it works today; the mockup's "Add a store", "Sync now" and the drop zone's
 // "Drop ZIPs above" come with the screens that make them work.
 
@@ -76,18 +76,6 @@ export function Activity() {
         Icon={History}
         text="Nothing changed yet. Every change ShelfSync makes to a store or S3 appears here."
         action={{ to: "/upload", label: "Upload a ZIP", Icon: UploadIcon }}
-      />
-    </Page>
-  );
-}
-
-export function Settings() {
-  return (
-    <Page title="Settings">
-      <EmptyState
-        Icon={Store}
-        text="Add your first store to start."
-        sub="You need its address and a Shop Manager key."
       />
     </Page>
   );

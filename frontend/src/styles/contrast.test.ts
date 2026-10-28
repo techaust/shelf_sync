@@ -176,3 +176,64 @@ describe("the contrast function", () => {
     expect(contrast("#ffffff", "#ffffff")).toBe(1);
   });
 });
+
+// Settings (UI-SET, m1b.4): the tinted fills settings.css mixes with color-mix(in srgb, <tone> <tint>, <surface>), with
+// the tint amounts read from the generated ShelfSync layer, so a change to a tint is checked too.
+function tint(name: string): number {
+  const found = new RegExp(`--tint-${name}:\\s*([0-9.]+)%`).exec(shelfsyncTokens);
+  if (!found?.[1]) throw new Error(`no --tint-${name} in shelfsync-tokens.css`);
+  return Number(found[1]) / 100;
+}
+/** color-mix(in srgb, a p, b): each gamma-encoded channel mixed linearly, as the browser does for srgb. */
+function mix(a: string, p: number, b: string): string {
+  const channels = (value: string) => [1, 3, 5].map((i) => Number.parseInt(value.slice(i, i + 2), 16));
+  const [x, y] = [channels(a), channels(b)];
+  const mixed = x.map((c, i) => Math.round(c * p + (y[i] ?? 0) * (1 - p)));
+  return `#${mixed.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+describe.each<Theme>(["light", "dark"])("Settings, %s theme", (theme) => {
+  const s = (name: Semantic) => semantic(name, theme);
+  const tones = ["success", "warning", "danger", "info"] as const;
+  const alertFill = (tone: (typeof tones)[number]) => mix(s(tone), tint("alert"), s("surface"));
+  const updateCard = mix(s("selection"), tint("update-card"), s("surface"));
+  const radioSelected = mix(s("selection"), tint("selected-card"), s("surface"));
+
+  it("the mix function matches a hand-worked value", () => {
+    expect(mix("#000000", 0.5, "#ffffff")).toBe("#808080");
+  });
+
+  it.each<[string, string, string]>([
+    ...tones.flatMap((tone) => [
+      [`alert text on the ${tone} fill`, s("text"), alertFill(tone)] as [string, string, string],
+      [`alert time (muted) on the ${tone} fill`, s("text-muted"), alertFill(tone)] as [string, string, string],
+    ]),
+    ["success pill text on its fill", s("success"), mix(s("success"), tint("pill-fill"), s("surface"))],
+    ["update card text", s("text"), updateCard],
+    ["update card muted line", s("text-muted"), updateCard],
+    ["selected theme card text", s("text"), radioSelected],
+    ["danger button and field error on a card", s("danger"), s("surface")],
+    ["danger button in the dialog", s("danger"), s("surface-raised")],
+    ["danger button on its hover fill", s("danger"), mix(s("danger"), tint("danger-hover"), s("surface"))],
+    ["an off button's label", s("text-muted"), s("surface")],
+    ["dialog text", s("text"), s("surface-raised")],
+  ])("%s meets 4.5:1", (_name, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(TEXT);
+  });
+
+  it.each<[string, string, string]>([
+    ...tones.map((tone) => [`alert icon on the ${tone} fill`, s(tone), alertFill(tone)] as [string, string, string]),
+    ["switch off: its thumb on the track", s("text-muted"), s("fill-subtle")],
+    ["switch off: its track border on a card", s("border-control"), s("surface")],
+    ["switch on: its thumb on the track", s("btn-primary-fg"), s("btn-primary-bg")],
+    ["switch on: its track on a card", s("btn-primary-bg"), s("surface")],
+    ["switch locked: its thumb on a card", s("border-control"), s("surface")],
+    ["selected theme card border and icon", s("text-accent"), radioSelected],
+    ["update card border", s("text-accent"), s("surface")],
+    ["danger zone border", s("danger"), s("surface")],
+    ["restart progress on its track", s("text-accent"), s("fill-subtle")],
+    ["focus ring on the update card", s("focus"), updateCard],
+  ])("%s meets 3:1", (_name, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(NON_TEXT);
+  });
+});

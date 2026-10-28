@@ -5,6 +5,7 @@
 // e2e/shell.spec.ts.
 import { describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../api/session";
+import { createSwitchStore } from "../screens/settings/switchStore";
 import { type BootWindow, boot } from "./boot";
 
 const TICKET = "Qx3_vB9-kLmN0pRsTuVwXyZ01234567890abcdEFGHij";
@@ -160,5 +161,37 @@ describe("boot (main.tsx's start-up)", () => {
     fire("hashchange");
     await settle();
     expect(log).toEqual([]);
+  });
+});
+
+// m1b.4 re-review (medium): while ShelfSync restarts after an Install or Roll back, a 401 "signed_out" from any other
+// request (the App settings, a theme save) shows the restart panel's "a new tab opened", not the lock panel.
+describe("a 401 while ShelfSync restarts", () => {
+  const signedOut401: Answer = (_method, path) =>
+    path === "/api/session/status" ? always204(_method, path) : json(401, { error: "signed_out" });
+  const gone = () => Promise.reject(new Error("no answer"));
+  const poll = { health: gone, session: gone, stillSwitching: gone };
+
+  it("goes to the switch store: the restart panel says a new tab opened; the tab isn't locked", async () => {
+    const store = createSwitchStore({ reload: vi.fn() });
+    await store.run("preparing", "0.3.0", async () => undefined, poll); // 202: restarting
+    const { win, fetchMock } = fakeWindow("", signedOut401);
+    const { api, session, started } = boot(win, fetchMock, () => store.claimSignedOut());
+    expect(await started).toEqual({ kind: "signed_in" });
+    session.set({ kind: "signed_in" });
+    await expect(api.get("/api/settings/app")).rejects.toThrow();
+    expect(session.get()).toEqual({ kind: "signed_in" }); // no lock panel
+    expect(store.get().phase).toMatchObject({ kind: "restarting", back: "new_tab" });
+    store.reset();
+  });
+
+  it("when nothing restarts, a 401 signs the tab out as always", async () => {
+    const store = createSwitchStore({ reload: vi.fn() });
+    const { win, fetchMock } = fakeWindow("", signedOut401);
+    const { api, session, started } = boot(win, fetchMock, () => store.claimSignedOut());
+    await started;
+    await expect(api.get("/api/settings/app")).rejects.toThrow();
+    expect(session.get()).toEqual({ kind: "signed_out" });
+    expect(store.get().phase).toEqual({ kind: "idle" });
   });
 });

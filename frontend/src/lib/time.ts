@@ -43,3 +43,24 @@ export function greeting(at: Date): string {
   if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
+
+/** "28 October 2026" */
+export function formatDate(at: Date): string {
+  return formatter({ day: "numeric", month: "long", year: "numeric" }).format(at);
+}
+
+/**
+ * "28 October 2026 at 09:30 India Standard Time": a stored UTC time as Windows local time with the zone's name
+ * (CLAUDE.md conventions; the {date} of 13 section 3's Updates rows).
+ */
+export function formatDateTime(at: Date): string {
+  const zone = timeZoneName(at);
+  return `${formatDate(at)} at ${formatTime(at)}${zone ? ` ${zone}` : ""}`;
+}
+
+/** A stored UTC ISO 8601 time, or null when it is missing or isn't one. */
+export function parseUtc(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
