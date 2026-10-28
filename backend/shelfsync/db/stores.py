@@ -85,6 +85,12 @@ def list_live(connection: sqlite3.Connection) -> list[StoreRow]:
     return [_row(row) for row in rows]
 
 
+def live_store_count(connection: sqlite3.Connection) -> int:
+    """How many stores are not removed."""
+    row = connection.execute("SELECT COUNT(*) FROM store WHERE removed_at IS NULL").fetchone()
+    return int(row[0])
+
+
 def get_store(connection: sqlite3.Connection, store_id: int) -> StoreRow | None:
     row = connection.execute(
         f"SELECT {_COLUMNS} FROM store WHERE id = ? AND removed_at IS NULL",  # nosec B608  # a fixed column list

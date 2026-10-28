@@ -12,7 +12,17 @@ from shelfsync import logs, server
 from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure import backup_crypto
 from shelfsync.secure.token import INSTALL_TOKEN_NAME
+from tests.backup_support import (
+    FAST_N,
+    GITHUB_TOKEN,
+    PASSPHRASE,
+    export_text,
+    import_response,
+    make_install,
+    populate,
+)
 from tests.storage_support import (
     GOOD_SETTINGS,
     RO_ID,
@@ -213,4 +223,67 @@ def test_the_storage_flows_write_no_s3_key_anywhere_even_with_redaction_off(
         assert value not in everything
         assert value[4:] not in everything
     for secret in (RW_SECRET, RO_SECRET, RW_SECRET_2):
+        assert secret[: len(secret) // 2] not in everything
+
+
+def test_the_backup_flows_write_no_passphrase_secret_or_install_token_anywhere_even_with_redaction_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01, SET-05: an encrypted and a plain export, imports that succeed, that give the wrong passphrase, that miss
+    one, that carry a damaged file, that find a store already there and that fail half way. Neither the passphrase, nor
+    any key, secret or token in the file, nor the install token, reaches the log or the output."""
+    monkeypatch.setattr(backup_crypto, "SCRYPT_N", FAST_N)
+    monkeypatch.setattr(logs, "redact", lambda text: text)
+    handler = logs.configure_logging(tmp_path, retention_days=1)
+    wrong = "not the right passphrase"
+    try:
+        source = make_install(tmp_path, "source")
+        populate(source)
+        target = make_install(tmp_path, "target")
+        text = export_text(source, PASSPHRASE)
+        export_text(source)
+        assert import_response(target, text, wrong).status_code == 422
+        assert import_response(target, text, None).status_code == 422
+        assert import_response(target, "{not json " + PASSPHRASE, None).status_code == 422
+        target.secrets.fail_set_on = target.secrets.sets + 6
+        assert import_response(target, text, PASSPHRASE).status_code == 503
+        target.secrets.fail_set_on = None
+        target.secrets.fail_get = True
+        assert import_response(target, text, PASSPHRASE).status_code == 503
+        source.secrets.fail_get = True
+        assert (
+            source.client.post("/api/backup/export", headers=WRITE_HEADERS, json={"passphrase": PASSPHRASE}).status_code
+            == 503
+        )
+        target.secrets.fail_get = False
+        assert import_response(target, text, PASSPHRASE).status_code == 200
+        assert import_response(target, text, PASSPHRASE).status_code == 409  # a store is already there now
+        handler.flush()
+        source.secrets.fail_get = False
+        install_token = source.secrets.get(INSTALL_TOKEN_NAME)
+    finally:
+        logs.remove_logging(handler)
+
+    log_text = (tmp_path / logs.LOG_FILE_NAME).read_text(encoding="utf-8")
+    assert "A backup file was exported" in log_text and "A backup file was imported" in log_text  # logging was on
+    captured = capfd.readouterr()
+    everything = log_text + captured.out + captured.err
+    assert install_token
+    values = [
+        PASSPHRASE,
+        wrong,
+        install_token,
+        GITHUB_TOKEN,
+        KEY,
+        SECRET,
+        KEY_2,
+        SECRET_2,
+        RW_ID,
+        RW_SECRET,
+        RO_ID,
+        RO_SECRET,
+    ]
+    for value in values:
+        assert value not in everything
+    for secret in (RW_SECRET, RO_SECRET, GITHUB_TOKEN):
         assert secret[: len(secret) // 2] not in everything

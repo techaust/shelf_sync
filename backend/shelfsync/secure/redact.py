@@ -15,6 +15,8 @@ hashes and version strings don't match any pattern, so they pass through untouch
 
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 MASK = "[redacted]"
 MIN_REGISTERED_LENGTH = 16  # shorter values would mask ordinary text and aren't secrets worth guarding by value
@@ -53,14 +55,16 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 _lock = threading.Lock()
-_secrets: set[str] = set()
+_secrets: set[str] = (
+    set()
+)  # permanent: only `register_secret` writes here, and nothing removes a value but `clear_secrets`
+_temporary: dict[str, int] = {}  # value -> how many `temporary_secret` blocks hold it right now (always above 0)
 _registered_pattern: re.Pattern[str] | None = None
 
 
 def register_secret(value: str) -> bool:
     """Mask this exact value everywhere from now on. Returns False (and registers nothing) if it is shorter than 16
     characters. Thread-safe."""
-    global _registered_pattern
     if len(value) < MIN_REGISTERED_LENGTH:
         return False
     with _lock:
@@ -68,10 +72,47 @@ def register_secret(value: str) -> bool:
         if value in _secrets:
             return True
         _secrets.add(value)
-        # Longest first, so a secret that contains another one is masked whole.
-        ordered = sorted(_secrets, key=len, reverse=True)
-        _registered_pattern = re.compile("|".join(re.escape(item) for item in ordered))
+        _rebuild_pattern()
     return True
+
+
+def _rebuild_pattern() -> None:
+    """Recompile the pattern for the permanent values and every value a temporary block holds (the caller holds
+    `_lock`). Longest first, so a secret that contains another one is masked whole."""
+    global _registered_pattern
+    values = _secrets | _temporary.keys()
+    if not values:
+        _registered_pattern = None
+        return
+    ordered = sorted(values, key=len, reverse=True)
+    _registered_pattern = re.compile("|".join(re.escape(item) for item in ordered))
+
+
+@contextmanager
+def temporary_secret(value: str, *, minimum: int = MIN_REGISTERED_LENGTH) -> Iterator[None]:
+    """Mask this exact value while the block runs (a backup passphrase lives for one request). It is dropped when the
+    last block holding it ends, unless `register_secret` also holds it (a stored secret that equals it stays masked,
+    whichever came first). Blocks may overlap and end in any order: each counts once. A value shorter than `minimum` is
+    not masked at all: the caller names the shortest value it accepts (12 for a passphrase)."""
+    held = len(value) >= minimum
+    if held:
+        with _lock:
+            count = _temporary.get(value, 0)
+            _temporary[value] = count + 1
+            if count == 0 and value not in _secrets:  # the pattern changes only when the value is new to it
+                _rebuild_pattern()
+    try:
+        yield
+    finally:
+        if held:
+            with _lock:
+                remaining = _temporary.get(value, 1) - 1  # 1 if `clear_secrets` ran inside the block
+                if remaining > 0:
+                    _temporary[value] = remaining
+                else:
+                    _temporary.pop(value, None)
+                    if value not in _secrets:
+                        _rebuild_pattern()
 
 
 def clear_secrets() -> None:
@@ -79,6 +120,7 @@ def clear_secrets() -> None:
     global _registered_pattern
     with _lock:
         _secrets.clear()
+        _temporary.clear()
         _registered_pattern = None
 
 

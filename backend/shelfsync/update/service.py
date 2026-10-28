@@ -33,6 +33,7 @@ from shelfsync.paths import DataPaths
 from shelfsync.platform.junction import DirectoryLinks, default_links
 from shelfsync.platform.process import Processes, default_processes
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore, SecretStoreError
+from shelfsync.secure.credentials import SECRETS_WRITE_LOCK
 from shelfsync.secure.redact import register_secret
 from shelfsync.update import release_key
 from shelfsync.update.download import (
@@ -216,15 +217,19 @@ class UpdateService:
     def set_token(self, value: str) -> None:
         if not is_valid_token(value):
             raise InvalidToken("not a fine-grained GitHub token")
-        self._secrets.set(GITHUB_TOKEN_ENTRY, value)
-        register_secret(value)
-        self._forget_expiry()
+        with SECRETS_WRITE_LOCK:  # not while a backup import is writing or putting back the same entry
+            self._secrets.set(GITHUB_TOKEN_ENTRY, value)
+            register_secret(value)
+            self.forget_expiry()
 
     def delete_token(self) -> None:
-        self._secrets.delete(GITHUB_TOKEN_ENTRY)
-        self._forget_expiry()
+        with SECRETS_WRITE_LOCK:
+            self._secrets.delete(GITHUB_TOKEN_ENTRY)
+            self.forget_expiry()
 
-    def _forget_expiry(self) -> None:
+    def forget_expiry(self) -> None:
+        """The stored token's expiry no longer says anything (the token was replaced or removed): forget it. The backup
+        import calls this after it commits a token."""
         if self._store is not None:
             self._store.update(lambda state: replace(state, token_expires_at=None))
 

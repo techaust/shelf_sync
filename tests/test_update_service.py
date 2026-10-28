@@ -792,3 +792,13 @@ def test_the_install_layout_of_an_installed_copy_is_found_from_its_own_python(tm
         tmp_path / "Programs" / "ShelfSync"
     )
     assert resolve_install_layout(str(tmp_path / "python.exe"), {}) is None
+
+
+def test_forget_expiry_is_public_and_clears_only_the_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backup import calls it after it commits a token it wrote itself (M2.4)."""
+    rig = make_rig(tmp_path, monkeypatch, token=TOKEN)
+    rig.store.update(lambda s: replace(s, token_expires_at="2026-11-01T00:00:00.000000Z"))
+    assert rig.service.token_status().expires_at is not None
+    rig.service.forget_expiry()
+    assert rig.service.token_status().expires_at is None
+    assert rig.service.token_status().is_set  # the token itself is untouched

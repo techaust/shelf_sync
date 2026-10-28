@@ -75,6 +75,14 @@ for state in IconState:
 print(count)
 """
 
+# The backup export's key derivation (SET-05, 04-A V21, R6): the folder's own Python must have scrypt in its OpenSSL and
+# accept the 256 MiB memory limit (about 128 MiB are used at N = 2**17; the default limit would refuse). A failure
+# prints nothing, so the check below fails.
+SCRYPT_PROBE = (
+    "import hashlib; "
+    "print(len(hashlib.scrypt(b'x', salt=b'0' * 16, n=2**17, r=8, p=1, maxmem=256 * 1024 * 1024, dklen=32)))"
+)
+
 
 def load_build() -> object:
     spec = importlib.util.spec_from_file_location("shelfsync_packaging_build", Path(__file__).with_name("build.py"))
@@ -183,6 +191,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if icons.returncode != 0 or icons.stdout.strip() != "6":
         sys.stderr.write(f"The launcher or a tray icon can't be loaded from the built folder:\n{icons.stderr[-800:]}\n")
+        return 1
+    scrypt = subprocess.run(  # nosec B603
+        [str(folder_python), "-c", SCRYPT_PROBE], capture_output=True, text=True, timeout=120, check=False
+    )
+    if scrypt.returncode != 0 or scrypt.stdout.strip() != "32":
+        sys.stderr.write(f"The built Python can't derive a backup key (hashlib.scrypt):\n{scrypt.stderr[-800:]}\n")
         return 1
 
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-") as data:

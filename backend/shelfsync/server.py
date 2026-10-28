@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from shelfsync import messages
 from shelfsync.api.app import create_app
 from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
+from shelfsync.api.backup import ExportService
 from shelfsync.api.backup_settings import BackupSettingsService
 from shelfsync.api.storage import build_storage_service
 from shelfsync.db.backup import migrate_with_backup
@@ -211,14 +212,16 @@ def _start(
         stores.register_secrets()  # every stored key is masked in the log from the first line on (a failure only warns)
         storage = build_storage_service(lambda: connect(paths.database), secrets)
         storage.register_secrets()  # the S3 keys are masked in the log from the first line on (a failure only warns)
+        updates = build_update_service(paths, secrets)
         app = create_app(
             port,
             install_token,
             ui_dir=ui,
-            updates=build_update_service(paths, secrets),
+            updates=updates,
             app_settings=AppSettingsService(lambda: connect(paths.database), port, handler, run_key, installed),
             stores=stores,
             storage=storage,
+            exports=ExportService(lambda: connect(paths.database), secrets, forget_expiry=updates.forget_expiry),
             backups=BackupSettingsService(
                 lambda: connect(paths.database), DailyBackups(paths, lambda: connect(paths.database))
             ),

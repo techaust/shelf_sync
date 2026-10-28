@@ -43,7 +43,7 @@ from shelfsync.db.settings import (
     set_setting,
 )
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore, SecretStoreError
-from shelfsync.secure.credentials import S3_KEY_ID, S3_SECRET, S3Credentials, S3Slot
+from shelfsync.secure.credentials import S3_KEY_ID, S3_SECRET, SECRETS_WRITE_LOCK, S3Credentials, S3Slot
 
 STORAGE_SETTINGS_PATH = "/api/settings/storage"
 S3_RW_PATH = "/api/secrets/s3-rw"
@@ -116,7 +116,7 @@ class StorageService:
     def __init__(self, connect: Callable[[], sqlite3.Connection], secrets: SecretStore) -> None:
         self._connect = connect
         self._credentials = S3Credentials(secrets)
-        self._lock = threading.Lock()  # one write at a time
+        self._lock = SECRETS_WRITE_LOCK  # one secrets write at a time, in the whole process (see `credentials.py`)
         self._keeper: sqlite3.Connection | None = None  # holds a development database's memory open
 
     @classmethod
@@ -134,6 +134,12 @@ class StorageService:
         service._keeper = keeper
         weakref.finalize(service, keeper.close)
         return service
+
+    @property
+    def lock(self) -> threading.RLock:
+        """The one lock every storage write holds (settings saves and key writes). The backup import (`api/backup.py`)
+        takes it too, so it can't interleave with a key write."""
+        return self._lock
 
     def register_secrets(self) -> None:
         """Start-up: every stored key goes into the log redaction. A failure only warns."""

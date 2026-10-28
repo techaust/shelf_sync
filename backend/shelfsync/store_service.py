@@ -43,6 +43,7 @@ from shelfsync.db.stores import (
     get_store,
     insert_store,
     list_live,
+    live_store_count,
     reset_health,
     save_test_result,
     soft_delete,
@@ -50,12 +51,13 @@ from shelfsync.db.stores import (
 )
 from shelfsync.paths import DataPaths
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore, SecretStoreError
-from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.secure.credentials import SECRETS_WRITE_LOCK, StoreCredentials
 from shelfsync.secure.headers import ErrorCode
 
 _log = logging.getLogger("shelfsync.stores")
 
 MAX_URL_LENGTH = 200
+MAX_STORES = 50  # live stores; far more than anyone adds. The backup import's model uses the same number.
 _HOST = re.compile(r"(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+")
 _PATH = re.compile(r"[A-Za-z0-9._~/-]*")  # no `%`: no encoded slashes or dots
 
@@ -209,10 +211,12 @@ class StoreService:
         consumer_key: str,
         consumer_secret: str,
     ) -> StoreView:
-        with closing(self._open()) as connection:
+        with SECRETS_WRITE_LOCK, closing(self._open()) as connection:  # the lock first, then the database's write lock
             connection.execute("BEGIN IMMEDIATE")
             store_id: int | None = None
             try:
+                if live_store_count(connection) >= MAX_STORES:
+                    raise StoreError(409, "too_many_stores")
                 store_id = insert_store(
                     connection,
                     name=name,
@@ -274,7 +278,7 @@ class StoreService:
                 self._release(store_id)
 
     def _update(self, store_id: int, changes: dict[str, Any], keys: tuple[str, str] | None) -> StoreView:
-        with closing(self._open()) as connection:
+        with SECRETS_WRITE_LOCK, closing(self._open()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             saved_old: tuple[str | None, str | None] | None = None
             try:
@@ -362,7 +366,7 @@ class StoreService:
             self._release(store_id)
 
     def _set_keys(self, store_id: int, consumer_key: str, consumer_secret: str) -> None:
-        with closing(self._open()) as connection:
+        with SECRETS_WRITE_LOCK, closing(self._open()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             saved_old: tuple[str | None, str | None] | None = None
             try:
@@ -383,7 +387,7 @@ class StoreService:
     def delete(self, store_id: int) -> None:
         self._claim(store_id)
         try:
-            with closing(self._open()) as connection:
+            with SECRETS_WRITE_LOCK, closing(self._open()) as connection:
                 row = get_store(connection, store_id)
                 if row is None:
                     raise StoreError(404, "not_found")
@@ -508,6 +512,7 @@ def build_store_service(paths: DataPaths, secrets: SecretStore) -> StoreService:
 
 
 __all__ = [
+    "MAX_STORES",
     "ReadReport",
     "StoreError",
     "StoreService",

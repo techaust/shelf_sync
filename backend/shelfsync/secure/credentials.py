@@ -17,6 +17,7 @@ No message here holds a value.
 
 import logging
 import re
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
@@ -25,6 +26,13 @@ from shelfsync.platform.secrets import SecretStore, SecretStoreError
 from shelfsync.secure.redact import register_secret
 
 _log = logging.getLogger("shelfsync.secrets")
+
+# One lock for every write to Credential Manager that ShelfSync makes on the owner's behalf, process-wide: a store's
+# keys (`StoreService`), the S3 pairs (`StorageService`), the GitHub token (`UpdateService`) and a backup export or
+# import, which read or write all of them. A re-entrant lock, so a method that holds it may call another that takes
+# it. Lock order: this lock first, then the database's write lock (`BEGIN IMMEDIATE`); no code takes them the other
+# way round.
+SECRETS_WRITE_LOCK = threading.RLock()
 
 CONSUMER_KEY = re.compile(r"ck_[A-Za-z0-9]{20,64}")
 CONSUMER_SECRET = re.compile(r"cs_[A-Za-z0-9]{20,64}")
