@@ -269,3 +269,28 @@ def test_remove_data_deletes_the_four_s3_entries(tmp_path: Path) -> None:
     for name in (*s3_entries("rw"), *s3_entries("ro")):
         assert secrets.get(name) is None
     assert secrets.get("somebody-else") == "keep"
+
+
+def test_a_put_back_that_also_fails_only_warns_and_the_write_error_still_reaches_the_caller(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class GoneAfterThreeWrites(MemorySecretStore):
+        """The first three writes work; every later one fails: a second write, then the put-backs."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.sets = 0
+
+        def set(self, name: str, value: str) -> None:
+            self.sets += 1
+            if self.sets > 3:
+                raise SecretStoreError("Credential Manager write failed (Fake)")
+            super().set(name, value)
+
+    credentials = S3Credentials(GoneAfterThreeWrites())
+    credentials.save("rw", RW_ID, RW_SECRET)  # writes 1 and 2
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(SecretStoreError, match="write failed"):  # write 3 (the new ID) works, write 4 fails
+        credentials.save("rw", RW_ID_2, RW_SECRET_2)
+    assert caplog.text.count("couldn't be put back") == 2
+    assert RW_ID not in caplog.text and RW_SECRET not in caplog.text and RW_SECRET_2 not in caplog.text
