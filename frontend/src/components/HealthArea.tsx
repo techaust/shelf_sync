@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CircleCheck, CircleDashed, HardDrive, Pause, Plug, TriangleAlert } from "lucide-react";
-import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionState, StorageHealth } from "../api/placeholder";
 import { identifierOf, type Store } from "../api/stores";
 import { localWhen, TestButton, TestResult, type WhenFormat } from "../screens/settings/StoresView";
@@ -28,8 +28,8 @@ function ReadOut({ tip, children }: { tip: string; children: ReactNode }) {
  * A store that needs you (its last test failed, or it was never tested): a button that opens the reason, when it was
  * tested, and one "Test connection" (ERR-01), as the approved mockup's healthPopover(). The popover is a non-modal
  * Radix dialog drawn in a portal on the page's own surfaces (not the ink app bar's), fixed under its chip; it takes the
- * focus when it opens and closes on Esc (the focus goes back to the chip), on a click outside, when the focus leaves
- * it, or on a scroll.
+ * focus when it opens and closes on Esc (the focus goes back to the chip), on a click outside, or when the focus
+ * leaves it.
  */
 function StoreProblem({
   store,
@@ -56,32 +56,36 @@ function StoreProblem({
     onOpenChange(next);
   };
 
-  // Placed under the chip, kept inside the window (8 px from its edges).
-  useLayoutEffect(() => {
-    if (!open || !trigger.current || !content.current) return;
-    const r = trigger.current.getBoundingClientRect();
-    const w = content.current.offsetWidth;
-    const h = content.current.offsetHeight;
-    const m = 8;
-    let top = r.bottom + m;
-    if (top + h > window.innerHeight - m && r.top - h - m > m) top = r.top - h - m;
-    setPlace({ left: Math.max(m, Math.min(r.left, window.innerWidth - w - m)), top });
-  }, [open]);
+  // The portal mounts the popover a moment after `open` turns true, so it is placed once its box exists.
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const contentRef = useCallback((element: HTMLDivElement | null) => {
+    content.current = element;
+    setBox(element);
+  }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const shut = () => change(false);
-    window.addEventListener("scroll", shut, true);
-    window.addEventListener("resize", shut);
-    return () => {
-      window.removeEventListener("scroll", shut, true);
-      window.removeEventListener("resize", shut);
+  // Placed under the chip, kept inside the window (8 px from its edges). The app bar is sticky, so a scroll doesn't
+  // move the chip; a resize places the popover again.
+  useLayoutEffect(() => {
+    if (!open || !box) return;
+    const measure = () => {
+      if (!trigger.current) return;
+      const r = trigger.current.getBoundingClientRect();
+      const w = box.offsetWidth;
+      const h = box.offsetHeight;
+      const m = 8;
+      let top = r.bottom + m;
+      if (top + h > window.innerHeight - m && r.top - h - m > m) top = r.top - h - m;
+      setPlace({ left: Math.max(m, Math.min(r.left, window.innerWidth - w - m)), top });
     };
-  });
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open, box]);
 
   const title = failed ? S.cantReach(store.name) : S.neverTested(store.name);
   const tested = when(store.health.tested_at);
-  const style: CSSProperties = place ? { left: place.left, top: place.top } : { visibility: "hidden" };
+  // Off screen until it is placed (not visibility: hidden, which would refuse the focus it takes when it opens).
+  const style: CSSProperties = place ? { left: place.left, top: place.top } : { left: -10000, top: 0 };
   let body: ReactNode;
   if (test.running || test.error || test.result) {
     const line = test.error
@@ -93,9 +97,8 @@ function StoreProblem({
   } else if (failed) {
     body = (
       <>
-        <p>{healthLine(store.health).text}</p>
+        <p>{`${healthLine(store.health).text} ${S.waiting}`}</p>
         {tested ? <p className="muted num">{S.testedAt(tested)}</p> : null}
-        <p>{S.waiting}</p>
       </>
     );
   } else body = <p>{S.neverTestedSub}</p>;
@@ -118,7 +121,7 @@ function StoreProblem({
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Content
-          ref={content}
+          ref={contentRef}
           className="popover"
           style={style}
           aria-describedby={undefined}

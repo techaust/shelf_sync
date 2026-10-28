@@ -237,3 +237,40 @@ describe.each<Theme>(["light", "dark"])("Settings, %s theme", (theme) => {
     expect(contrast(fg, bg)).toBeGreaterThanOrEqual(NON_TEXT);
   });
 });
+
+// Settings › Stores, the health popover and the Help panel (m2.5a): the new tinted fills (stores.css) and the store dots
+// on the identifier picker's selected tile, which mixes the selection tint into the card.
+describe.each<Theme>(["light", "dark"])("Stores and Help (m2.5a), %s theme", (theme) => {
+  const s = (name: Semantic) => semantic(name, theme);
+  const pill = (tone: "warning" | "danger") => mix(s(tone), tint("pill-fill"), s("surface"));
+  const guideNote = mix(s("info"), tint("alert"), s("surface-raised"));
+  const selectedTile = mix(s("selection"), tint("selected-card"), s("surface"));
+
+  it.each<[string, string, string]>([
+    ["'Couldn't be read' (warning pill) text on its fill", s("warning"), pill("warning")],
+    ["danger pill text on its fill", s("danger"), pill("danger")],
+    ["failed test line on a card", s("danger"), s("surface")],
+    ["popover and Help panel text", s("text"), s("surface-raised")],
+    ["popover and Help panel muted text", s("text-muted"), s("surface-raised")],
+    ["guide note text on its info fill", s("text"), guideNote],
+    ["guide link on the info fill", s("link"), guideNote],
+    ["guide name (mono) on its fill", s("text"), s("fill-subtle")],
+    ["policy JSON on its block", s("text"), s("surface")],
+    ["key labels (muted) on a card", s("text-muted"), s("surface")],
+    ["selected shape or colour tile text", s("text"), selectedTile],
+  ])("%s meets 4.5:1", (_name, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(TEXT);
+  });
+
+  it.each<[string, string, string]>([
+    ["guide note border", s("info"), s("surface-raised")],
+    ["focus ring in the popover and the Help panel", s("focus"), s("surface-raised")],
+    ["Not tested icon on a card (muted)", s("text-muted"), s("surface")],
+  ])("%s meets 3:1", (_name, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(NON_TEXT);
+  });
+
+  it.each(Object.entries(STORE_PALETTE))("the %s dot on the selected tile meets 3:1", (_key, pair) => {
+    expect(contrast(theme === "light" ? pair.light : pair.dark, selectedTile)).toBeGreaterThanOrEqual(NON_TEXT);
+  });
+});

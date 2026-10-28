@@ -55,24 +55,28 @@ export function reasonText(
   }
 }
 
-/** The fixed reasons whose sentence already names the HTTP status, or where it would read wrong (a redirect). */
+/** The fixed reasons whose sentence already names the HTTP status, or where it would read wrong (a redirect, a version). */
 export const REASONS_WITH_STATUS = new Set([
   "rate_limited",
   "cloudflare_52x",
   "server_error",
   "keys_refused",
   "forbidden",
+  "wc_too_old", // about the version, not an HTTP answer
 ]);
+
+/** Counts and milliseconds with thousands separators, as 13 writes numbers ("2,398"). */
+export const n = (value: number): string => value.toLocaleString("en-GB");
 
 export const S = {
   // ---------- 13 test ----------
   connected: (ms: number, wc: string, count: number) =>
-    `Connected in ${ms} ms. WooCommerce ${wc}, ${count} downloadable ${count === 1 ? "product" : "products"}.`,
+    `Connected in ${n(ms)} ms. WooCommerce ${wc}, ${n(count)} downloadable ${count === 1 ? "product" : "products"}.`,
   noDownloadable: "Connected, but the store has no downloadable products yet.",
   // proposed (m2.5a): the version wasn't readable (m2.0 risk R1: a Shop Manager key may not read system_status)
   connectedNoVersion: (ms: number, count: number) =>
-    `Connected in ${ms} ms. ${count} downloadable ${count === 1 ? "product" : "products"}.`,
-  connectedOnly: (ms: number) => `Connected in ${ms} ms.`, // proposed (m2.5a): no count in the answer
+    `Connected in ${n(ms)} ms. ${n(count)} downloadable ${count === 1 ? "product" : "products"}.`,
+  connectedOnly: (ms: number) => `Connected in ${n(ms)} ms.`, // proposed (m2.5a): no count in the answer
   // proposed (m2.5a)
   testFailedUnknown: "The test failed.",
   notTested: "Not tested yet.",

@@ -285,9 +285,22 @@ export function StoreFields({
   );
 }
 
-function SaveButton({ label, busy, idle, Icon }: { label: string; busy: boolean; idle: boolean; Icon: typeof Save }) {
+function SaveButton({
+  id,
+  label,
+  busy,
+  idle,
+  Icon,
+}: {
+  id: string;
+  label: string;
+  busy: boolean;
+  idle: boolean;
+  Icon: typeof Save;
+}) {
   return (
     <button
+      id={id}
       type="submit"
       className="btn is-primary"
       aria-disabled={busy || idle || undefined}
@@ -497,7 +510,7 @@ export function StoreCardView({
         />
         <div className="form-foot">
           <div className="form-foot__result">{saved ? <Alert tone="success" title={saved} /> : null}</div>
-          <SaveButton label={S.save} busy={saving} idle={!dirty} Icon={Save} />
+          <SaveButton id={`${id}-save`} label={S.save} busy={saving} idle={!dirty} Icon={Save} />
         </div>
       </form>
       <div className="test-row">
@@ -567,7 +580,7 @@ export function AddStoreView({
           <button type="button" className="btn" onClick={handlers.onCancel}>
             {S.cancel}
           </button>
-          <SaveButton label={S.add} busy={saving} idle={false} Icon={Plus} />
+          <SaveButton id={`${id}-save`} label={S.add} busy={saving} idle={false} Icon={Plus} />
         </div>
       </form>
     </section>

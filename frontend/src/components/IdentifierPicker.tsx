@@ -56,10 +56,13 @@ export function IdentifierPicker({
           <StoreDot shape={value.shape} dot={dot} />
         </span>
         {open ? (
-          <span className="ident__preview">
-            <span className="sr-only">{`${S.preview}: `}</span>
-            <StoreBadge store={preview} large />
-          </span>
+          // the live badge once there is a code to show; until then the tile alone shows the shape and colour
+          value.code ? (
+            <span className="ident__preview">
+              <span className="sr-only">{`${S.preview}: `}</span>
+              <StoreBadge store={preview} large />
+            </span>
+          ) : null
         ) : (
           <span className="ident__summary">{summary}</span>
         )}
@@ -68,7 +71,7 @@ export function IdentifierPicker({
             type="button"
             className="btn is-compact"
             aria-expanded={open}
-            aria-controls={panel}
+            aria-controls={open ? panel : undefined}
             aria-describedby={`${id}-label`}
             onClick={() => onToggle(!open)}
           >

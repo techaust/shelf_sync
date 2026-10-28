@@ -178,7 +178,7 @@
     border-top: 1px solid var(--color-border);
   }
   .test-row__result {
-    flex: 1 1 18rem;
+    flex: 1 1 20rem;
     min-width: 0;
   }
   .test-result {
@@ -215,6 +215,18 @@
   }
 
   /* ---------- the HealthArea's buttons and popover ---------- */
+  /* many stores (up to 50): the chips scroll sideways inside their area instead of running under the app bar's
+     buttons; a chip that takes the keyboard focus scrolls into view, and the padding keeps its focus ring unclipped */
+  .app-bar__health {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-control) transparent;
+    padding: var(--space-1);
+    margin-left: calc(var(--space-6) - var(--space-1));
+  }
+  .app-bar__health > * {
+    flex: none;
+  }
   button.health-chip {
     background: transparent;
     font: inherit;
@@ -408,17 +420,27 @@
     outline-offset: 4px;
     border-radius: var(--radius-sm);
   }
+  /* names stay whole (shelfsync-ro never breaks at its hyphen); the bucket line may wrap */
   .guide code.mono {
     padding: 0 0.25em;
     border-radius: var(--radius-sm);
     background: var(--color-fill-subtle);
+    white-space: nowrap;
+  }
+  .guide code.mono.is-long {
+    white-space: normal;
     overflow-wrap: anywhere;
+  }
+  /* links in running text are underlined (05 section 2.2: --color-link is ink, underlined) */
+  .help-panel__body a {
+    text-decoration: underline;
   }
   .guide-steps {
     display: grid;
     gap: var(--space-2);
     margin: 0;
     padding-left: var(--space-5);
+    list-style: decimal;
   }
   .guide-steps li::marker {
     color: var(--color-text-muted);
@@ -446,10 +468,9 @@
     font-size: var(--text-sm);
     font-weight: 600;
   }
+  /* the whole policy shows, wrapped inside the 400 px drawer: nothing is hidden behind a sideways scroll */
   .policy__code {
     margin: 0;
-    max-height: 18rem;
-    overflow: auto;
     padding: var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -459,14 +480,24 @@
     margin: 0;
     font-size: var(--app-text-code);
     line-height: var(--app-text-code--line-height);
-    white-space: pre;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
+  .policy__code:focus {
+    outline: none;
+  }
+  .policy__code:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  /* empty (no height) until Copy answers; it stays in the page so the live region announces the answer */
   .policy__said {
-    min-height: var(--text-caption--line-height);
     margin: 0;
-    color: var(--color-text-muted);
-    font-size: var(--text-caption);
-    line-height: var(--text-caption--line-height);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  .policy__said:not(.is-said) {
+    margin-top: calc(-1 * var(--space-2));
   }
   @keyframes help-in {
     from {

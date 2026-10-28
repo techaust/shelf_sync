@@ -89,6 +89,7 @@ describe("Settings › Updates", () => {
     expect(html).toMatch(/<input[^>]*id="up-token"[^>]*autoComplete="off"/); // React 19 writes the attribute as spelled in JSX
     expect(html).not.toContain("Roll back app");
     expect(html).not.toContain("Installs in under a minute"); // 13 section 6: not measured, dropped
+    expect(html).toContain(">How to make the token</button>"); // m2.5a: opens the Help panel's GitHub token guide
   });
 
   it("up to date: the 13 line and the check's time", () => {

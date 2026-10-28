@@ -62,6 +62,20 @@ function focusFirstError(prefix: string, errors: StoreErrors) {
   if (first) document.getElementById(`${prefix}-${target[first]}`)?.focus();
 }
 
+/** Runs a focus move after the next render, once what it moves to is on the page (an effect, not a frame callback:
+ *  a tab that isn't painting never runs those). */
+function useAfterRender(): (run: () => void) => void {
+  const next = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const run = next.current;
+    next.current = null;
+    run?.();
+  });
+  return (run) => {
+    next.current = run;
+  };
+}
+
 /** Applies a change typed into the form (the code is upper-cased and kept to two letters). */
 function typed(next: Partial<StoreForm>): Partial<StoreForm> {
   return next.code === undefined ? next : { ...next, code: codeInput(next.code) };
@@ -103,6 +117,7 @@ function StoreCard({
   const [saved, setSaved] = useState<string | null>(null);
   const keyRef = useRef<HTMLInputElement>(null);
   const secretRef = useRef<HTMLInputElement>(null);
+  const afterRender = useAfterRender();
   const prefix = `store-${store.id}`;
 
   const stored = formFrom(store);
@@ -136,7 +151,7 @@ function StoreCard({
     if (Object.keys(found).length > 0 || !checked.values) {
       setErrors(found);
       if (found.code) setIdentOpen(true);
-      requestAnimationFrame(() => focusFirstError(prefix, found));
+      afterRender(() => focusFirstError(prefix, found));
       return;
     }
     const body = changedFields(store, checked.values);
@@ -157,6 +172,8 @@ function StoreCard({
       setEdits({});
       setIdentOpen(false);
       setSaved(onlyKeys ? S.keysSaved : S.saved);
+      // the key inputs it was typed in are gone: the focus stays in the card, on Save
+      afterRender(() => document.getElementById(`${prefix}-save`)?.focus());
     } catch (failure) {
       const placed = placeError(failure, typedKeys.keys !== null);
       if (placed.field === "card") setMessage({ tone: placed.tone, text: placed.text });
@@ -195,7 +212,7 @@ function StoreCard({
     secretRef,
     onOpen: () => {
       setKeysOpen(true);
-      requestAnimationFrame(() => keyRef.current?.focus());
+      afterRender(() => keyRef.current?.focus());
     },
     onCancel: () => {
       clearKeys();
@@ -263,6 +280,7 @@ function AddStoreCard({
   const [message, setMessage] = useState<CardMessage | null>(null);
   const keyRef = useRef<HTMLInputElement>(null);
   const secretRef = useRef<HTMLInputElement>(null);
+  const afterRender = useAfterRender();
   const prefix = "store-new";
 
   useEffect(() => {
@@ -284,7 +302,7 @@ function AddStoreCard({
     setMessage(null);
     if (Object.keys(found).length > 0 || !checked.values || !typedKeys.keys) {
       setErrors(found);
-      requestAnimationFrame(() => focusFirstError(prefix, found));
+      afterRender(() => focusFirstError(prefix, found));
       return;
     }
     setErrors({});
@@ -299,9 +317,7 @@ function AddStoreCard({
       const placed = placeError(failure, true);
       if (placed.field === "card") setMessage({ tone: placed.tone, text: placed.text });
       else setErrors({ [placed.field]: placed.text });
-      requestAnimationFrame(() => {
-        if (placed.field !== "card") focusFirstError(prefix, { [placed.field]: placed.text });
-      });
+      if (placed.field !== "card") afterRender(() => focusFirstError(prefix, { [placed.field]: placed.text }));
     } finally {
       setSaving(false);
     }
@@ -360,6 +376,7 @@ export function StoresPage() {
   const [announcement, setAnnouncement] = useState("");
   const [focusStore, setFocusStore] = useState<number | null>(null);
   const addButton = useRef<HTMLButtonElement>(null);
+  const afterRender = useAfterRender();
   const stores = query.data;
   const codes = useMemo(() => (stores ?? []).map((store) => ({ id: store.id, code: store.code })), [stores]);
 
@@ -438,7 +455,7 @@ export function StoresPage() {
           }}
           onCancel={() => {
             setAdding(false);
-            requestAnimationFrame(() => addButton.current?.focus());
+            afterRender(() => addButton.current?.focus());
           }}
         />
       ) : list.length > 0 ? (

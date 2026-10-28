@@ -299,7 +299,13 @@ type Outcome = Pick<
 
 /** The status written into a reason that doesn't name it already: "…blocked the request (HTTP 403)." */
 function withStatus(sentence: string, reason: string, status: number | null): string {
-  if (status === null || REASONS_WITH_STATUS.has(reason) || reason === "redirected" || sentence.includes("HTTP")) {
+  if (
+    status === null ||
+    status < 300 ||
+    REASONS_WITH_STATUS.has(reason) ||
+    reason === "redirected" ||
+    sentence.includes("HTTP")
+  ) {
     return sentence;
   }
   const end = sentence.indexOf(". ");

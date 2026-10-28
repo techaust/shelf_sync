@@ -100,13 +100,14 @@ function PolicyBlock({ title, text }: { title: string; text: string }) {
           {H.copy}
         </button>
       </div>
-      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region takes the focus so the keyboard can scroll it (WCAG 2.1.1) */}
-      <section className="policy__code" tabIndex={0} aria-label={H.policyLabel(title)} ref={region}>
-        <pre ref={pre}>{text}</pre>
-      </section>
-      <p className="policy__said" id={`${id}-said`} role="status">
+      {/* Right under Copy, so the answer is seen whatever the policy's length. */}
+      <p className={`policy__said${said ? " is-said" : ""}`} id={`${id}-said`} role="status">
         {said === "copied" ? H.copied : said === "select" ? H.pressCtrlC : ""}
       </p>
+      {/* Shown whole (it wraps; nothing to scroll), so no tab stop; Copy's fallback focuses and selects it. */}
+      <section className="policy__code" tabIndex={-1} aria-label={H.policyLabel(title)} ref={region}>
+        <pre ref={pre}>{text}</pre>
+      </section>
     </div>
   );
 }
@@ -141,7 +142,7 @@ export function S3PolicyGuideBody({
       {state === "failed" ? <p className="guide-note">{H.bucketUnknown}</p> : null}
       {filled ? (
         <p>
-          {H.bucketLead} <M>{name}</M>.
+          {H.bucketLead} <code className="mono is-long">{name}</code>.
         </p>
       ) : null}
       <ol className="guide-steps">
@@ -166,8 +167,8 @@ export function S3PolicyGuideBody({
           In ShelfSync, go to <strong>Settings › Storage</strong>, paste both into the read and write key, and save.
         </li>
         <li>
-          Do steps 1 to 5 again with the name <M>shelfsync-ro</M>, the read-only policy (<M>ShelfSyncReadOnly</M>) and
-          the read-only key.
+          Do steps 1 to 5 again with the name <M>shelfsync-ro</M>, the read-only policy named <M>ShelfSyncReadOnly</M>,
+          and the read-only key.
         </li>
       </ol>
       <PolicyBlock title={H.readWriteTitle} text={readWrite} />
@@ -206,7 +207,7 @@ function GithubTokenGuide() {
           Click <strong>Generate token</strong>. GitHub shows the token (it starts with <M>github_pat_</M>) once.
         </li>
         <li>
-          In ShelfSync, go to <strong>Settings › Updates</strong>, paste it into the GitHub token, save, then click{" "}
+          In ShelfSync, go to <strong>Settings › Updates</strong>, paste the token, save, then click{" "}
           <strong>Check now</strong>.
         </li>
       </ol>
