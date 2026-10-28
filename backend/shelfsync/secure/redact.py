@@ -15,6 +15,8 @@ hashes and version strings don't match any pattern, so they pass through untouch
 
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 MASK = "[redacted]"
 MIN_REGISTERED_LENGTH = 16  # shorter values would mask ordinary text and aren't secrets worth guarding by value
@@ -60,7 +62,6 @@ _registered_pattern: re.Pattern[str] | None = None
 def register_secret(value: str) -> bool:
     """Mask this exact value everywhere from now on. Returns False (and registers nothing) if it is shorter than 16
     characters. Thread-safe."""
-    global _registered_pattern
     if len(value) < MIN_REGISTERED_LENGTH:
         return False
     with _lock:
@@ -68,10 +69,40 @@ def register_secret(value: str) -> bool:
         if value in _secrets:
             return True
         _secrets.add(value)
-        # Longest first, so a secret that contains another one is masked whole.
-        ordered = sorted(_secrets, key=len, reverse=True)
-        _registered_pattern = re.compile("|".join(re.escape(item) for item in ordered))
+        _rebuild_pattern()
     return True
+
+
+def _rebuild_pattern() -> None:
+    """Recompile the pattern for the registered values (the caller holds `_lock`). Longest first, so a secret that
+    contains another one is masked whole."""
+    global _registered_pattern
+    if not _secrets:
+        _registered_pattern = None
+        return
+    ordered = sorted(_secrets, key=len, reverse=True)
+    _registered_pattern = re.compile("|".join(re.escape(item) for item in ordered))
+
+
+@contextmanager
+def temporary_secret(value: str, *, minimum: int = MIN_REGISTERED_LENGTH) -> Iterator[None]:
+    """Mask this exact value while the block runs, then forget it (a backup passphrase lives for one request). A value
+    that was already registered (a stored secret) stays registered. A value shorter than `minimum` is not registered
+    at all: the caller names the shortest value it accepts (12 for a passphrase)."""
+    added = False
+    if len(value) >= minimum:
+        with _lock:
+            if value not in _secrets:
+                _secrets.add(value)
+                added = True
+                _rebuild_pattern()
+    try:
+        yield
+    finally:
+        if added:
+            with _lock:
+                _secrets.discard(value)
+                _rebuild_pattern()
 
 
 def clear_secrets() -> None:
