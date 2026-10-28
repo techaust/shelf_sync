@@ -43,6 +43,12 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   keys_missing: true,
   keys_required: true,
   secrets_unavailable: true,
+  // Backup export and import (M2.4): 422 export_invalid, passphrase_required, wrong_passphrase; 409 export_too_new, import_needs_empty
+  export_invalid: true,
+  passphrase_required: true,
+  wrong_passphrase: true,
+  export_too_new: true,
+  import_needs_empty: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 
