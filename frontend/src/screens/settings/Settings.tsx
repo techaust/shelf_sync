@@ -4,6 +4,7 @@ import { NavLink, useParams } from "react-router";
 import { EmptyState, Page } from "../../components/Page";
 import { NotFound } from "../screens";
 import { AppPage } from "./AppPage";
+import { StoresPage } from "./StoresPage";
 import { UpdatesPage } from "./UpdatesPage";
 import { LATER, SETTINGS_TITLE } from "./wording";
 
@@ -25,7 +26,7 @@ function isSub(value: string | undefined): value is SettingsSub {
   return SETTINGS_PAGES.some((page) => page.sub === value);
 }
 
-/** Stores, Storage, Rules and Backup until their milestones (M2, M5): one plain line on what will be here. */
+/** Storage, Rules and Backup until their milestones (M2, M5): one plain line on what will be here. */
 function Later({ sub, Icon }: { sub: keyof typeof LATER; Icon: LucideIcon }) {
   return <EmptyState Icon={Icon} text={LATER[sub].text} sub={LATER[sub].sub} />;
 }
@@ -33,6 +34,8 @@ function Later({ sub, Icon }: { sub: keyof typeof LATER; Icon: LucideIcon }) {
 /** The sub-page's content, by its address. */
 function content(sub: SettingsSub, Icon: LucideIcon): ReactNode {
   switch (sub) {
+    case "stores":
+      return <StoresPage />;
     case "updates":
       return <UpdatesPage />;
     case "app":

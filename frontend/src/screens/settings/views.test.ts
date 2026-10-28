@@ -2,11 +2,16 @@
 // (ConfirmDialog, SecretField, Switch) as markup: the unit tests run in Node with no DOM, so the views are rendered
 // to static HTML (react-dom/server). Behaviour that needs a browser (focus, the dialog's top layer) is in
 // dialog.test.ts with fakes, and was checked by hand in the built-in browser pane (run file section 4).
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ComponentProps, type FunctionComponent, createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { createApiClient } from "../../api/client";
+import { createSessionStore } from "../../api/session";
 import type { Updates } from "../../api/settings";
+import { ServicesProvider } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { SecretField } from "../../components/SecretField";
 import { Switch } from "../../components/Switch";
@@ -359,13 +364,26 @@ describe("the shared parts", () => {
 });
 
 describe("the Settings shell", () => {
+  // Stores reads the API (M2.5a): a client that never answers, so the page draws its loading state.
+  const services = {
+    api: createApiClient({ fetch: () => new Promise<Response>(() => undefined) }),
+    session: createSessionStore(),
+  };
   const at = (path: string) =>
     decode(
       renderToStaticMarkup(
         h(
-          MemoryRouter,
-          { initialEntries: [path] },
-          h(Routes, null, h(Route, { path: "/settings/:sub", element: h(Settings) })),
+          QueryClientProvider,
+          { client: new QueryClient() },
+          h(ServicesProvider, {
+            value: services,
+            // biome-ignore lint/correctness/noChildrenProp: createElement in a .ts file; the provider's props type needs it
+            children: h(
+              MemoryRouter,
+              { initialEntries: [path] },
+              h(Routes, null, h(Route, { path: "/settings/:sub", element: h(Settings) })),
+            ),
+          }),
         ),
       ),
     );
@@ -387,7 +405,7 @@ describe("the Settings shell", () => {
     expect(html).toContain('<nav class="sub-nav" aria-label="Settings">');
   });
 
-  it.each(["stores", "storage", "rules", "backup"] as const)("%s: the later-version panel", (sub) => {
+  it.each(["storage", "rules", "backup"] as const)("%s: the later-version panel", (sub) => {
     const html = at(`/settings/${sub}`);
     expect(html).toContain(LATER[sub].text);
     expect(html).toContain(LATER[sub].sub);

@@ -11,11 +11,7 @@ import type { LastCheck, SwitchResult } from "../../api/settings";
 export const SETTINGS_TITLE = "Settings";
 
 /** The four pages that come later (proposed (m1b.4)): what the page will hold, in the empty-state pattern of 13 §2. */
-export const LATER: Record<"stores" | "storage" | "rules" | "backup", { text: string; sub: string }> = {
-  stores: {
-    text: "Store settings come in a later version of ShelfSync.",
-    sub: "This is where you'll add each store's address and Shop Manager key, and test the connection.",
-  },
+export const LATER: Record<"storage" | "rules" | "backup", { text: string; sub: string }> = {
   storage: {
     text: "Storage settings come in a later version of ShelfSync.",
     sub: "This is where you'll add the S3 bucket ShelfSync uploads to, and test its keys.",
@@ -74,6 +70,8 @@ export const U = {
   // proposed (m1b.4): the roll back button is off because the backup it needs is gone (the words of 13 §3's
   // Last switch `backup_missing`)
   rollBackNoBackup: "The backup needed to roll back isn't there.",
+  // mockup: opens the Help panel's GitHub token guide (11, 2026-10-28: it waited for the Help panel, m2.5a)
+  tokenGuide: "How to make the token",
 };
 
 // ---------- the GitHub token (13 §3 Updates; the field's hint is the mockup's) ----------

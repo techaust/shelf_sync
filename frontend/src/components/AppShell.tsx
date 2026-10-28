@@ -1,12 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Outlet, useLocation } from "react-router";
 import { fetchShellStatus, SHELL_STATUS_PLACEHOLDER, SHELL_STATUS_QUERY_KEY } from "../api/placeholder";
+import { storeTests } from "../screens/settings/storeTests";
 import { useSwitchPhase } from "../screens/settings/switchStore";
 import { RestartScreen, shellTakesOver } from "../screens/settings/UpdatesView";
+import { useRunStoreTest, useStoresQuery } from "../screens/settings/useStores";
 import { useThemeFromServer } from "../theme/useSavedTheme";
 import { AppBar } from "./AppBar";
 import { HealthArea } from "./HealthArea";
+import { HelpButton, HelpPanel } from "./help/HelpPanel";
 import { PauseButton } from "./PauseButton";
 import { SideNav } from "./SideNav";
 import { StatusStrip } from "./StatusStrip";
@@ -15,7 +18,9 @@ import { useCollapsedNav } from "./useCollapsedNav";
 
 /**
  * The AppShell (UI-SHELL, 05 section 5): app bar, side nav, status strip and the routed screen. Status comes from
- * the placeholder module through TanStack Query, so M5 swaps the query function and nothing here changes.
+ * the placeholder module through TanStack Query, so M5 swaps the query function and nothing here changes; the store
+ * chips come from GET /api/stores (M2.5a). The Help panel lives here once, opened from the app bar's Help button or a
+ * page's guide button.
  */
 export function AppShell() {
   const { data } = useQuery({ queryKey: SHELL_STATUS_QUERY_KEY, queryFn: fetchShellStatus });
@@ -26,6 +31,9 @@ export function AppShell() {
   const first = useRef(true);
   useThemeFromServer();
   const phase = useSwitchPhase();
+  const stores = useStoresQuery();
+  const runTest = useRunStoreTest();
+  const tests = useSyncExternalStore(storeTests.subscribe, storeTests.get, storeTests.get);
 
   // Every navigation moves focus to the new screen's title, so keyboard and screen-reader users land on it
   // (not on the first load: focus starts at the top of the page). A screen with its own pages (Settings) marks the
@@ -49,8 +57,15 @@ export function AppShell() {
         Skip to content
       </button>
       <AppBar>
-        <HealthArea stores={status.stores} storage={status.storage} />
+        <HealthArea
+          stores={stores.data}
+          failed={stores.isError}
+          storage={status.storage}
+          tests={tests}
+          onTest={runTest}
+        />
         <div className="app-bar__end">
+          <HelpButton />
           <ThemeMenu />
           <PauseButton />
         </div>
@@ -66,6 +81,7 @@ export function AppShell() {
           )}
         </main>
       </div>
+      <HelpPanel />
     </div>
   );
 }

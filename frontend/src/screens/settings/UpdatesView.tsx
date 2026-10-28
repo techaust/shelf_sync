@@ -1,6 +1,17 @@
-import { CircleCheck, CircleDot, Download, Info, LoaderCircle, RefreshCcw, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  BookOpen,
+  CircleCheck,
+  CircleDot,
+  Download,
+  Info,
+  LoaderCircle,
+  RefreshCcw,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Alert } from "../../components/Alert";
+import { helpStore } from "../../components/help/helpModel";
 import { SecretField } from "../../components/SecretField";
 import { checkGithubToken, TOKEN_MAX_LENGTH } from "./forms";
 import type { Phase, UpdatesModel } from "./updatesModel";
@@ -291,6 +302,12 @@ export function UpdatesView({
             onSave={actions.onSaveToken}
             onRemove={actions.onRemoveToken}
           />
+          <div>
+            <button type="button" className="btn is-ghost" onClick={() => helpStore.open("github-token")}>
+              <BookOpen className="icon" aria-hidden="true" />
+              {U.tokenGuide}
+            </button>
+          </div>
         </div>
       </div>
     </section>
