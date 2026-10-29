@@ -66,5 +66,6 @@ What the session does by itself:
 - `tools/cloud/session-start.sh` puts the pinned tools first, sets the commit identity and the pre-push guard, and installs the locked packages. It prints one line per tool and a **PROBLEM** line for anything wrong.
 - When a task is done, it pushes its branch and opens the PR, and GitHub merges it once the required checks pass (CLAUDE.md, Git workflow).
 
-## 4. Not verified yet
-Until the first cloud session runs, none of this has been tried on a real cloud machine: the setup script, the start-up script, the PATH order, whether `uv sync --locked` and `npm ci` pass there, and the pre-push guard. The first session's start-up lines are that check; the lead records the result in [10](../10-status.md).
+## 4. What's been checked
+- **2026-10-29, the first cloud session:** the setup script and the start-up script ran clean: Python 3.14.8, Node 24.19.0 and uv 0.12.19 first on PATH, `uv sync --locked` and `npm ci` passed, no PROBLEM lines. The Limited network with the seven sites was enough.
+- **Not yet:** a cloud session's own PR (opened with `gh api`) merging itself, and the pre-push guard there. The first cloud PR (m2.6) is that check; the lead records it in [10](../10-status.md).
