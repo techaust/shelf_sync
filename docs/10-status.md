@@ -48,8 +48,10 @@ Nothing. No agent is running. There are no worktrees and no branches other than 
 4. **The other M2 questions** in [runs/m2.0-plan.md](runs/m2.0-plan.md) §3.
 5. **Review** the "Lead (proposed)" rows in [11](11-decisions.md), dated 2026-10-27 to 2026-10-29. One of them is how "keep building milestones" was read: build only, with no push or merge without your yes.
 6. **Model menu:** start every session on **Opus 5.5, high** (the plan from 2026-10-29: Opus 5.5 at high for every task, [12](12-models-and-usage.md)).
+7. **Cloud sessions, once:** install the Claude GitHub App on `shelf_sync` and make the ShelfSync environment with `tools/cloud/setup.sh` ([runbooks/cloud-sessions.md](runbooks/cloud-sessions.md) §2).
 
 ## Not verified
+- **Cloud sessions** (2026-10-29): `tools/cloud/setup.sh` and `tools/cloud/session-start.sh` haven't run on a cloud machine yet; the first session's start-up lines are the check ([runbooks/cloud-sessions.md](runbooks/cloud-sessions.md) §4).
 - **The one-model settings** (2026-10-29): whether `availableModels: ["claude-opus-5-5"]` and the `sonnet`/`haiku` aliases pointed at Opus behave as [12 §6](12-models-and-usage.md) describes is checked on the first day they're active. The `model-guard` hook was tested with sample inputs.
 - **The M2.5 screens against the real server.** They were checked against a mock that sends the backend's real CSP, in the built-in pane. Also not checked:
   - a real Edge download, the Windows file picker, the clipboard and password prompts;

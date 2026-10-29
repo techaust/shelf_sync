@@ -44,6 +44,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 | A page, report or plan for the owner to view or share | `artifact-design` |
 | Repo, PRs, CI, releases | GitHub MCP / `gh` (writes only with the owner's yes) |
 | Start or end of a working day | `start-session`, `end-session` |
+| Work in a cloud session | [runbooks/cloud-sessions.md](runbooks/cloud-sessions.md): `tools/cloud/setup.sh` (the environment's setup script) and `tools/cloud/session-start.sh` (SessionStart hook); `gh api` in place of `gh pr` |
 | "Where is X" in the code | the `code-finder` agent |
 | Running a test suite | the `test-runner` agent |
 
@@ -61,7 +62,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 | T8 | **code-review**, **security-review**, **simplify**, **run** | Skills | Reviews, clean-up, running the app | Local only |
 | T9 | **Security review** plugin | Plugin (hooks) | Warns on risky edits as they happen | Already on |
 | T10 | **Agents** (`.claude/agents/`): analyst, builder, designer, reviewer, code-finder, test-runner, doc-clerk | Claude Code subagents | [12 §3](12-models-and-usage.md) | Fixed tool lists; no connectors |
-| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh** | Repo scripts (`tools/`) | Keep every run on Opus 5.5 at high; audit runs; queue heavy commands (shared lock with techaust_platform); stall and memory alarms | Local only |
+| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh**, **cloud/setup.sh**, **cloud/session-start.sh** | Repo scripts (`tools/`) | Keep every run on Opus 5.5 at high; audit runs; queue heavy commands (shared lock with techaust_platform on this PC); stall and memory alarms; prepare a cloud session | Local; the cloud scripts download only pinned, hash-checked files |
 | T12 | **start-session** / **end-session** | Project skills | "start the day" / "end the day" | Local |
 
 ## 5. Not used for this project

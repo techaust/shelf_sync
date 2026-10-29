@@ -31,7 +31,12 @@ fi
 
 free_mb() {
   [ "$MIN_FREE_MB" -gt 0 ] || return 0
-  powershell.exe -NoProfile -Command "[int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024)" 2>/dev/null | tr -d '\r'
+  if [ -r /proc/meminfo ] && ! command -v powershell.exe >/dev/null 2>&1; then
+    # Linux (a cloud session): memory available to new work, in MiB.
+    awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo
+  else
+    powershell.exe -NoProfile -Command "[int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024)" 2>/dev/null | tr -d '\r'
+  fi
 }
 
 pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }

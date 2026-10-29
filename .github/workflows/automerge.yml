@@ -1,0 +1,27 @@
+name: Auto-merge
+
+# Every pull request into main from a branch of this repository is squash-merged by GitHub once the checks that branch
+# protection requires are green (owner, 2026-10-29; docs/11). Pull requests from forks are never touched. It runs only
+# the preinstalled gh CLI and checks out no code, so nothing from the pull request runs with the write token.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  enable:
+    name: Turn on auto-merge
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Squash-merge when the required checks pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh pr merge "$PR" --repo "$REPO" --auto --squash
