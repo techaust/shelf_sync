@@ -98,7 +98,7 @@ The lead reads the 5-hour bar (the `get_usage` session tool: "5-hour limit") at 
 | **At or under 95 %** | New agents start, within the limits in §4 |
 | **Over 95 %** | Nothing new starts until the window resets. Agents already running keep going and save their work as they go (§3) |
 
-**In a cloud session:** the session reads the usage tool if it has one; if not, the owner types the 5-hour % in that session's chat. The lead writes each reading and its time in the run file.
+**In a cloud session:** the session reads the usage tool if it has one; if not (the case on 2026-10-29), the owner types the 5-hour % in that session's chat; a PC session can read it for the owner with `get_usage`. The lead writes each reading and its time in the run file.
 - With **no reading posted that day**, nothing new starts.
 - With a reading **over 2 hours old**, only one agent runs at a time.
 

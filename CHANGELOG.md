@@ -2,6 +2,11 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-29 [#33](https://github.com/techaust/shelf_sync/pull/33) docs: M2.6 runbooks match the screens, Settings notes, 04/06/07/04-A for M2 [SET-01, SET-02, SET-05, BAK-01]
+- 2026-10-29 [#32](https://github.com/techaust/shelf_sync/pull/32) docs(runbook): cloud setup on the Team plan
+- 2026-10-29 [#31](https://github.com/techaust/shelf_sync/pull/31) chore: automatic push and auto-merge on green; cloud session setup
+- 2026-10-29 [#30](https://github.com/techaust/shelf_sync/pull/30) docs: Opus 5.5 at high for every task, 95 % budget gate, agents by machine resources
+- 2026-10-29 [#29](https://github.com/techaust/shelf_sync/pull/29) docs: end of day 2026-10-29 (status, roadmap, decisions, CHANGELOG #28, run-file usage, CLAUDE.md layers and queue rules)
 - 2026-10-29 [#28](https://github.com/techaust/shelf_sync/pull/28) docs: record #25-#27 merges (status, CHANGELOG, M2.5a/b run files closed)
 - 2026-10-29 [#27](https://github.com/techaust/shelf_sync/pull/27) feat(ui): M2.5b Settings › Storage and Settings › Backup, lazy Settings pages, load-failure guard [SET-02, SET-05, BAK-01]
 - 2026-10-29 [#26](https://github.com/techaust/shelf_sync/pull/26) feat(ui): M2.5a Settings › Stores, store health chips, Help panel guides [SET-01, ERR-01, UI-HELP]
