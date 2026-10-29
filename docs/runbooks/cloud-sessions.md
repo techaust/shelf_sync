@@ -68,4 +68,5 @@ What the session does by itself:
 
 ## 4. What's been checked
 - **2026-10-29, the first cloud session:** the setup script and the start-up script ran clean: Python 3.14.8, Node 24.19.0 and uv 0.12.19 first on PATH, `uv sync --locked` and `npm ci` passed, no PROBLEM lines. The Limited network with the seven sites was enough.
-- **Not yet:** a cloud session's own PR (opened with `gh api`) merging itself, and the pre-push guard there. The first cloud PR (m2.6) is that check; the lead records it in [10](../10-status.md).
+- **2026-10-29, the first cloud PR:** m2.6's PR (#33) was pushed from the cloud session and merged itself on green.
+- **Not yet:** the pre-push guard refusing a push in a cloud session.

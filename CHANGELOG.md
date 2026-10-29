@@ -2,6 +2,7 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-29 [#33](https://github.com/techaust/shelf_sync/pull/33) docs: M2.6 runbooks match the screens, Settings notes, 04/06/07/04-A for M2 [SET-01, SET-02, SET-05, BAK-01]
 - 2026-10-29 [#32](https://github.com/techaust/shelf_sync/pull/32) docs(runbook): cloud setup on the Team plan
 - 2026-10-29 [#31](https://github.com/techaust/shelf_sync/pull/31) chore: automatic push and auto-merge on green; cloud session setup
 - 2026-10-29 [#30](https://github.com/techaust/shelf_sync/pull/30) docs: Opus 5.5 at high for every task, 95 % budget gate, agents by machine resources

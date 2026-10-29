@@ -6,7 +6,7 @@ _Replaced (never appended) at the end of every session._
 2026-10-29, 23:31 IST: the end of the PC session that started at 21:29 IST. Work goes on in a **cloud session** (m2.6), which writes the next version of this file at its own end of day.
 
 ## Done
-Merged on green. #30 needed the owner's yes; #31 and #32 merged themselves under the new automatic rule.
+Merged on green. #30 needed the owner's yes; #31, #32 and #33 merged themselves under the new automatic rule (#33 from the cloud session).
 
 | PR | What |
 |---|---|
@@ -14,17 +14,18 @@ Merged on green. #30 needed the owner's yes; #31 and #32 merged themselves under
 | [#30](https://github.com/techaust/shelf_sync/pull/30) | **One model and effort:** every task on Opus 5.5 at high; tiers decide only the checks; 95 % budget gate; agents at once set by the machine ([ADR 0009](adr/0009-opus-high-for-every-task.md)) |
 | [#31](https://github.com/techaust/shelf_sync/pull/31) | **Automatic push and auto-merge on green** (`automerge.yml`); **cloud session setup** (`tools/cloud/setup.sh`, `tools/cloud/session-start.sh`); `heavy.sh` reads Linux memory |
 | [#32](https://github.com/techaust/shelf_sync/pull/32) | The cloud runbook for the Team plan: the `shelf_sync` environment, Limited network with seven allowed sites |
+| [#33](https://github.com/techaust/shelf_sync/pull/33) | **m2.6 M2 docs**, from the cloud session: runbooks match the screens, Settings notes, 04/06/07/04-A for M2 |
 
 - **GitHub:** the repo's "Allow auto-merge" setting is on (owner's yes). #31 and #32 proved the workflow: each merged itself once its checks passed.
 - **Cloud:** the owner installed the Claude GitHub App on `shelf_sync`, turned on the GitHub connector, and made the `shelf_sync` environment on the Team plan's Cloud environments page. The first cloud session started clean: Python 3.14.8, Node 24.19.0 and uv 0.12.19, with no PROBLEM lines (its own report).
 - **Record:** CLAUDE.md (rules 3, 10 and 11, How work is split, Git workflow), [12](12-models-and-usage.md), [09](09-tooling.md), [11](11-decisions.md), ADR 0008 and 0009, the session skills, [runbooks/cloud-sessions.md](runbooks/cloud-sessions.md), the memory notes.
 
 ## In progress
-- **m2.6 M2 docs**, lead-only, in the cloud session (branch `claude/friendly-keller-cepawy`). The owner approved its plan with a 46 % reading. One commit was pushed at 23:30 IST (runbooks, 04, 06, 07, 04-A, 11, and its run file `runs/m2.6-docs.md`, which lands with its PR). Its PR merges itself on green. **Before that, it rebases onto this record** and adds only its own CHANGELOG line (#29–#32 are already in).
+- **m2.6 M2 docs:** merged as #33 at 23:34 IST from the cloud session (owner's approval with a 46 % reading). Its run file [runs/m2.6-docs.md](runs/m2.6-docs.md) still says `Status: open`: the cloud session closes it (integration notes, Handover) at its end of day. #29–#33 are already in the CHANGELOG.
 - No agent runs on this PC. There are no local worktrees.
 
 ## Next
-1. **m2.6**: finish in the cloud session.
+1. **m2.6**: the cloud session closes its run file.
 2. **m2.7 S3 and m2.8 test stack** once boto3 and moto have the owner's yes; then the **m2.9 exit test**, which is the owner's.
 
 ## Waits on the owner
@@ -42,7 +43,7 @@ Merged on green. #30 needed the owner's yes; #31 and #32 merged themselves under
 9. **Optional:** GitHub's "Automatically delete head branches" setting would remove merged branches. 15 old branches are still on GitHub (not counting the cloud session's live one). A settings change, so it's yours.
 
 ## Not verified
-- **A cloud session's PR merging itself:** the first one is m2.6's (opened with `gh api`, because `gh pr` is blocked in the cloud). The pre-push guard in the cloud hasn't been exercised yet either.
+- **The pre-push guard in a cloud session refusing a push** (to `main`, or a force-push): normal pushes went through, but the refusal path hasn't been seen there.
 - **The one-model settings:** whether `availableModels: ["claude-opus-5-5"]` and the `sonnet`/`haiku` aliases pointed at Opus behave as [12 §6](12-models-and-usage.md) says. Nothing has asked for another model since. The `model-guard` hook was tested with sample inputs.
 - **The M2.5 screens against the real server.** They were checked against a mock that sends the backend's real CSP, in the built-in pane. Also not checked:
   - a real Edge download, the Windows file picker, the clipboard and password prompts;
