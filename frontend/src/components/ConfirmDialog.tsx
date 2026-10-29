@@ -1,7 +1,19 @@
 import { LoaderCircle, type LucideIcon, X } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef } from "react";
 import { Alert } from "./Alert";
-import { type DialogBehaviour, dialogBehaviour } from "./dialog";
+import { type DialogBehaviour, dialogBehaviour, type Focusable } from "./dialog";
+
+export interface QueryRoot {
+  querySelector(selectors: string): Element | null;
+}
+
+/**
+ * Where the focus goes when the dialog closes and the button that opened it is gone (a removed store's Remove): the
+ * caller's own target when it gives one and it is there, otherwise the screen's focus target or its h1 (the default).
+ */
+export function confirmFallback(custom: (() => Focusable | null) | undefined, root: QueryRoot): Focusable | null {
+  return custom?.() ?? (root.querySelector("[data-nav-focus], h1") as HTMLElement | null);
+}
 
 /**
  * ConfirmDialog (05 section 5): what will change, and whether it can be undone, before an action that can't be taken
@@ -19,6 +31,7 @@ export function ConfirmDialog({
   danger = false,
   busy = false,
   error = null,
+  fallbackFocus,
   onConfirm,
   onCancel,
 }: {
@@ -33,6 +46,8 @@ export function ConfirmDialog({
   busy?: boolean;
   /** Why the action failed, shown inside the dialog (role="alert"). */
   error?: string | null;
+  /** Where the focus goes if the opener is gone when the dialog closes; default: the screen's focus target or h1. */
+  fallbackFocus?: () => Focusable | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -41,8 +56,8 @@ export function ConfirmDialog({
   const confirm = useRef<HTMLButtonElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const behaviour = useRef<DialogBehaviour | null>(null);
-  const latest = useRef({ onCancel, busy });
-  latest.current = { onCancel, busy };
+  const latest = useRef({ onCancel, busy, fallbackFocus });
+  latest.current = { onCancel, busy, fallbackFocus };
   const shown = useRef(false); // what the dialog was last told: open or closed
 
   useEffect(() => {
@@ -51,7 +66,7 @@ export function ConfirmDialog({
     const made = dialogBehaviour(element, {
       onCancel: () => latest.current.onCancel(),
       isBusy: () => latest.current.busy,
-      fallback: () => document.querySelector<HTMLElement>("[data-nav-focus], h1"),
+      fallback: () => confirmFallback(latest.current.fallbackFocus, document),
       busyFocus: () => confirm.current,
     });
     behaviour.current = made;

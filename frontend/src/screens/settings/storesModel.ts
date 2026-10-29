@@ -1,0 +1,343 @@
+// Settings › Stores without React (SET-01, ERR-01): the form's checks with the API's own limits (api/stores.py), the
+// seconds ↔ spacing_ms conversion, the address-change rule, where each API error code is shown, and the lines a test
+// result or a saved health reads as. Pure functions, so every rule is tested in Node (storesModel.test.ts).
+
+import { ApiError, type ErrorCode } from "../../api/client";
+import { type CreateStore, STORE_SHAPES, type Store, type StoreShape, type UpdateStore } from "../../api/stores";
+import { S } from "../../lib/storesWording";
+import { STORE_PALETTE, type StoreColor } from "../../styles/storePalette";
+
+// ---------- limits (api/stores.py) ----------
+export const NAME_MAX = 60;
+export const BUTTON_MAX = 40;
+export const URL_MAX = 200;
+export const SPACING_MIN_MS = 50;
+export const SPACING_MAX_MS = 5000;
+export const DEFAULT_SPACING_MS = 150;
+export const DEFAULT_BUTTON = "Download";
+/** ConsumerKey and ConsumerSecret: the prefix, then 20 to 64 letters and digits. */
+const CONSUMER_KEY = /^ck_[A-Za-z0-9]{20,64}$/;
+const CONSUMER_SECRET = /^cs_[A-Za-z0-9]{20,64}$/;
+export const KEY_MAX_LENGTH = 67;
+const CODE = /^[A-Z]{2}$/;
+/** store_service.py _HOST: dot-separated labels of lowercase letters, digits and inner hyphens. */
+const HOST = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const PATH = /^[A-Za-z0-9._~/-]*$/;
+/** A control character or one of the two Unicode line separators: Python's isprintable() refuses them too. */
+function notPrintable(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) return true;
+  }
+  return false;
+}
+
+export const STORE_COLORS = Object.keys(STORE_PALETTE) as StoreColor[];
+
+// ---------- Time between requests: seconds on screen, milliseconds in the API ----------
+
+/** 150 → "0.15", 1000 → "1", 50 → "0.05": up to two decimals, no trailing zeros. */
+export function secondsFromMs(ms: number): string {
+  return (ms / 1000).toFixed(2).replace(/\.?0+$/, "");
+}
+
+/** "0.15" → 150, or null for anything that isn't 0.05 to 5 seconds written with up to two decimals. */
+export function msFromSeconds(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^(?:\d{1,2}(?:\.\d{1,2})?|\.\d{1,2})$/.test(trimmed)) return null;
+  const ms = Math.round(Number(trimmed) * 1000);
+  return ms >= SPACING_MIN_MS && ms <= SPACING_MAX_MS ? ms : null;
+}
+
+// ---------- the store address ----------
+
+/** The address as typed, if it is one the API would take (https, a host name with a dot, no user, query or fragment,
+ *  a plain path), or null. The API still normalises and checks it; this only catches what it would refuse. */
+export function checkAddress(text: string): string | null {
+  const typed = text.trim();
+  if (!typed || typed.length > URL_MAX || /[^\x21-\x7e]/.test(typed) || /[?#\\@]/.test(typed)) return null;
+  if (!/^https:\/\//i.test(typed)) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(typed);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname;
+  const tld = host.split(".").at(-1) ?? "";
+  if (parsed.protocol !== "https:" || !HOST.test(host) || !/[a-z]/.test(tld)) return null;
+  const rawPath = typed.replace(/^https:\/\/[^/]*/i, "").replace(/\/+$/, "");
+  if (!PATH.test(rawPath) || rawPath.includes("//")) return null;
+  if (rawPath.split("/").some((part) => part === "." || part === "..")) return null;
+  return typed;
+}
+
+/** Host and port, as the keys are tied to them (store_service.py _authority); null when it isn't an address. */
+export function authorityOf(url: string): string | null {
+  try {
+    return new URL(url.trim()).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** The address-change rule: a different host (or port) needs new keys in the same request. */
+export function hostChanged(saved: string, typed: string): boolean {
+  const before = authorityOf(saved);
+  const after = authorityOf(typed);
+  return before !== null && after !== null && before !== after;
+}
+
+// ---------- the form ----------
+
+export interface StoreForm {
+  name: string;
+  url: string;
+  mainButton: string;
+  code: string;
+  shape: StoreShape;
+  color: StoreColor;
+  spacing: string;
+}
+
+export type StoreField = keyof StoreForm | "keys" | "consumerKey" | "consumerSecret";
+export type StoreErrors = Partial<Record<StoreField, string>>;
+
+export function formFrom(store: Store): StoreForm {
+  return {
+    name: store.name,
+    url: store.url,
+    mainButton: store.main_button,
+    code: store.code,
+    shape: store.shape,
+    color: store.color,
+    spacing: secondsFromMs(store.spacing_ms),
+  };
+}
+
+/** A new store's starting identifier: the next free shape and colour (05 section 2.3), and the default spacing. */
+export function newForm(stores: readonly Store[]): StoreForm {
+  const shape = STORE_SHAPES.find((s) => !stores.some((store) => store.shape === s)) ?? "circle";
+  const color = STORE_COLORS.find((c) => !stores.some((store) => store.color === c)) ?? STORE_COLORS[0] ?? "indigo";
+  return {
+    name: "",
+    url: "",
+    mainButton: DEFAULT_BUTTON,
+    code: "",
+    shape,
+    color,
+    spacing: secondsFromMs(DEFAULT_SPACING_MS),
+  };
+}
+
+/** The API's text rule (`_text`): trimmed, printable, 1 to `max` characters. */
+function text(value: string, max: number): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length < 1 || trimmed.length > max) return null;
+  // control characters and the two Unicode line separators: Python's isprintable() refuses them too
+  if (notPrintable(trimmed)) return null;
+  return trimmed;
+}
+
+/** Letters typed into the code field: upper case, letters only, at most two. */
+export function codeInput(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+}
+
+export interface CheckedForm {
+  name: string;
+  url: string;
+  main_button: string;
+  code: string;
+  shape: StoreShape;
+  color: StoreColor;
+  spacing_ms: number;
+}
+
+/** The form's values as the API takes them, or the errors to show at each field. `takenCodes` are the other stores'
+ *  codes: the API refuses a used one (`code_taken`), and the form says so before sending. */
+export function checkForm(
+  form: StoreForm,
+  takenCodes: readonly string[],
+): { values: CheckedForm; errors: null } | { values: null; errors: StoreErrors } {
+  const errors: StoreErrors = {};
+  const name = text(form.name, NAME_MAX);
+  const url = checkAddress(form.url);
+  const button = text(form.mainButton, BUTTON_MAX);
+  const spacing = msFromSeconds(form.spacing);
+  if (name === null) errors.name = S.nameLimit;
+  if (url === null) errors.url = S.addressLimit;
+  if (button === null) errors.mainButton = S.buttonLimit;
+  if (!CODE.test(form.code)) errors.code = S.codeLimit;
+  else if (takenCodes.includes(form.code)) errors.code = S.errors.code_taken;
+  if (spacing === null) errors.spacing = S.spacingLimit;
+  if (name === null || url === null || button === null || spacing === null || Object.keys(errors).length > 0) {
+    return { values: null, errors };
+  }
+  return {
+    values: {
+      name,
+      url,
+      main_button: button,
+      code: form.code,
+      shape: form.shape,
+      color: form.color,
+      spacing_ms: spacing,
+    },
+    errors: null,
+  };
+}
+
+/** The two typed keys: both empty (nothing to send), both of the right shape, or the errors. */
+export function checkKeys(
+  key: string,
+  secret: string,
+): { keys: { consumer_key: string; consumer_secret: string } | null; errors: StoreErrors } {
+  const k = key.trim();
+  const s = secret.trim();
+  if (!k && !s) return { keys: null, errors: {} };
+  const errors: StoreErrors = {};
+  if (!k || !s) errors.keys = S.pairNeeded;
+  if (k && !CONSUMER_KEY.test(k)) errors.consumerKey = S.keyShape;
+  if (s && !CONSUMER_SECRET.test(s)) errors.consumerSecret = S.secretShape;
+  return Object.keys(errors).length
+    ? { keys: null, errors }
+    : { keys: { consumer_key: k, consumer_secret: s }, errors };
+}
+
+/** Only what changed, so a save never rewrites a field another tab changed meanwhile. */
+export function changedFields(store: Store, values: CheckedForm): UpdateStore {
+  const body: UpdateStore = {};
+  if (values.name !== store.name) body.name = values.name;
+  if (values.url !== store.url) body.url = values.url;
+  if (values.main_button !== store.main_button) body.main_button = values.main_button;
+  if (values.code !== store.code) body.code = values.code;
+  if (values.shape !== store.shape) body.shape = values.shape;
+  if (values.color !== store.color) body.color = values.color;
+  if (values.spacing_ms !== store.spacing_ms) body.spacing_ms = values.spacing_ms;
+  return body;
+}
+
+export function createBody(values: CheckedForm, keys: { consumer_key: string; consumer_secret: string }): CreateStore {
+  return { ...values, ...keys };
+}
+
+// ---------- API errors: the 13 wording, at the field it belongs to ----------
+
+export interface Placed {
+  field: StoreField | "card";
+  text: string;
+  tone: "danger" | "info";
+}
+
+const FIELD_OF: Partial<Record<ErrorCode, StoreField>> = {
+  store_exists: "url",
+  code_taken: "code",
+  keys_required: "keys",
+  secrets_unavailable: "keys",
+};
+
+/** Where and how a refused or unanswered store write is shown. `keysSent`: whether the request carried keys (a
+ *  Credential Manager failure is the keys' problem then, otherwise the card's). */
+export function placeError(failure: unknown, keysSent = true): Placed {
+  if (failure instanceof ApiError) {
+    const code = failure.code;
+    // a write (save, keys, pause, remove) refused because the store is held by a test or another change
+    if (code === "busy") return { field: "card", text: S.busyWrite, tone: "info" };
+    if (code && Object.hasOwn(S.errors, code)) {
+      const words = S.errors[code as keyof typeof S.errors];
+      let field: Placed["field"] = FIELD_OF[code] ?? "card";
+      if (code === "secrets_unavailable" && !keysSent) field = "card";
+      return { field, text: words, tone: "danger" };
+    }
+    return { field: "card", text: S.refused(failure.status), tone: "danger" };
+  }
+  return { field: "card", text: S.noAnswer, tone: "danger" };
+}
+
+// ---------- what a Save sends (the card's decisions, kept out of React so each is tested) ----------
+
+type KeyPair = { consumer_key: string; consumer_secret: string };
+
+/** Whether "Save store" has anything to send. The spacing counts only when it was edited, and is compared in ms, so a
+ *  stored 155 ms (shown "0.16") is never "changed" by being shown. */
+export function isDirty(store: Store, edits: Partial<StoreForm>, keysTyped: boolean): boolean {
+  if (keysTyped) return true;
+  const stored = formFrom(store);
+  return (Object.keys(edits) as (keyof StoreForm)[]).some((key) => {
+    if (key === "spacing") return msFromSeconds(edits.spacing ?? "") !== store.spacing_ms;
+    return edits[key] !== stored[key];
+  });
+}
+
+export type SavePlan =
+  | { kind: "errors"; errors: StoreErrors; openKeys: boolean; openIdentifier: boolean }
+  | { kind: "none" }
+  | { kind: "keys"; keys: KeyPair }
+  | { kind: "patch"; body: UpdateStore; keysSent: boolean };
+
+/**
+ * What a Save on a saved store's card does (SET-01):
+ * - the fields are checked with the API's limits, and the typed keys (only when the pair is open) as a pair;
+ * - the address-change rule: a new host with no new keys sends nothing and asks for them at the pair (even when the
+ *   saved keys couldn't be read: they would go to the new server);
+ * - only what changed is sent; the spacing only when it was edited;
+ * - keys alone go by PUT /keys; keys with any field go in the same PATCH, so a new host and its keys arrive together.
+ */
+export function planSave(input: {
+  store: Store;
+  edits: Partial<StoreForm>;
+  keysOpen: boolean;
+  typedKey: string;
+  typedSecret: string;
+  takenCodes: readonly string[];
+}): SavePlan {
+  const { store, edits } = input;
+  const form: StoreForm = { ...formFrom(store), ...edits };
+  const spacingEdited = edits.spacing !== undefined;
+  const checked = checkForm(form, input.takenCodes);
+  const typed = input.keysOpen ? checkKeys(input.typedKey, input.typedSecret) : { keys: null, errors: {} };
+  const errors: StoreErrors = { ...(checked.errors ?? {}), ...typed.errors };
+  if (!spacingEdited) delete errors.spacing; // the stored value, shown rounded, is never refused
+  let openKeys = false;
+  const url = checked.values?.url ?? checkAddress(form.url);
+  if (url && hostChanged(store.url, url) && !typed.keys && !errors.keys) {
+    errors.keys = S.errors.keys_required;
+    openKeys = true;
+  }
+  if (errors.keys || errors.consumerKey || errors.consumerSecret) openKeys = true;
+  if (Object.keys(errors).length > 0 || !checked.values) {
+    return { kind: "errors", errors, openKeys, openIdentifier: Boolean(errors.code) };
+  }
+  const values = spacingEdited ? checked.values : { ...checked.values, spacing_ms: store.spacing_ms };
+  const body = changedFields(store, values);
+  const fieldsChanged = Object.keys(body).length > 0;
+  if (!fieldsChanged && !typed.keys) return { kind: "none" };
+  if (!fieldsChanged && typed.keys) return { kind: "keys", keys: typed.keys };
+  return typed.keys
+    ? { kind: "patch", body: { ...body, ...typed.keys }, keysSent: true }
+    : { kind: "patch", body, keysSent: false };
+}
+
+export type AddPlan = { kind: "errors"; errors: StoreErrors } | { kind: "create"; body: CreateStore };
+
+/** What "Add store" does: every field checked, and a key pair is required (a store is never added without keys). */
+export function planAdd(input: {
+  form: StoreForm;
+  typedKey: string;
+  typedSecret: string;
+  takenCodes: readonly string[];
+}): AddPlan {
+  const checked = checkForm(input.form, input.takenCodes);
+  const typed = checkKeys(input.typedKey, input.typedSecret);
+  const errors: StoreErrors = { ...(checked.errors ?? {}), ...typed.errors };
+  if (!typed.keys && !errors.keys && !errors.consumerKey && !errors.consumerSecret) errors.keys = S.pairNeeded;
+  if (Object.keys(errors).length > 0 || !checked.values || !typed.keys) return { kind: "errors", errors };
+  return { kind: "create", body: createBody(checked.values, typed.keys) };
+}
+
+// The health helpers (healthKind, outcomeLine, healthLine, testError) live in lib/storeHealth.ts: the shell's
+// HealthArea uses them too.
