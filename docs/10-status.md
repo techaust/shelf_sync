@@ -3,7 +3,7 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-10-29, 23:31 IST: the end of the PC session that started at 21:29 IST. Work goes on in a **cloud session** (m2.6), which writes the next version of this file at its own end of day.
+2026-10-29, 23:46 IST: the end of the PC session that started at 21:29 IST. The day's cloud session (m2.6) finished and was deleted by the owner; nothing runs anywhere now.
 
 ## Done
 Merged on green. #30 needed the owner's yes; #31, #32 and #33 merged themselves under the new automatic rule (#33 from the cloud session).
@@ -21,12 +21,12 @@ Merged on green. #30 needed the owner's yes; #31, #32 and #33 merged themselves 
 - **Record:** CLAUDE.md (rules 3, 10 and 11, How work is split, Git workflow), [12](12-models-and-usage.md), [09](09-tooling.md), [11](11-decisions.md), ADR 0008 and 0009, the session skills, [runbooks/cloud-sessions.md](runbooks/cloud-sessions.md), the memory notes.
 
 ## In progress
-- **m2.6 M2 docs:** merged as #33 at 23:34 IST from the cloud session (owner's approval with a 46 % reading). Its run file [runs/m2.6-docs.md](runs/m2.6-docs.md) still says `Status: open`: the cloud session closes it (integration notes, Handover) at its end of day. #29–#33 are already in the CHANGELOG.
+- Nothing. **m2.6** merged as #33 from the cloud session and is closed: the owner deleted that session before its end of day, so its [run file](runs/m2.6-docs.md) and [08](08-roadmap.md) were closed from the PC session. #29–#33 are in the CHANGELOG.
+- **#35** (start the day on the PC catches up with GitHub and the packages first) merges itself on green.
 - No agent runs on this PC. There are no local worktrees.
 
 ## Next
-1. **m2.6**: the cloud session closes its run file.
-2. **m2.7 S3 and m2.8 test stack** once boto3 and moto have the owner's yes; then the **m2.9 exit test**, which is the owner's.
+1. **m2.7 S3 and m2.8 test stack** once boto3 and moto have the owner's yes; then the **m2.9 exit test**, which is the owner's.
 
 ## Waits on the owner
 1. **Packages for S3 (m2.7) and the test stack (m2.8):** boto3 (run time) and moto with `s3` and `server` (dev). Nothing S3 is built until you say yes ([runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q1).
