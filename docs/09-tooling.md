@@ -11,7 +11,7 @@
 | Item | Found | Needed | Action |
 |---|---|---|---|
 | Windows | 11 Home Single Language | 10/11 | Home has no Windows Sandbox: the clean-account test uses a second local account ([07 §7](07-testing.md)) |
-| CPU / RAM | Intel i3-1115G4, 2 cores / 4 threads; 7.8 GB | — | At most two agents at once; heavy commands queued ([12 §4](12-models-and-usage.md)); the NFR-3 targets are set for this PC |
+| CPU / RAM | Intel i3-1115G4, 2 cores / 4 threads; 7.8 GB | — | At most 2 agents at once, at most 1 using a browser; heavy commands queued ([12 §4](12-models-and-usage.md)); the NFR-3 targets are set for this PC |
 | Free disk | C: 77.5 GB, D: 256.5 GB | ~5 GB for the test stack and the calibration cache | OK |
 | Python | 3.14.8 (3.12.10 also installed) | 3.14 (owner, 2026-10-27) | OK |
 | Node / npm | 24.19.0 / 11.17.0 | For the UI and the hook scripts | OK |
@@ -61,7 +61,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 | T8 | **code-review**, **security-review**, **simplify**, **run** | Skills | Reviews, clean-up, running the app | Local only |
 | T9 | **Security review** plugin | Plugin (hooks) | Warns on risky edits as they happen | Already on |
 | T10 | **Agents** (`.claude/agents/`): analyst, builder, designer, reviewer, code-finder, test-runner, doc-clerk | Claude Code subagents | [12 §3](12-models-and-usage.md) | Fixed tool lists; no connectors |
-| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh** | Repo scripts (`tools/`) | Keep to the three models; audit runs; queue heavy commands (shared lock with techaust_platform); stall and memory alarms | Local only |
+| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh** | Repo scripts (`tools/`) | Keep every run on Opus 5.5 at high; audit runs; queue heavy commands (shared lock with techaust_platform); stall and memory alarms | Local only |
 | T12 | **start-session** / **end-session** | Project skills | "start the day" / "end the day" | Local |
 
 ## 5. Not used for this project

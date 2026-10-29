@@ -1,6 +1,6 @@
 # ADR 0008: TecHaust's agent system, three models, a light usage check
 
-- **Status:** Accepted (owner, 2026-10-25)
+- **Status:** Accepted (owner, 2026-10-25); the Models, Lead and Usage parts are replaced by [ADR 0009](0009-opus-high-for-every-task.md) (owner, 2026-10-29)
 - **Date:** 2026-10-25
 - **Replaces:** the "Not copied" part of [ADR 0007](0007-docs-and-workflow-like-techaust.md)
 

@@ -21,6 +21,8 @@ Check the diff against:
 
 **Severity:** critical, high, medium or low. Any critical or high → **SEND BACK**. Only medium or low → **APPROVE**, with them as follow-ups (mark one-line fixes "one-line").
 
-**Re-check mode:** when the lead asks for a re-check, read only the fix diff and confirm each earlier finding is fixed.
+**Second review:** after any critical or high finding, once the fixes are in, the lead starts a new reviewer for a second review: review the whole task's diff again as a first review would, then confirm each earlier finding is fixed ([docs/12](../../docs/12-models-and-usage.md) §4).
+
+**Re-check mode:** when the earlier findings were only medium or low and the lead asks for a re-check, read only the fix diff and confirm each earlier finding is fixed.
 
 Reply with **APPROVE** or **SEND BACK**, then the findings, most severe first: severity, `file:line`, the problem, the failure it causes, the fix. The lead copies your reply into the run file.
