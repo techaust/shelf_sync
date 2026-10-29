@@ -14,6 +14,7 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [troubleshooting.md](troubleshooting.md) | "ShelfSync won't open", port in use, the tray icon missing, reading the logs (grows) |
 | [keys-and-policies.md](keys-and-policies.md) | Make the Shop Manager key for each store and the two AWS keys with their policies; record the bucket's versioning and encryption |
 | [key-rotation.md](key-rotation.md) | Replace a WooCommerce key, an AWS key, the GitHub token, the install token; what to do if the signing key is seen or lost |
+| [cloud-sessions.md](cloud-sessions.md) | Set up the ShelfSync cloud environment once; start a cloud session; what may and may not run there |
 | [restore-database.md](restore-database.md) | Restore the database from a daily, pre-migration or pre-rollback backup with the restore command |
 
 Added when their milestone is built ([08](../08-roadmap.md)):

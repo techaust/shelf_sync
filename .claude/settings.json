@@ -3,7 +3,8 @@
   "env": {
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5",
+    "UV_PYTHON_DOWNLOADS": "never"
   },
   "availableModels": ["claude-opus-5-5"],
   "effortLevel": "high",
@@ -106,6 +107,12 @@
     "anthropic-skills:import-memory": "off"
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [{ "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/tools/cloud/session-start.sh\"", "timeout": 600 }]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Agent|Bash",

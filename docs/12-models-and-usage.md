@@ -70,7 +70,7 @@ The three helpers read CLAUDE.md like every other agent. They never touch `inspe
 4. `designer`: the screens on top, with its own visual check.
 5. `reviewer`: code + visual review → APPROVE or SEND BACK.
 6. Fixes (backend to the builder, screens to the designer). After any critical or high finding: the **second review** of the whole task by a new reviewer. After only medium or low findings: the re-check of the fix diff.
-7. The lead integrates, runs the full checks, opens the PR (after the owner's yes for the push), and fills in the run file.
+7. The lead integrates, runs the full checks, pushes and opens the PR without asking (it merges itself once the required checks pass; CLAUDE.md, Git workflow), and fills in the run file.
 
 A task with only screens skips 2–3; a task with no screens skips 4.
 
@@ -84,11 +84,11 @@ A task with only screens skips 2–3; a task with no screens skips 4.
 | Where | Limit |
 |---|---|
 | **This PC** (7.8 GB RAM, 2 cores / 4 threads) | At most **2 agents**, and at most **1** of them using a browser. When `tools/heavy.sh` reports low memory, the next agent waits |
-| **A cloud session** | Before each start, the lead checks the virtual machine (`free -m` and `nproc`, plus the 1-minute load average from `/proc/loadavg`). Another agent starts only while there are **at least 3 GB of free memory** and the processors **aren't fully loaded** (the 1-minute load average is below the number of processors), up to **5 agents**, with at most **2** using a browser. The lead states the readings in one line |
+| **A cloud session** | Before each start, the lead checks the virtual machine (`free -m` and `nproc`, plus the 1-minute load average from `/proc/loadavg`). Another agent starts only while there are **at least 3 GB of free memory** and the processors **aren't fully loaded** (the 1-minute load average is below the number of processors), up to **5 agents**, **none** using a browser (visual checks stay on this PC, CLAUDE.md rule 10; owner, 2026-10-29). The lead states the readings in one line. What may run there: [runbooks/cloud-sessions.md](runbooks/cloud-sessions.md) |
 
 **Heavy commands** (the security suite, builds, full lint, full test runs) take turns through `bash tools/heavy.sh --log <name> <command>`, on this PC and in a cloud session. On this PC the lock is **shared with techaust_platform** and other projects: when it is held or reports low memory, the work waits; another project's job is never stopped, and a partial run is never reported as done.
 
-A cloud session starts from a branch pushed to GitHub; that push needs the owner's yes, like every push.
+A cloud session starts from a branch pushed to GitHub; like every branch push, the lead makes it without asking.
 
 ## 5. The budget gate
 The lead reads the 5-hour bar (the `get_usage` session tool: "5-hour limit") at the start of each day and again **before every new agent starts**.
