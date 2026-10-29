@@ -8,6 +8,8 @@ export const CHUNK_FAILED = {
   title: "This part of ShelfSync couldn't be loaded.",
   text: "ShelfSync may have been updated since this tab was opened. Reload the page to get the current version.",
   reload: "Reload page",
+  /** The screen's heading when a whole screen failed (the routes' guard, round 2). */
+  screenTitle: "This screen couldn't be shown",
 };
 
 /** The panel shown in place of the part that failed: one line, one action. The shell around it stays. */

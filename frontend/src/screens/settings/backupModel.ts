@@ -57,13 +57,14 @@ export function keepDirty(form: KeepForm, stored: BackupSettingsValues): boolean
   return form.kept !== saved.kept || form.snapshots !== saved.snapshots;
 }
 
-/** When the stored values change under the form (an import, another tab): an untouched form follows them; a form
- *  being edited keeps its edits (m2.5b round 1). */
+/** When the stored values change under the form (an import, another tab), field by field: a field the owner hasn't
+ *  touched takes its new stored value, a field being edited keeps its edit (m2.5b rounds 1 and 2). */
 export function followStored(form: KeepForm, before: BackupSettingsValues, now: BackupSettingsValues): KeepForm {
-  const changed =
-    before.db_backups_kept !== now.db_backups_kept || before.snapshot_retention_days !== now.snapshot_retention_days;
-  if (!changed || keepDirty(form, before)) return form;
-  return keepFormFrom(now);
+  const was = keepFormFrom(before);
+  const next = keepFormFrom(now);
+  const kept = form.kept === was.kept ? next.kept : form.kept;
+  const snapshots = form.snapshots === was.snapshots ? next.snapshots : form.snapshots;
+  return kept === form.kept && snapshots === form.snapshots ? form : { kept, snapshots };
 }
 
 // ---------- the daily backups ----------

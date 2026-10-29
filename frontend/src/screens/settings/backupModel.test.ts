@@ -87,8 +87,15 @@ describe("the keep form after the stored values change (an import)", () => {
     expect(keepDirty(form, after)).toBe(false);
   });
 
-  it("a form being edited keeps its edits", () => {
-    const edited = { kept: "10", snapshots: "30" };
+  it("field by field: the edited field keeps its edit, the untouched one takes the imported value", () => {
+    // kept is being edited (10); snapshots is untouched (30), so it follows the import to 60
+    expect(followStored({ kept: "10", snapshots: "30" }, before, after)).toEqual({ kept: "10", snapshots: "60" });
+    // the other way round
+    expect(followStored({ kept: "7", snapshots: "90" }, before, after)).toEqual({ kept: "14", snapshots: "90" });
+  });
+
+  it("both fields edited: the form is kept as it is", () => {
+    const edited = { kept: "10", snapshots: "90" };
     expect(followStored(edited, before, after)).toBe(edited);
   });
 

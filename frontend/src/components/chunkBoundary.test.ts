@@ -3,22 +3,33 @@
 // doesn't run error boundaries, so the boundary is driven the way React drives it: a failed import rejects, React
 // asks getDerivedStateFromError for the new state, and render() then draws the panel. The whole path was also
 // checked in the built-in browser pane against a dist copy with a chunk deleted (run file section 3, round 1).
-import { createElement as h, lazy } from "react";
+import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { RouteError } from "../app/RouteError";
 import { CHUNK_FAILED, ChunkBoundary, ChunkFailed } from "./ChunkBoundary";
 
 const decode = (html: string) => html.replaceAll("&#x27;", "'");
-/** What the browser does with an import() whose chunk is gone from the server. */
-const failingImport = () =>
-  Promise.reject(new TypeError("Failed to fetch dynamically imported module: http://127.0.0.1:47615/assets/X.js"));
+/** Every component file's source, to check where Suspense is used (Vite's ?raw, as tokens.test.ts reads the CSS). */
+const sources = import.meta.glob("../**/*.tsx", { query: "?raw", import: "default", eager: true }) as Record<
+  string,
+  string
+>;
 
 describe("ChunkBoundary", () => {
-  it("a lazy part whose import fails rejects with the browser's error", async () => {
-    const load = vi.fn(failingImport);
-    lazy(load); // React calls the loader only when it renders the part
-    await expect(load()).rejects.toThrow("Failed to fetch dynamically imported module");
+  it("every Suspense in the app sits directly inside a ChunkBoundary (Settings' pages, the Help guides)", () => {
+    const withSuspense = Object.entries(sources).filter(([, text]) => text.includes("<Suspense"));
+    // the two lazy parts of m2.5b; a new one must be added here, and wrapped
+    expect(withSuspense.map(([file]) => file).sort()).toEqual([
+      "../screens/settings/Settings.tsx",
+      "./help/HelpPanel.tsx",
+    ]);
+    for (const [file, text] of withSuspense) {
+      const suspense = text.match(/<Suspense\b/g)?.length ?? 0;
+      const wrapped = text.match(/<ChunkBoundary\b[^>]*>\s*<Suspense\b/g)?.length ?? 0;
+      expect(wrapped, file).toBe(suspense);
+      expect(text, file).toMatch(/<\/Suspense>\s*<\/ChunkBoundary>/);
+    }
   });
 
   it("an error in the part turns the boundary to its failed state", () => {
@@ -62,6 +73,7 @@ describe("ChunkBoundary", () => {
       title: "This part of ShelfSync couldn't be loaded.",
       text: "ShelfSync may have been updated since this tab was opened. Reload the page to get the current version.",
       reload: "Reload page",
+      screenTitle: "This screen couldn't be shown",
     });
   });
 });
@@ -73,5 +85,10 @@ describe("the routes' last guard", () => {
       expect(html).toContain(CHUNK_FAILED.title);
       expect(html).toContain(bare ? 'class="gate"' : 'class="page"');
     }
+  });
+
+  it("inside the shell it has a focusable h1, so the shell's move-focus-to-the-title lands on it", () => {
+    const html = decode(renderToStaticMarkup(h(RouteError)));
+    expect(html).toContain(`<h1 class="page-title" tabindex="-1" data-nav-focus="">${CHUNK_FAILED.screenTitle}</h1>`);
   });
 });
