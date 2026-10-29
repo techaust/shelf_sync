@@ -44,7 +44,7 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 - **Order inside a task:** `builder` (Sonnet) → Tier A: `analyst` early check (Opus high) → `designer` (Opus high) → `reviewer` (Opus high) → fixes → re-check.
 - **Helpers:** `code-finder`, `test-runner`, `doc-clerk` (Haiku). Never the built-in Explore, Plan or general-purpose agents (the hook refuses them; the read-only helpers that review skills start are the observed exception, see `docs/12-models-and-usage.md` §3).
 - **Usage check:** read the 5-hour window once a day ([12 §5](docs/12-models-and-usage.md)); at 80 % or more nothing new starts until it resets. It limits how much runs at once, never the model or effort.
-- **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform).
+- **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform and other projects: when it is held or reports low memory, wait for it, never stop another project's job, and never report a partial run as done).
 
 ## Git workflow
 Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public during development**, owner's choice, [11](docs/11-decisions.md)). Anything committed is public: never commit secrets or store addresses.
@@ -79,6 +79,7 @@ Other tools:
 - **Screen wording:** [13](docs/13-content.md); until M1 moves it into the app, the approved mockup holds the full screen text (13 §6).
 - **Phones:** the app is desktop-only (05 §6), but any page published for the owner must read well on a phone.
 - **Time:** store UTC (ISO 8601); show Windows local time with the zone name; schedules in local time.
+- **Screen code layers:** `api/` → `lib/` → `components/` → `app/` and `screens/`; `components/`, `lib/` and `api/` never import from `screens/`. A lazy part (`React.lazy`) sits in a `Suspense` inside a `ChunkBoundary` (a test refuses any other); a write that needs a decision gets a pure, tested `plan…()` function rather than logic inside the component.
 - **Design:** tokens only, never hand-typed colours; store colours only as identifiers ([05](docs/05-design-system.md)); wording from [13](docs/13-content.md).
 - **Security:** deny by default; no secrets in logs, URLs (except the single-use, 60-second `#t=` sign-in ticket; the install token itself never goes in a URL) or the browser.
 - **Supply chain:** exact pins with hashes (uv, `package-lock.json`); GitHub Actions pinned by commit SHA; new packages only with the owner's yes.
