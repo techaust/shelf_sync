@@ -3,7 +3,7 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-10-29, 06:10 IST (end of the session that started 2026-10-28 evening and ran on overnight while the owner slept).
+2026-10-29, morning IST (the session that started 2026-10-28 evening, ran overnight, and merged #25 to #27 with the owner's yes).
 
 ## Done
 Merged with the owner's yes, each with every local check and the release build passed before its push:
@@ -14,39 +14,32 @@ Merged with the owner's yes, each with every local check and the release build p
 | [#23](https://github.com/techaust/shelf_sync/pull/23) | M2.3 storage settings, the four S3 secrets in Credential Manager, storage API without Test | green |
 | [#24](https://github.com/techaust/shelf_sync/pull/24) | M2.4 encrypted backup export and import, body limit, shared secrets lock | green |
 
-Built overnight, reviewed and integrated, **not pushed** (the owner's "keep building milestones" is read as build only; [11](11-decisions.md) 2026-10-29):
+Then, with the owner's yes this morning (each rebased onto `main`, with all 14 checks and the release build passed again before its push):
 
-| Branch | What | Review | Local checks |
-|---|---|---|---|
-| `feat/m2.5a-stores-screens` (head `2284bb8`) | M2.5a Settings › Stores, the store chips in the HealthArea, the Help panel with three guides | 7.5 → **APPROVE 9/10** | all 14 checks and the release build passed (785 screen tests, 2,390 backend tests) |
-| `feat/m2.5b-storage-backup-screens` (head `4fe5ad9`, on top of m2.5a) | M2.5b Settings › Storage and Settings › Backup, the `React.lazy` split (main chunk 481 kB, no warning), screens that fail to load keep the shell | 7 → **APPROVE 9/10**, follow-ups closed | all 14 checks and the release build passed (935 screen tests) |
+| PR | What | CI |
+|---|---|---|
+| [#25](https://github.com/techaust/shelf_sync/pull/25) | End-of-day record | green |
+| [#26](https://github.com/techaust/shelf_sync/pull/26) | M2.5a Settings › Stores, store health chips, Help panel guides (review 7.5 → APPROVE 9/10) | green |
+| [#27](https://github.com/techaust/shelf_sync/pull/27) | M2.5b Settings › Storage and Backup, lazy Settings pages (main chunk 481 kB), load-failure guard (review 7 → APPROVE 9/10) | green |
 
 - **Record:**
   - 11 rows for tonight's decisions;
   - 13 rows for M2.5a and M2.5b, ERR-01 in two lines, and `busy` on store writes;
   - the run files for m2.5a and m2.5b (§3–§7);
   - m2.2–m2.4 closed;
-  - CHANGELOG #21–#24.
+  - CHANGELOG #21–#27.
 
 ## In progress
-Nothing is running. Two agent worktrees stay until their branches merge: `agent-aeb8c42e68af2dfaa` (m2.5a) and `agent-a6d870d3dc905ddb7` (m2.5b). Their screenshots are in their `.logs/shots/`.
+Nothing is running; no agent worktrees are left. This record sits on the local branch `docs/record-2026-10-29-merges`, not pushed.
 
 ## Next
-1. **This record PR** (`docs/end-of-day-2026-10-29`), with the owner's yes.
-2. **M2.5a:**
-   - rebase `feat/m2.5a-stores-screens` onto `main` after this record merges (13 and 11 may conflict on the rows added at the same places);
-   - run all checks and the release build;
-   - push, open the PR (text ready) and merge on green, with the owner's yes.
-3. **M2.5b:**
-   - `git rebase --onto main 2284bb8` after M2.5a merges;
-   - run all checks and the release build;
-   - push, open the PR and merge, with the owner's yes.
-4. **m2.6 M2 docs** (the lead), then m2.7 S3 and m2.8 test stack once boto3 and moto have the owner's yes, then the m2.9 exit test.
-5. Remove the two worktrees above after their merges.
+1. **This record PR**, with the owner's yes.
+2. **m2.6 M2 docs** (the lead), including the runbooks' "Save" vs the screen's "Add store" / "Save store".
+3. m2.7 S3 and m2.8 test stack once boto3 and moto have the owner's yes; then the m2.9 exit test.
 
 ## Waits on the owner
-1. **Yes to push and merge** the record PR, M2.5a and M2.5b, in that order.
-2. **One check in real Edge** (outside Claude, on the installed or source app after M2.5a/b are merged):
+1. **Yes to push and merge** this record PR.
+2. **One check in real Edge** (outside Claude, on the source app, now that M2.5a and M2.5b are merged):
    - after saving a store's keys, an S3 key pair or the export passphrase, does Edge offer "Save password?"
    - does Copy in the S3 guide work?
    - does Export save a `.ssbak` file in Downloads?
