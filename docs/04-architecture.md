@@ -128,7 +128,7 @@ Times are UTC ISO-8601 text. Versions are stored as the original string plus a s
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `store` | id, name, url, code, color, shape, spacing_ms, main_button, wc_version, state (`active`, `paused`) | Secrets in Credential Manager, keyed by store id |
+| `store` | id (never reused), name, url, code, color, shape, spacing_ms, main_button, state (`active`, `paused`), wc_version, wp_version, health (`unknown`, `connected`, `unreachable`, `refused`), health_reason, http_status, latency_ms, downloadable_count, tested_at, created_at, removed_at | Migration `0002_store.sql` (M2.1). Secrets in Credential Manager as `store-<id>-key` and `store-<id>-secret`. Soft delete (`removed_at`): url and code are unique among live stores only. The health columns hold the last Test connection (ERR-01) |
 | `store_product` | store_id, wc_id, slug, title, type, status, modified_gmt, raw_json, seen_at | Mirror of the store; unique (store_id, wc_id); index on (store_id, slug) |
 | `catalog_item` | id, canonical_slug (unique), title, type, created_at | One real product |
 | `item_link` | catalog_item_id → catalog_item, store_id → store, wc_id | Unique (store_id, wc_id). "Linked on every active store" = one row for each store whose state is `active` |
@@ -154,7 +154,7 @@ Times are UTC ISO-8601 text. Versions are stored as the original string plus a s
 
 | Area | Endpoints (prefix `/api`) |
 |---|---|
-| Session | `POST /session/ticket` (launcher only: install token in an `Authorization` header, single-use 60 s ticket out; refused if an `Origin` is present, [06 §2](06-security.md)), `POST /session` (exchanges the ticket for the session cookie), `POST /session/reset-token` |
+| Session | `POST /session/ticket` (launcher only: install token in an `Authorization` header, single-use 60 s ticket out; refused if an `Origin` is present, [06 §2](06-security.md)), `POST /session` (exchanges the ticket for the session cookie), `GET /session/status`, `POST /session/reset-token` |
 | Health | `GET /health` (no session; returns only `{"app":"shelfsync","version":…}`) |
 | Events | `GET /events` (SSE: job progress, counts, health; uses the cookie) |
 | Jobs | `POST /jobs` (multipart, many files), `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/retry`, `POST /jobs/{id}/cancel`, `POST /pause`, `POST /resume` |
@@ -163,9 +163,9 @@ Times are UTC ISO-8601 text. Versions are stored as the original string plus a s
 | Sync | `POST /sync` (sync now), `POST /teach` (teach from current files) |
 | Cleanup | `GET /cleanup`, `POST /cleanup/{id}/apply`, `POST /cleanup/{id}/dismiss`, `POST /cleanup/link-pair`, `POST /cleanup/apply-suggested` |
 | Activity | `GET /activity?q=&from=&to=&filter=`, `GET /activity.csv` |
-| Settings | `GET/PUT /settings/{group}`, `POST /stores`, `PATCH /stores/{id}` (pause, edit), `DELETE /stores/{id}`, `POST /stores/{id}/test`, `POST /storage/test`, `PUT /secrets/{name}` (write-only), `POST /backup/export`, `POST /backup/import` |
+| Settings | `GET/PUT /settings/app`, `GET/PUT /settings/storage`, `GET/PUT /settings/backup`; `GET /stores`, `POST /stores`, `PATCH /stores/{id}` (pause, edit), `PUT /stores/{id}/keys` (write-only), `DELETE /stores/{id}`, `POST /stores/{id}/test`; `PUT/DELETE /secrets/s3-rw` and `/secrets/s3-ro` (write-only), `GET/PUT/DELETE /secrets/github-token` (the GET returns only whether it's set and its expiry); `POST /backup/export`, `POST /backup/import`. Arriving in m2.7: `POST /storage/test` |
 | Wizard | `GET /wizard`, `PUT /wizard/{step}` |
-| Updates | `GET /updates`, `POST /updates/install`, `POST /updates/rollback` |
+| Updates | `GET /updates`, `POST /updates/check`, `POST /updates/install`, `POST /updates/rollback` |
 
 Writes that touch a store or S3 never run inside a request: the request creates or advances a job, and the worker does the work.
 
