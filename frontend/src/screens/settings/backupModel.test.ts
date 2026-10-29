@@ -11,6 +11,7 @@ import {
   dailyFacts,
   exportError,
   exportedLine,
+  followStored,
   formatBytes,
   importError,
   importedLine,
@@ -73,6 +74,32 @@ describe("the keep settings", () => {
   it("Save is off until a value changed", () => {
     expect(keepDirty(keepFormFrom(NONE), NONE)).toBe(false);
     expect(keepDirty({ ...keepFormFrom(NONE), kept: "10" }, NONE)).toBe(true);
+  });
+});
+
+describe("the keep form after the stored values change (an import)", () => {
+  const before = { db_backups_kept: 7, snapshot_retention_days: 30 };
+  const after = { db_backups_kept: 14, snapshot_retention_days: 60 };
+
+  it("an untouched form follows the imported values, so Save stays off and can't write the old ones back", () => {
+    const form = followStored(keepFormFrom(before), before, after);
+    expect(form).toEqual({ kept: "14", snapshots: "60" });
+    expect(keepDirty(form, after)).toBe(false);
+  });
+
+  it("a form being edited keeps its edits", () => {
+    const edited = { kept: "10", snapshots: "30" };
+    expect(followStored(edited, before, after)).toBe(edited);
+  });
+
+  it("nothing changed: the same form", () => {
+    const form = keepFormFrom(before);
+    expect(followStored(form, before, { ...before })).toBe(form);
+  });
+
+  it("after its own save (the form already shows the saved values), it stays as it is", () => {
+    const saved = keepFormFrom(after);
+    expect(followStored(saved, before, after)).toEqual(saved);
   });
 });
 
@@ -204,11 +231,18 @@ describe("import: the answers", () => {
     );
   });
 
-  it("a plain file: no keys, and what to do about them", () => {
+  it("a plain file: no keys, what to do about them, and the restart (it wrote settings too)", () => {
     expect(importedLine({ stores: 2, settings: 12, secrets: 0, encrypted: false })).toEqual({
       tone: "success",
-      text: "Imported 2 stores and 12 settings. This file holds no keys: add each store's keys and the S3 keys yourself.",
+      text: "Imported 2 stores and 12 settings. This file holds no keys: add each store's keys and the S3 keys yourself. Restart ShelfSync to apply the imported settings.",
     });
+  });
+
+  it("no restart sentence when no setting was written (either kind)", () => {
+    expect(importedLine({ stores: 1, settings: 0, secrets: 2, encrypted: true }).text).toBe(
+      "Imported 1 store, 0 settings and 2 keys.",
+    );
+    expect(importedLine({ stores: 1, settings: 0, secrets: 0, encrypted: false }).text).not.toContain("Restart");
   });
 
   it("every error code's 13 text, with 'Nothing was imported.' where it applies", () => {

@@ -57,6 +57,15 @@ export function keepDirty(form: KeepForm, stored: BackupSettingsValues): boolean
   return form.kept !== saved.kept || form.snapshots !== saved.snapshots;
 }
 
+/** When the stored values change under the form (an import, another tab): an untouched form follows them; a form
+ *  being edited keeps its edits (m2.5b round 1). */
+export function followStored(form: KeepForm, before: BackupSettingsValues, now: BackupSettingsValues): KeepForm {
+  const changed =
+    before.db_backups_kept !== now.db_backups_kept || before.snapshot_retention_days !== now.snapshot_retention_days;
+  if (!changed || keepDirty(form, before)) return form;
+  return keepFormFrom(now);
+}
+
 // ---------- the daily backups ----------
 
 /** "820 KB", "1.4 MB": Windows' own units (1 KB = 1024 bytes), so the size matches File Explorer. */
@@ -172,10 +181,12 @@ export function preCheckFile(name: string, size: number): Line | null {
   return null;
 }
 
+/** 13's line for the kind of file, then the restart sentence whenever settings were written (plain files too). */
 export function importedLine(result: ImportResult): Line {
-  return result.encrypted
-    ? { tone: "success", text: B.importedEncrypted(result.stores, result.settings, result.secrets) }
-    : { tone: "success", text: B.importedPlain(result.stores, result.settings) };
+  const done = result.encrypted
+    ? B.importedEncrypted(result.stores, result.settings, result.secrets)
+    : B.importedPlain(result.stores, result.settings);
+  return { tone: "success", text: result.settings > 0 ? `${done} ${B.restartToApply}` : done };
 }
 
 export interface ImportFailure extends Line {

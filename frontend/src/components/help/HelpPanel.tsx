@@ -1,5 +1,6 @@
 import { BookOpen, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { lazy, type MouseEvent, Suspense, useEffect, useRef, useSyncExternalStore } from "react";
+import { ChunkBoundary } from "../ChunkBoundary";
 import { type DialogBehaviour, dialogBehaviour } from "../dialog";
 import { Tip } from "../Tip";
 import { firstFocus, GUIDE_IDS, type GuideId, helpStore } from "./helpModel";
@@ -125,9 +126,11 @@ export function HelpPanel() {
             <h3 className="guide__title" id="help-guide-title" ref={guideTitle} tabIndex={-1}>
               {H.guideTitles[guide]}
             </h3>
-            <Suspense fallback={<GuideLoading />}>
-              <GuideBody guide={guide} onLeave={() => helpStore.close()} />
-            </Suspense>
+            <ChunkBoundary key={guide}>
+              <Suspense fallback={<GuideLoading />}>
+                <GuideBody guide={guide} onLeave={() => helpStore.close()} />
+              </Suspense>
+            </ChunkBoundary>
           </section>
         ) : (
           <>

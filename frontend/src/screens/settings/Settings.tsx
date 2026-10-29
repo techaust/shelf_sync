@@ -1,6 +1,7 @@
 import { AppWindow, Archive, HardDrive, type LucideIcon, RefreshCcw, SlidersHorizontal, Store } from "lucide-react";
 import { lazy, type ReactNode, Suspense } from "react";
 import { NavLink, useParams } from "react-router";
+import { ChunkBoundary } from "../../components/ChunkBoundary";
 import { EmptyState, Page } from "../../components/Page";
 import { NotFound } from "../screens";
 import { LATER, SETTINGS_TITLE } from "./wording";
@@ -100,7 +101,10 @@ export function Settings() {
           <h2 className="settings-title" tabIndex={-1} data-nav-focus="">
             {page.label}
           </h2>
-          <Suspense fallback={<SettingsPageLoading />}>{content(page.sub, page.Icon)}</Suspense>
+          {/* a page whose code can't be fetched (a tab left open across an update) shows one line; the shell stays */}
+          <ChunkBoundary key={page.sub}>
+            <Suspense fallback={<SettingsPageLoading />}>{content(page.sub, page.Icon)}</Suspense>
+          </ChunkBoundary>
         </div>
       </div>
     </Page>

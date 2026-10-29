@@ -3,6 +3,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import {
   BACKUP_SETTINGS_QUERY_KEY,
   type BackupSettings,
+  type BackupSettingsValues,
   exportBackup,
   getBackupSettings,
   importBackup,
@@ -28,6 +29,7 @@ import { attemptExport, attemptImport } from "./backupActions";
 import {
   checkKeepForm,
   dailyFacts,
+  followStored,
   type ImportFailure,
   type KeepErrors,
   type KeepForm,
@@ -61,6 +63,17 @@ function Daily({ settings }: { settings: BackupSettings }) {
   const [errors, setErrors] = useState<KeepErrors>({});
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<Line | null>(null);
+  // The stored values change under the form after an import (m2.5b round 1): an untouched form follows them, so
+  // Save can never write the old numbers back over the imported ones. A form being edited keeps its edits.
+  const stored = useRef<BackupSettingsValues>(settings);
+  const kept = settings.db_backups_kept;
+  const days = settings.snapshot_retention_days;
+  useEffect(() => {
+    const next = { db_backups_kept: kept, snapshot_retention_days: days };
+    const before = stored.current;
+    stored.current = next;
+    setForm((current) => followStored(current, before, next));
+  }, [kept, days]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -127,6 +140,8 @@ function Transfer() {
   );
   const afterRender = useAfterRender();
   const [running, setRunning] = useState<"export" | "import" | null>(null);
+  // set at once, so two submits in the same tick send one request (state only changes at the next render)
+  const busy = useRef(false);
   // export
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [exportErrors, setExportErrors] = useState<{ first?: string; second?: string }>({});
@@ -144,8 +159,10 @@ function Transfer() {
 
   async function runExport(event: FormEvent) {
     event.preventDefault();
-    if (running) return;
+    if (busy.current) return;
+    busy.current = true;
     setExportResult(null);
+    setImportResult(null);
     const outcome = await attemptExport({
       includeSecrets,
       first: firstRef.current,
@@ -158,6 +175,7 @@ function Transfer() {
         setRunning("export");
       },
     });
+    busy.current = false;
     setRunning(null);
     if (outcome.kind === "refused") {
       setExportErrors(outcome.errors);
@@ -193,8 +211,10 @@ function Transfer() {
   async function runImport(event: FormEvent) {
     event.preventDefault();
     const text = fileText.current;
-    if (running || !chosen || text === null) return;
+    if (busy.current || !chosen || text === null) return;
+    busy.current = true;
     setImportResult(null);
+    setExportResult(null);
     setResultFile(chosen.name);
     const outcome = await attemptImport({
       encrypted: chosen.encrypted,
@@ -207,6 +227,7 @@ function Transfer() {
         setRunning("import");
       },
     });
+    busy.current = false;
     setRunning(null);
     if (outcome.kind === "refused") {
       setPassphraseError(outcome.passphraseError);

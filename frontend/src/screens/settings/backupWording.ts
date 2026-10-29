@@ -77,10 +77,13 @@ export const B = {
   chosenPlain: "Not encrypted: it holds no keys.", // proposed (m2.5b)
   importPassphrase: (file: string) => `Passphrase for ${file}`, // 13
   importGo: "Import", // proposed (m2.5b)
+  // 13's two done lines; the restart sentence is added to either whenever the import wrote settings (m2.5b round 1:
+  // a plain file writes them too, port included)
   importedEncrypted: (stores: number, settings: number, keys: number) =>
-    `Imported ${count(stores, "store")}, ${count(settings, "setting")} and ${count(keys, "key")}. Restart ShelfSync to apply the imported settings.`, // 13
+    `Imported ${count(stores, "store")}, ${count(settings, "setting")} and ${count(keys, "key")}.`, // 13
   importedPlain: (stores: number, settings: number) =>
     `Imported ${count(stores, "store")} and ${count(settings, "setting")}. This file holds no keys: add each store's keys and the S3 keys yourself.`, // 13
+  restartToApply: "Restart ShelfSync to apply the imported settings.", // 13
   nothingImported: "Nothing was imported.", // 13
   wrongPassphrase: (file: string) => `Can't open ${file}: the passphrase doesn't match.`, // 13
   passphraseRequired: (file: string) => `${file} is encrypted. Enter the passphrase it was exported with.`, // 13

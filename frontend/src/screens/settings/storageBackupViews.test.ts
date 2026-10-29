@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { StorageSettings } from "../../api/storage";
 import { DailyCard, ExportSection, FileText, ImportSection } from "./BackupView";
+import { importedLine } from "./backupModel";
 import { B } from "./backupWording";
 import {
   KeyPairPanel,
@@ -364,7 +365,7 @@ describe("Settings › Backup: export and import", () => {
     const html = markup(
       h(ImportSection, {
         state: importState({
-          result: { tone: "success", text: B.importedEncrypted(2, 12, 9) },
+          result: importedLine({ stores: 2, settings: 12, secrets: 9, encrypted: true }),
           resultFile: FILE,
         }),
         handlers: importHandlers,
@@ -374,6 +375,21 @@ describe("Settings › Backup: export and import", () => {
       "Imported 2 stores, 12 settings and 9 keys. Restart ShelfSync to apply the imported settings.",
     );
     expect(html).toContain('class="alert is-success"');
+  });
+
+  it("a finished plain import: 13's plain line, then the restart (m2.5b round 1)", () => {
+    const html = markup(
+      h(ImportSection, {
+        state: importState({
+          result: importedLine({ stores: 2, settings: 12, secrets: 0, encrypted: false }),
+          resultFile: FILE,
+        }),
+        handlers: importHandlers,
+      }),
+    );
+    expect(html).toContain(
+      "This file holds no keys: add each store's keys and the S3 keys yourself. Restart ShelfSync to apply the imported settings.",
+    );
   });
 
   it("FileText marks the file's name once, and leaves a line without it alone", () => {
