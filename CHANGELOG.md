@@ -2,6 +2,7 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-29 [#28](https://github.com/techaust/shelf_sync/pull/28) docs: record #25-#27 merges (status, CHANGELOG, M2.5a/b run files closed)
 - 2026-10-29 [#27](https://github.com/techaust/shelf_sync/pull/27) feat(ui): M2.5b Settings › Storage and Settings › Backup, lazy Settings pages, load-failure guard [SET-02, SET-05, BAK-01]
 - 2026-10-29 [#26](https://github.com/techaust/shelf_sync/pull/26) feat(ui): M2.5a Settings › Stores, store health chips, Help panel guides [SET-01, ERR-01, UI-HELP]
 - 2026-10-29 [#25](https://github.com/techaust/shelf_sync/pull/25) docs: end of day 2026-10-29 (status, CHANGELOG #21-#24, M2.2-M2.4 run files closed)
