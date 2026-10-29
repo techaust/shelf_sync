@@ -2,6 +2,10 @@
 
 One line per merged PR, newest first.
 
+- 2026-10-29 [#24](https://github.com/techaust/shelf_sync/pull/24) feat(backup): M2.4 encrypted backup export and import, body limit, shared secrets lock [SET-05]
+- 2026-10-28 [#23](https://github.com/techaust/shelf_sync/pull/23) feat(storage): M2.3 storage settings, the four S3 secrets in Credential Manager, storage API without Test [SET-02]
+- 2026-10-28 [#22](https://github.com/techaust/shelf_sync/pull/22) feat(backup): M2.2 daily database backups, retention, restore command, backup settings API [BAK-01, SET-05]
+- 2026-10-28 [#21](https://github.com/techaust/shelf_sync/pull/21) docs: end of day 2026-10-28 (status, roadmap, decisions, CHANGELOG #18-#20, M2 handovers, CLAUDE.md)
 - 2026-10-28 [#20](https://github.com/techaust/shelf_sync/pull/20) feat(ui): M1b.4 Settings shell, Settings › Updates and Settings › App screens [UI-SET]
 - 2026-10-27 [#19](https://github.com/techaust/shelf_sync/pull/19) feat(stores): M2.1 store settings, store keys in Credential Manager, read-only Test connection; M2 security docs [SET-01, ERR-01]
 - 2026-10-27 [#18](https://github.com/techaust/shelf_sync/pull/18) feat(settings): M1b.3 Settings App API, log pruning by age, one installed-copy test; M1b runbooks and M2 plan [SET-06, LOG-01]
