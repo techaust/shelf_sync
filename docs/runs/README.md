@@ -3,7 +3,7 @@
 Each task given to a `builder` or `designer` gets one file, `docs/runs/<task>.md` (for example `p3.1-logo-concepts.md`, `m4-match-scoring.md`), that starts with three header lines:
 - `Status: open | merged (PR #N) | abandoned`
 - `Tier: A | B | C` ([12 §2](../12-models-and-usage.md))
-- `Usage:` one entry per agent run: the agent, model and effort (copied from `node tools/model-audit.mjs`, not from what was intended), the skills it loaded, then the 5-hour percentage at its start and end, e.g. `builder claude-sonnet-5-5/high [aws-sdk-python-usage]: 5-h 3 → 38 %`
+- `Usage:` one entry per agent run: the agent, model and effort (copied from `node tools/model-audit.mjs`, not from what was intended), the skills it loaded, then the 5-hour percentage at its start and end (in a cloud session, also each posted reading with its time), e.g. `builder claude-opus-5-5/high [aws-sdk-python-usage]: 5-h 3 → 38 %`
 
 Then these sections:
 
@@ -13,9 +13,9 @@ Then these sections:
    - the skills to load ([09 §3](../09-tooling.md))
    - what "done" means (the tests and checks that prove it)
    - what's out of scope, and what another task owns
-2. **Early check** (Tier A only): the builder's report once the schema, migrations, core logic and API routes are committed, then the analyst's GO or CHANGE.
+2. **Early check** (Tiers A and B): the builder's report once the schema, migrations, core logic and API routes are committed, then the analyst's GO or CHANGE.
 3. **Builder report**, by the builder: files changed, commands run and their results, anything not verified, open questions.
 4. **Designer report**, by the designer: the same, plus the screenshot paths, any placeholder or sample data, and confirmation that `frontend-design` was loaded first.
-5. **Review**, the reviewer's reply (APPROVE or SEND BACK, each finding with its severity, and the visual review when there are screens), copied in by the lead.
+5. **Review**, the reviewer's reply (APPROVE or SEND BACK, each finding with its severity, and the visual review when there are screens), copied in by the lead. After any critical or high finding, the **second review** (a new reviewer, the whole task again, [12 §4](../12-models-and-usage.md)) follows the fixes here too; after only medium or low findings, the re-check of the fix diff.
 6. **Integration notes**, by the lead: how it was merged, the full-check results, follow-ups.
 7. **Handover**, by the lead at the end of each conversation: where the task stands and the next step. The next conversation ("continue") starts here.

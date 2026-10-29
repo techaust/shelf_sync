@@ -30,7 +30,7 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 8. **Tools are used automatically:** before each task, load every skill and tool in its row of `docs/09-tooling.md` §3, without being asked, and say which were loaded. **Never install a plugin, MCP server or package without the owner's yes.** Tools this project doesn't use are turned off for it in `.claude/settings.json` (09 §2); never turn one back on without the owner's yes.
 9. **Ratings are 100 % genuine**, with reasons. Report honestly what ran, what passed and what wasn't verified.
 10. **Screenshots** use the built-in browser pane, never headless Chrome or the Playwright MCP browser (owner's choice; Playwright MCP is blocked in settings). Full-page 2× shots go through the in-pane capture helper and its 127.0.0.1-only receiver (`docs/05-design-system-appendix/screenshots/README.md`).
-11. **Models and effort** follow `docs/12-models-and-usage.md`: only Opus, Sonnet and Haiku 5.5, never Fable, effort low to high. The lead runs on **Opus 5.5 at medium**, and asks the owner to switch to **high** only for the five key steps in docs/12 §3, then back. If the model or effort is wrong for the step, say so in one line and wait.
+11. **Models and effort** follow `docs/12-models-and-usage.md`: **every task runs on Opus 5.5 at high**, the lead and every agent, helpers included. No Sonnet, Haiku or Fable, and no other effort level. If the model or effort is wrong, say so in one line and wait.
 12. **Never change Windows security settings** (Smart App Control, Defender, SmartScreen); the owner decides those.
 13. Keep the record, this file and the memory notes current so work can resume across sessions.
 
@@ -40,11 +40,12 @@ The owner starts each day with **"start the day"** and ends it with **"end the d
 
 ## How work is split
 `docs/12-models-and-usage.md` is the full plan. In short:
-- **Tiers:** A (anything that can write to a store or S3, auto-apply logic, security, the ZIP reader, the updater), B (sync, catalog, jobs, tray, installer), C (screens from existing parts, docs).
-- **Order inside a task:** `builder` (Sonnet) → Tier A: `analyst` early check (Opus high) → `designer` (Opus high) → `reviewer` (Opus high) → fixes → re-check.
-- **Helpers:** `code-finder`, `test-runner`, `doc-clerk` (Haiku). Never the built-in Explore, Plan or general-purpose agents (the hook refuses them; the read-only helpers that review skills start are the observed exception, see `docs/12-models-and-usage.md` §3).
-- **Usage check:** read the 5-hour window once a day ([12 §5](docs/12-models-and-usage.md)); at 80 % or more nothing new starts until it resets. It limits how much runs at once, never the model or effort.
-- **This PC (7.8 GB RAM):** at most two agents at once, never two using a browser; heavy commands through `bash tools/heavy.sh --log <name> <command>` (the lock is shared with techaust_platform and other projects: when it is held or reports low memory, wait for it, never stop another project's job, and never report a partial run as done).
+- **Tiers:** A (anything that can write to a store or S3, auto-apply logic, security, the ZIP reader, the updater), B (sync, catalog, jobs, tray, installer), C (screens from existing parts, docs). A tier decides only which checks a task gets, never the model or effort.
+- **Order inside a task:** `builder` → Tiers A and B: `analyst` early check → `designer` → `reviewer` → fixes → after any critical or high finding, a second full review by a new reviewer; otherwise a re-check of the fix diff. All on Opus 5.5 at high.
+- **Helpers:** `code-finder`, `test-runner`, `doc-clerk` (Opus 5.5 at high). Never the built-in Explore, Plan or general-purpose agents (the hook refuses them; the read-only helpers that review skills start are the observed exception, see `docs/12-models-and-usage.md` §3).
+- **Budget gate:** read the 5-hour bar at the start of the day and before every new agent ([12 §5](docs/12-models-and-usage.md)). At or under 95 %, new agents start; over 95 %, nothing new starts, and running agents keep going and save their work as they go. In a cloud session: no reading posted that day, nothing new starts; a reading over 2 hours old, one agent at a time. It limits how much runs at once, never the model or effort.
+- **Agents at once** (every agent counts, helpers too; [12 §4](docs/12-models-and-usage.md)): **this PC (7.8 GB RAM)** at most 2, at most 1 using a browser (the lead's browser pane counts); **a cloud session** checks the virtual machine before each start: another agent starts while it has at least 3 GB free memory and its processors aren't fully loaded, up to 5, at most 2 using a browser.
+- **Heavy commands** (the security suite, builds, full lint, full test runs) take turns through `bash tools/heavy.sh --log <name> <command>`, here and in the cloud (on this PC the lock is shared with techaust_platform and other projects: when it is held or reports low memory, wait for it, never stop another project's job, and never report a partial run as done).
 
 ## Git workflow
 Repo: https://github.com/techaust/shelf_sync (created 2026-10-26; **public during development**, owner's choice, [11](docs/11-decisions.md)). Anything committed is public: never commit secrets or store addresses.

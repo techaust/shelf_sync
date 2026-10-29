@@ -2,11 +2,11 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5"
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5"
   },
-  "availableModels": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
-  "effortLevel": "medium",
+  "availableModels": ["claude-opus-5-5"],
+  "effortLevel": "high",
   "permissions": {
     "deny": [
       "Read(//d/BUSINESS/3. CHILD PROJECTS/1. GPL PROJECTS/OTHER ASSETS/SOFTWARE/OmniSync/config.env)",

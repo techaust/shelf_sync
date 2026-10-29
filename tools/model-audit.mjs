@@ -1,8 +1,8 @@
 // Lists every Claude Code run in ShelfSync since a date, with the model and effort its own log recorded,
-// and flags anything outside docs/12-models-and-usage.md: a model other than Opus, Sonnet or Haiku 5.5,
-// effort xhigh/max, or the lead on an effort other than medium or high (high is listed, so the owner can
-// check it was a key step). It also lists the skills each run loaded and flags a builder, designer, analyst
-// or reviewer run that loaded none (skills are mandatory: docs/09-tooling.md section 3).
+// and flags anything outside docs/12-models-and-usage.md: any run, lead or agent, on a model other than
+// Opus 5.5 or an effort other than high (including the review skills' built-in helpers). It also lists
+// the skills each run loaded and flags a builder, designer, analyst or reviewer run that loaded none
+// (skills are mandatory: docs/09-tooling.md section 3).
 // Adapted from techaust_platform/tools/model-audit.mjs.
 // Usage: node tools/model-audit.mjs [YYYY-MM-DD]   (default: today). Exit code 1 if anything is flagged.
 // Dates are Windows local dates and times are shown in local time with the zone name (CLAUDE.md, Time).
@@ -12,8 +12,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
-const EFFORTS = new Set(["low", "medium", "high"]);
+const MODELS = new Set(["claude-opus-5-5"]);
+const EFFORTS = new Set(["high"]);
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = join(homedir(), ".claude", "projects", repo.replace(/[^A-Za-z0-9]/g, "-"));
@@ -82,9 +82,7 @@ for (const file of files) {
   const problems = [];
   for (const m of models) if (!MODELS.has(m)) problems.push(`model ${m} not allowed`);
   for (const e of efforts) if (!EFFORTS.has(e)) problems.push(`effort ${e} not allowed`);
-  if (!isAgent && [...efforts].some((e) => e !== "medium" && e !== "high")) problems.push("lead not on medium or high");
-  if (!isAgent && [...models].some((m) => m !== "claude-opus-5-5")) problems.push("lead not on Opus 5.5");
-  let note = !isAgent && efforts.has("high") ? "  NOTE: lead ran at high (key step?)" : "";
+  let note = "";
   if (["Explore", "Plan", "general-purpose", "claude"].includes(agent))
     note += "  NOTE: built-in agent (allowed only as a code-review/security-review helper; check it only read)";
   if (["builder", "designer", "analyst", "reviewer"].includes(agent) && !skills.size)

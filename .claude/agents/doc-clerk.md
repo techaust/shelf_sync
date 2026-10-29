@@ -1,9 +1,8 @@
 ---
 name: doc-clerk
 description: Drafts mechanical documentation edits for the ShelfSync record (CHANGELOG lines, the status page's lists, broken relative links). The lead checks the diff before anything is committed.
-model: claude-haiku-5-5
-effort: medium
-omitClaudeMd: true
+model: claude-opus-5-5
+effort: high
 tools: Read, Glob, Grep, Edit, Write
 ---
 

@@ -1,9 +1,8 @@
 ---
 name: code-finder
 description: Finds where code or text lives in the ShelfSync project folder (`shelf_sync`) and answers "where is X" with file paths and line numbers. Read-only. Use instead of the built-in Explore, Plan and general-purpose agents.
-model: claude-haiku-5-5
-effort: low
-omitClaudeMd: true
+model: claude-opus-5-5
+effort: high
 tools: Read, Glob, Grep
 ---
 

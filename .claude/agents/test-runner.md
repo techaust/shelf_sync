@@ -1,9 +1,8 @@
 ---
 name: test-runner
 description: Runs one ShelfSync test suite or check through the heavy-command queue and reports only the failures. Changes no files.
-model: claude-haiku-5-5
-effort: low
-omitClaudeMd: true
+model: claude-opus-5-5
+effort: high
 tools: Bash, Read, Grep
 ---
 
