@@ -1,13 +1,13 @@
 // The stores list and Test connection as hooks, shared by Settings › Stores and the shell's HealthArea (SET-01,
 // ERR-01). The list is asked for again after each test, save or remove, and when the window regains focus; never on a
-// timer.
+// timer. It lives in app/ (m2.5b), beside the shell that uses it, so no component imports a screen's module.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { listStores, STORES_QUERY_KEY, testStore } from "../../api/stores";
-import { useServices } from "../../app/services";
-import { storeTests } from "../../lib/storeTests";
-import { useSwitchPhase } from "./switchStore";
+import { listStores, STORES_QUERY_KEY, testStore } from "../api/stores";
+import { storeTests } from "../lib/storeTests";
+import { useSwitchPhase } from "../screens/settings/switchStore";
+import { useServices } from "./services";
 
 export function useStoresQuery() {
   const { api } = useServices();

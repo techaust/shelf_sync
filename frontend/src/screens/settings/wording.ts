@@ -10,19 +10,12 @@ import type { LastCheck, SwitchResult } from "../../api/settings";
 // ---------- the shell (mockup) ----------
 export const SETTINGS_TITLE = "Settings";
 
-/** The four pages that come later (proposed (m1b.4)): what the page will hold, in the empty-state pattern of 13 §2. */
-export const LATER: Record<"storage" | "rules" | "backup", { text: string; sub: string }> = {
-  storage: {
-    text: "Storage settings come in a later version of ShelfSync.",
-    sub: "This is where you'll add the S3 bucket ShelfSync uploads to, and test its keys.",
-  },
+/** The page that comes later (proposed (m1b.4)): what it will hold, in the empty-state pattern of 13 §2. Storage and
+ *  Backup became real pages in m2.5b. */
+export const LATER: Record<"rules", { text: string; sub: string }> = {
   rules: {
     text: "Rules come in a later version of ShelfSync.",
     sub: "This is where you'll set auto-apply, its brakes and the words used for matching.",
-  },
-  backup: {
-    text: "Backup settings come in a later version of ShelfSync.",
-    sub: "This is where you'll export and import your settings, and choose how long backups are kept.",
   },
 };
 

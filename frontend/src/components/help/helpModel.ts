@@ -3,9 +3,9 @@
 // (help.test.ts). The guides' words are in guides.tsx; they are proposed in docs/runs/m2.5a-stores-screens.md
 // section 3 for 13.
 
-export type GuideId = "shop-manager-key" | "s3-policy" | "github-token";
+export type GuideId = "shop-manager-key" | "s3-policy" | "github-token" | "restore-database";
 
-export const GUIDE_IDS: readonly GuideId[] = ["shop-manager-key", "s3-policy", "github-token"];
+export const GUIDE_IDS: readonly GuideId[] = ["shop-manager-key", "s3-policy", "github-token", "restore-database"];
 
 export interface HelpState {
   open: boolean;

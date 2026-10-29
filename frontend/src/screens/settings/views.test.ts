@@ -17,16 +17,9 @@ import { SecretField } from "../../components/SecretField";
 import { Switch } from "../../components/Switch";
 import { AppView } from "./AppView";
 import { formFrom } from "./forms";
+import { Restarting, RestartScreen, shellTakesOver } from "./RestartScreen";
 import { SETTINGS_PAGES, Settings } from "./Settings";
-import {
-  Restarting,
-  RestartScreen,
-  RollBackBody,
-  shellTakesOver,
-  UpdatesFailed,
-  UpdatesLoading,
-  UpdatesView,
-} from "./UpdatesView";
+import { RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
 import { type DateFormat, describeUpdates, type Phase } from "./updatesModel";
 import { A, LATER, T, U } from "./wording";
 
@@ -406,7 +399,7 @@ describe("the Settings shell", () => {
     expect(html).toContain('<nav class="sub-nav" aria-label="Settings">');
   });
 
-  it.each(["storage", "rules", "backup"] as const)("%s: the later-version panel", (sub) => {
+  it.each(["rules"] as const)("%s: the later-version panel", (sub) => {
     const html = at(`/settings/${sub}`);
     expect(html).toContain(LATER[sub].text);
     expect(html).toContain(LATER[sub].sub);

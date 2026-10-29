@@ -10,31 +10,7 @@ import { Link } from "react-router";
 import { getStorage, STORAGE_QUERY_KEY } from "../../api/storage";
 import { useServices } from "../../app/services";
 import { BUCKET_PLACEHOLDER, bucketFor, copyText, type GuideId, policies } from "./helpModel";
-
-export const H = {
-  title: "Help",
-  close: "Close help",
-  guides: "Guides",
-  allGuides: "All guides",
-  open: "Help",
-  copy: "Copy",
-  copied: "Copied.",
-  pressCtrlC: "Press Ctrl+C to copy.",
-  guideTitles: {
-    "shop-manager-key": "Make a Shop Manager key", // mockup
-    "s3-policy": "Set up the S3 access policy (IAM)", // mockup
-    "github-token": "Make a GitHub token for updates", // mockup
-  } satisfies Record<GuideId, string>,
-  never: "Never paste a key into chat, a document or a screenshot. A key shown anywhere else has to be replaced.",
-  // the S3 guide
-  noBucket: "Fill in the bucket under Settings › Storage first. Until then the policies say BUCKET.",
-  noBucketLink: "Open Storage settings",
-  bucketUnknown: "ShelfSync didn't answer, so the bucket's name couldn't be filled in. Replace BUCKET with it.",
-  bucketLead: "The policies below are for the bucket",
-  readWriteTitle: "Read and write policy (ShelfSyncReadWrite)",
-  readOnlyTitle: "Read-only policy (ShelfSyncReadOnly)",
-  policyLabel: (title: string) => `${title}, JSON`,
-};
+import { H } from "./helpWording";
 
 /** A small mono name inside a sentence: a user name, a policy name, a key prefix. */
 const M = ({ children }: { children: ReactNode }) => <code className="mono">{children}</code>;
@@ -71,7 +47,8 @@ function ShopManagerGuide() {
   );
 }
 
-function PolicyBlock({ title, text }: { title: string; text: string }) {
+/** A block of text to copy whole: an IAM policy (JSON), or a PowerShell command (`label` names it for screen readers). */
+function PolicyBlock({ title, text, label = H.policyLabel(title) }: { title: string; text: string; label?: string }) {
   const id = useId();
   const pre = useRef<HTMLPreElement>(null);
   const region = useRef<HTMLElement>(null);
@@ -105,7 +82,7 @@ function PolicyBlock({ title, text }: { title: string; text: string }) {
         {said === "copied" ? H.copied : said === "select" ? H.pressCtrlC : ""}
       </p>
       {/* Shown whole (it wraps; nothing to scroll), so no tab stop; Copy's fallback focuses and selects it. */}
-      <section className="policy__code" tabIndex={-1} aria-label={H.policyLabel(title)} ref={region}>
+      <section className="policy__code" tabIndex={-1} aria-label={label} ref={region}>
         <pre ref={pre}>
           {/* one block per line, so a line that wraps hangs under its own indent (the copied text is `text`) */}
           {text.split("\n").map((line, n) => (
@@ -230,6 +207,43 @@ function GithubTokenGuide() {
   );
 }
 
+/** docs/runbooks/restore-database.md's commands, for the installed app (the restore command, m2.2). */
+export const RESTORE_COMMANDS = {
+  list: '& "$env:LOCALAPPDATA\\Programs\\ShelfSync\\current\\python.exe" -I -m shelfsync.db.restore --list',
+  restore:
+    '& "$env:LOCALAPPDATA\\Programs\\ShelfSync\\current\\python.exe" -I -m shelfsync.db.restore daily-20261028T020000Z.db',
+};
+
+/** docs/runbooks/restore-database.md in 13's plain style (proposed (m2.5b)): restoring is a command, not a button. */
+function RestoreGuide() {
+  return (
+    <>
+      <p>
+        ShelfSync backs up its database every day. Restoring puts one of those backups in place of the current database.
+        ShelfSync keeps a copy of the current one first, so a restore can be undone.
+      </p>
+      <ol className="guide-steps">
+        <li>
+          Quit ShelfSync: right-click its tray icon › <strong>Quit</strong>.
+        </li>
+        <li>
+          Open <strong>Windows PowerShell</strong> and list the backups, newest first:
+          <PolicyBlock title={H.listTitle} text={RESTORE_COMMANDS.list} label={H.commandLabel(H.listTitle)} />
+        </li>
+        <li>
+          Pick one name from the list and restore it. Replace <M>daily-20261028T020000Z.db</M> with that name:
+          <PolicyBlock title={H.restoreTitle} text={RESTORE_COMMANDS.restore} label={H.commandLabel(H.restoreTitle)} />
+        </li>
+        <li>It must end with "Done. The database was restored from …". Then start ShelfSync from the Start menu.</li>
+      </ol>
+      <p className="muted">
+        If it says ShelfSync is running, quit it from the tray icon and run step 3 again. "Nothing was changed" means
+        your database is as it was. The times in the backups' names are UTC.
+      </p>
+    </>
+  );
+}
+
 /** The body of one guide. `onLeave`: a link inside it moves to another screen, so the panel closes. */
 export function GuideBody({ guide, onLeave }: { guide: GuideId; onLeave: () => void }) {
   switch (guide) {
@@ -239,5 +253,7 @@ export function GuideBody({ guide, onLeave }: { guide: GuideId; onLeave: () => v
       return <S3PolicyGuide onLeave={onLeave} />;
     case "github-token":
       return <GithubTokenGuide />;
+    case "restore-database":
+      return <RestoreGuide />;
   }
 }

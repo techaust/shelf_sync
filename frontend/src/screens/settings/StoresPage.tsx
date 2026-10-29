@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import { createStore, deleteStore, putStoreKeys, STORES_QUERY_KEY, type Store, updateStore } from "../../api/stores";
 import { useServices } from "../../app/services";
+import { useRunStoreTest, useStoresQuery } from "../../app/useStores";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { helpStore } from "../../components/help/helpModel";
 import { S } from "../../lib/storesWording";
@@ -29,7 +30,6 @@ import {
   type StoreErrors,
   type StoreForm,
 } from "./storesModel";
-import { useRunStoreTest, useStoresQuery } from "./useStores";
 
 const openKeyGuide = () => helpStore.open("shop-manager-key");
 
