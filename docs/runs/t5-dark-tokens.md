@@ -1,6 +1,6 @@
 Status: open
 Tier: C ([12 §2](../12-models-and-usage.md)): screen styles only, no new parts
-Usage: lead `claude-opus-5-5/high` (cloud session, from `get_session`; no `model-audit` log here). 5-hour readings posted by the orchestrator: **31 % at 00:51 IST, 2026-11-02** (resets about 02:20 IST).
+Usage: lead `claude-opus-5-5/high` (cloud session; model and effort from `get_session` and the model-guard hook, not from `model-audit`, whose log isn't on this machine); designer `claude-opus-5-5/high` (its agent file; `frontend-design` and Context7 not available here), two runs; reviewer `claude-opus-5-5/high` (its agent file) [`code-review`], review and re-check. 5-hour reading posted by the orchestrator: **31 % at 00:51 IST, 2026-11-02** (resets about 02:20 IST); every agent started under 2 hours after it (the last at 01:17 IST), so the gate was open; no later reading (this session can't read usage).
 
 # T5: dark values as component tokens
 
@@ -92,7 +92,7 @@ Specificity: the old dark rules were `(0,3,0)` and now the dark value sits in th
 **The test** (`component-tokens.test.ts`, 71 tests; 73 after the fix round): a small CSS reader (style rules with their `@media` conditions; `@layer` transparent; a nested rule or an unknown theme scope throws) and a `var()` resolver: substitution where declared (`:root` declarations against `:root`, `.tone-dark` ones against `.tone-dark`, which inherits from `:root`; an element's own `--dot-*` against itself), nested fallbacks, `initial` and undeclared as guaranteed-invalid, the empty value, cycles, and a declaration that ends up invalid (a distinct result that never equals an expected colour). Cascade among the token scopes by specificity, then file order (`tokens.css`, `shelfsync-tokens.css`, `component-tokens.css`).
 - Resolver sanity (3): a hand-worked case (substitution where declared vs at the element, the switches, invalid results, a cycle with and without a fallback).
 - Colours (60): `data-theme` light, dark, absent × Windows light, dark × page, inside `.tone-dark` × `.card`, `.sk`, `.secret-pair__mask` and both `STORE_PALETTE` pairs; the rule is read from the stylesheet, the expectation comes from an independent table of the old rules (the brief's), turned into hex from `brand/tokens.json` in the right scope.
-- Structure (8): no `[data-theme="dark"]` or `prefers-color-scheme` in `app.css`, `settings.css`, `stores.css`, `storage-backup.css`; the two dark forms in `component-tokens.css` identical; the rules read exactly the tokens `component-tokens.css` declares (needed because `fill-subtle` and `surface-alt` are both `ink-750` in dark, so a misspelt mask token would still resolve to the right colour); `.tone-dark`'s `--color-*` values equal both dark blocks of `tokens.css`; `StoreBadge.tsx` still sets `--dot-light`/`--dot-dark` (read as text, not changed).
+- Structure (8; 10 since the fix round): no `[data-theme="dark"]` or `prefers-color-scheme` in any `src/styles/*.css` but `component-tokens.css` (since the fix round by glob, `fonts.css` included, with a test that all five sheets were found and none is empty); the two dark forms in `component-tokens.css` identical; the rules read exactly the tokens `component-tokens.css` declares (needed because `fill-subtle` and `surface-alt` are both `ink-750` in dark, so a misspelt mask token would still resolve to the right colour); `.tone-dark`'s `--color-*` values equal both dark blocks of `tokens.css`; `StoreBadge.tsx` still sets `--dot-light`/`--dot-dark` (read as text, not changed).
 - **It fails when broken** (tried locally, each restored after): `.tone-dark` switches removed (6 fail); a light value `--sk-background-dark: var(--color-fill-subtle)` on `:root` (3 fail: `.sk` inside `.tone-dark` in light); the dark forms drifting (3 fail); both switches empty in light (6 fail); `.card` reading no token (7 fail); the mask rule reading a misspelt token (1 fail). Back to 71 passed after restore.
 
 **Commands and results** (in the worktree's `frontend/`, through `bash ../tools/heavy.sh --log <name> …`; logs in `frontend/.logs/`, git-ignored)
@@ -133,10 +133,51 @@ No `.card`, `.store-dot`, `.sk` or `.secret-pair__mask` selector with `data-them
 - Still not verified: real-browser rendering (on the PC, as above).
 
 ## 5. Review
-_(reviewer, copied in by the lead)_
+_(reviewer `claude-opus-5-5/high`, `code-review` loaded (it ran a forked read-only helper; the reviewer re-checked each of its points); `frontend-design` not available; code review only, no visual review (CLAUDE.md rule 10). Copied in by the lead.)_
+
+**Review of `ed3e3a7..54a5890`: APPROVE.** The hard requirement is met: every computed colour is as at `ed3e3a7` in light, dark by setting, dark by system, `data-theme="light"` with system dark, and inside `.tone-dark`.
+- **Cascade:** no other rule sets `border`/`border-color` on a `.card` or `background` on `.sk`, `.store-dot` or `.secret-pair__mask`. The other rules on these elements set only size, radius or clip-path, the other classes they carry colour nothing, and no Tailwind utility sits on them. So the drop from (0,3,0) to (0,1,0) changes nothing today.
+- **Scope:** `.tone-dark` is only on `AppBar.tsx`'s `<header>`, and `.store-dot` is rendered only by `StoreBadge.tsx` (`IdentifierPicker` goes through it).
+- **Mechanisms:** the CSS reasoning is correct per the spec. The shorthand gives `"#hex "` or `" #hex"`. Without `--dot-*` it is invalid at computed-value time, so the dot is transparent, as before. Forced colours are unchanged.
+- **Checks the reviewer ran:** `vitest run src/styles` 444 passed; lint, typecheck exit 0; `npm test` 1008 passed; build exit 0, and the built CSS holds the switches and tokens.
+- **Probes:** the old `.store-dot` rule restored → 19 failed (good). `.card.chunk-failed { border-color: var(--color-border); }` → all passed, which was finding 1.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | medium | The test only checked rules whose last selector part was exactly the class, and skipped `storage-backup.css`: a later `.card.x { border-color }` would win in dark with every test green; the run file overstated the guard | fixed (`6ab9976`) |
+| 2 | low | `scopes(context)` ran an `expect` during Vitest's collection | fixed (`6ab9976`) |
+| 3 | low | expected dot colour lower-cased, computed not | fixed (`6ab9976`) |
+| 4 | low | "no theme scope" check over a hand-written list of four sheets | fixed: glob over `src/styles/*.css` (`6ab9976`) |
+| 5 | low | `component-tokens.css` stated browser behaviour as fact, which isn't verified in 04-A | fixed: worded per the CSS spec, browser check on the PC (`b21fdcb`) |
+| 6 | low | `semantic()` duplicates `contrast.test.ts` helpers | skipped by the lead: a shared helper would also change `contrast.test.ts`, outside this task's change |
+| 7 | low | the decision belongs in `11-decisions.md` as "Lead (proposed)"; `Usage:` lacked the agent runs | `Usage:` filled; the `11` row is left to the orchestrator (§7): `11-decisions.md` isn't in this task's files, and parallel tasks may edit it |
+
+**Re-check of the fix diff `54a5890..b32ef6e`: APPROVE.** Findings 1–5 fixed.
+- **Probes:** `.card.chunk-failed` now fails 13 tests. Lookalike names (`.card-alert.x`, `.secret-pair__masks .y`, `.card__section`) pass, as they should. A forced-colours background on `.store-dot.is-square` in `fonts.css` fails 25, so the glob reaches `fonts.css`.
+- **Checks the reviewer ran:** `npm test -- component-tokens` 73 passed; lint exit 0.
+- **One new low:** the run file's "Structure (8)" bullet was stale. The lead fixed it.
+- **Not verified by the reviewer:** real-browser rendering. The re-check didn't re-run build, typecheck or the full suite; the lead did (§6).
 
 ## 6. Integration notes
-_(lead)_
+_(lead, 2026-11-02, cloud session)_
+- The designer's worktree commits were fast-forwarded onto `refactor/dark-tokens` (no squash here; GitHub squash-merges the PR). Base `main` at `f5f95a4`.
+- **Full checks on the integrated branch** (in `frontend/`, through `bash ../tools/heavy.sh --log t5-lead-<name> …`): `npm run lint` exit 0; `npm run typecheck` exit 0; `npm test` exit 0, 29 files, 1010 tests; `npm run build` exit 0, and `dist/` CSS holds `:root{--theme-light: ;--theme-dark:initial}` and `.tone-dark{--theme-light:initial;--theme-dark: }`, with no `data-theme`/`.tone-dark` selector left on the four components. `brand/` untouched, so its checks didn't need to run.
+- **Files changed:** `frontend/src/styles/{app,settings,stores,component-tokens}.css`, `frontend/src/styles/component-tokens.test.ts`, this file. No file another task owns.
+- **Duplicated dark pairs left:** none, in `app.css` or any other stylesheet. The only theme scopes are in the token files: `generated/tokens.css`, `generated/shelfsync-tokens.css`, and `component-tokens.css`. `component-tokens.css` holds its own one pair of scope blocks, as the token files do; the test keeps the two blocks identical.
+- **Pushed** `refactor/dark-tokens`. **No PR** (the orchestrator checks light and dark on the PC, then opens it).
 
 ## 7. Handover
-_(lead)_
+_(lead, 2026-11-02)_ Code done, reviewed and pushed; the task waits on the orchestrator.
+
+**For the orchestrator, on the PC:**
+1. **Light and dark check** of the built app: Same as Windows (Windows light and dark, and a live switch), Light, Dark. Look at:
+   - cards: a border in light, none in dark;
+   - store dots in the app bar's health chips (the dark dot in both themes) and on Settings › Stores and the identifier picker (the light dot in light, the dark one in dark);
+   - skeletons while Settings loads;
+   - a saved secret's mask on Settings › Stores;
+   - forced colours.
+   Any getComputedStyle value should equal `main`'s. The only new browser dependency is the single-space custom property (the `--theme-*` switches): if store dots go transparent, that's where to look.
+2. **After it passes:** add a 04-A row ("Edge/WebView2 honours a whitespace-only custom property as an empty value, and `initial` as guaranteed-invalid", with the date), and point `component-tokens.css`'s header to it (review low 5).
+3. **`11-decisions.md`, "Lead (proposed)" row:** component tokens live in a hand-written `frontend/src/styles/component-tokens.css`, not `brand/tokens.json` (TecHaust's file, copied unchanged) or `sync-tokens.mjs` (no brand data in them). Dark-only tokens are read with the light value as the fallback, and `.store-dot` uses theme switches (reasons in §1).
+4. Then open the PR, close the follow-up in `10`, and add the CHANGELOG line.
+5. **Clean up:** the designer's worktree `.claude/worktrees/agent-a47ec4f3c09046274` (branch `worktree-agent-a47ec4f3c09046274`) is local to this cloud VM and was never pushed. It's integrated; this session removes it.
