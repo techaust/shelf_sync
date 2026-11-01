@@ -5,14 +5,10 @@
 import { describe, expect, it } from "vitest";
 import tokens from "../../../brand/tokens.json";
 import storeBadge from "../components/StoreBadge.tsx?raw";
-import appCss from "./app.css?raw";
 import componentTokensCss from "./component-tokens.css?raw";
 import shelfsyncTokensCss from "./generated/shelfsync-tokens.css?raw";
 import tokensCss from "./generated/tokens.css?raw";
-import settingsCss from "./settings.css?raw";
-import storageBackupCss from "./storage-backup.css?raw";
 import { STORE_PALETTE } from "./storePalette";
-import storesCss from "./stores.css?raw";
 
 // ---------- a small CSS reader: style rules with their @media conditions (@layer is transparent here) ----------
 
@@ -230,26 +226,37 @@ function scopes(context: Context): { page: Env; tone: Env } {
 
 // ---------- the component rules, read from the stylesheets ----------
 
-const SHEETS = { "app.css": appCss, "settings.css": settingsCss, "stores.css": storesCss };
+// Every stylesheet in this folder except the token file (the generated ones sit in a subfolder).
+const SHEETS = import.meta.glob(["./*.css", "!./component-tokens.css"], {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+const SHEET_NAMES = ["./app.css", "./fonts.css", "./settings.css", "./storage-backup.css", "./stores.css"];
 type Component = "card" | "sk" | "secret-pair__mask" | "store-dot";
-const RULES: Record<Component, { sheet: keyof typeof SHEETS; property: "border" | "background"; family: RegExp }> = {
-  card: { sheet: "app.css", property: "border", family: /^border(-color)?$/ },
-  sk: { sheet: "settings.css", property: "background", family: /^background(-color)?$/ },
-  "secret-pair__mask": { sheet: "stores.css", property: "background", family: /^background(-color)?$/ },
-  "store-dot": { sheet: "app.css", property: "background", family: /^background(-color)?$/ },
+const RULES: Record<Component, { property: "border" | "background"; family: RegExp }> = {
+  card: { property: "border", family: /^border(-color)?$/ },
+  sk: { property: "background", family: /^background(-color)?$/ },
+  "secret-pair__mask": { property: "background", family: /^background(-color)?$/ },
+  "store-dot": { property: "background", family: /^background(-color)?$/ },
 };
 const allRules = Object.values(SHEETS).flatMap(parse);
 
-/** The one declaration that colours the component: every rule whose selector ends in the class, outside
- *  forced-colors mode, that sets the property (or its colour longhand). */
+/** The one declaration that colours the component. The dark value now sits in the base rule (specificity 0,1,0, not
+ *  the old dark rules' 0,3,0), so any other rule that colours the element would win over it: no rule in any
+ *  stylesheet or media query (forced-colors included: it sets none of these today) whose selector's last compound
+ *  carries the class (.card.is-x, .card:hover, .foo .card; not .card-alert) may set the property or its colour
+ *  longhand. Only the base rule, the bare class, does. */
 function declaration(component: Component): string {
   const { property, family } = RULES[component];
+  const carries = new RegExp(`\\.${component}(?![\\w-])`);
   const found = allRules
-    .filter((r) => !r.media.some((m) => m.includes("forced-colors")))
-    .filter((r) => r.selectors.some((s) => s.split(/[\s>+~]+/).pop() === `.${component}`))
-    .flatMap((r) => r.decls.filter(([name]) => family.test(name)));
-  expect(found.map(([name]) => name)).toEqual([property]);
-  return found[0]?.[1] ?? "";
+    .filter((r) => r.selectors.some((s) => carries.test(s.split(/[\s>+~]+/).pop() ?? "")))
+    .flatMap((r) => r.decls.filter(([name]) => family.test(name)).map(([name, value]) => ({ r, name, value })));
+  expect(found.map(({ r, name }) => `${r.selectors.join(", ")} { ${name} }`)).toEqual([
+    `.${component} { ${property} }`,
+  ]);
+  return found[0]?.value ?? "";
 }
 
 /** The colour the rule gives on an element under the given scope. */
@@ -290,29 +297,38 @@ function expected(component: Component, context: Context, inTone: boolean, dot?:
     case "secret-pair__mask":
       return semantic(pageDark ? "surface-alt" : "fill-subtle", scope);
     case "store-dot": // also dark under .tone-dark (the old `.tone-dark .store-dot`)
-      return (pageDark || inTone ? dot?.dark : dot?.light)?.toLowerCase();
+      return pageDark || inTone ? dot?.dark : dot?.light;
   }
 }
 
 const CONTEXTS: Context[] = (["light", "dark", null] as const).flatMap((dataTheme) =>
   (["light", "dark"] as const).map((system) => ({ dataTheme, system })),
 );
+/** Hex is case-insensitive: both sides are compared in lower case. */
+const lower = (value: Value | undefined): Value | undefined =>
+  typeof value === "string" ? value.toLowerCase() : value;
+
 const PLACES = [
   ["on the page", false],
   ["inside .tone-dark", true],
 ] as const;
 
 describe.each(CONTEXTS)("data-theme $dataTheme, Windows $system", (context) => {
-  const { page, tone } = scopes(context);
   describe.each(PLACES)("%s", (_where, inTone) => {
-    const parent = inTone ? tone : page;
+    // resolved inside each test, so nothing asserts while Vitest collects the tests
+    const parent = (): Env => {
+      const { page, tone } = scopes(context);
+      return inTone ? tone : page;
+    };
     it.each<Component>(["card", "sk", "secret-pair__mask"])("%s keeps its colour", (component) => {
-      const want = expected(component, context, inTone);
+      const want = lower(expected(component, context, inTone));
       expect(want).toMatch(/^(#[0-9a-f]{6}|transparent)$/);
-      expect(colour(component, parent)).toBe(want);
+      expect(lower(colour(component, parent()))).toBe(want);
     });
     it.each(Object.entries(STORE_PALETTE))("store-dot keeps the %s pair's colour", (_key, dot) => {
-      expect(colour("store-dot", parent, dot)).toBe(expected("store-dot", context, inTone, dot));
+      const want = lower(expected("store-dot", context, inTone, dot));
+      expect(want).toMatch(/^#[0-9a-f]{6}$/);
+      expect(lower(colour("store-dot", parent(), dot))).toBe(want);
     });
   });
 });
@@ -320,12 +336,14 @@ describe.each(CONTEXTS)("data-theme $dataTheme, Windows $system", (context) => {
 // ---------- the structure the mechanisms rely on ----------
 
 describe("the theme scopes", () => {
-  it.each(Object.entries({ ...SHEETS, "storage-backup.css": storageBackupCss }))(
-    "%s has no theme scope of its own (only the token files do)",
-    (_path, text) => {
-      expect(text).not.toMatch(/\[data-theme="dark"\]|prefers-color-scheme/);
-    },
-  );
+  it("the stylesheets were found (so the checks can't pass on nothing)", () => {
+    expect(Object.keys(SHEETS)).toEqual(expect.arrayContaining(SHEET_NAMES));
+    for (const text of Object.values(SHEETS)) expect(text.length).toBeGreaterThan(500);
+  });
+
+  it.each(Object.entries(SHEETS))("%s has no theme scope of its own (only the token files do)", (_path, text) => {
+    expect(text).not.toMatch(/\[data-theme="dark"\]|prefers-color-scheme/);
+  });
 
   function block(css: string, selector: string, media: string[]): [string, string][] {
     const found = parse(css).filter((r) => r.selectors.includes(selector) && r.media.join() === media.join());
