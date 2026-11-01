@@ -4,7 +4,10 @@
 ; Build (packaging/build.py has made build\ShelfSync-<v>\ first):
 ;   makensis /DVERSION=0.1.0 /DBUILD_DIR=..\build\ShelfSync-0.1.0 /DOUTFILE=..\build\ShelfSync-Setup-0.1.0.exe packaging\ShelfSync.nsi
 ; /DSUFFIX=-rehearsal makes a throwaway variant: its uninstall key, AUMID, Run value and shortcuts carry the suffix, so a
-; local rehearsal never touches the real names. Install with /S /D=<folder> (silent, /D last and unquoted);
+; local rehearsal never touches the real names. The app carries the same suffix (build.py --suffix writes it into
+; shelfsync\platform\build-suffix.txt, read by platform/names.py), so the Run value it writes and the AUMID it sends
+; toasts as are this script's ${RUN_VALUE} and ${AUMID}; build the folder and the Setup with the same suffix
+; (release-build.ps1 -Suffix does). Install with /S /D=<folder> (silent, /D last and unquoted);
 ; uninstall with <folder>\uninstall.exe /S [/REMOVEDATA] [_?=<folder>].
 ;
 ; Layout: $INSTDIR\versions\<v>\ (the whole build folder), $INSTDIR\current (a junction to the active version, made with

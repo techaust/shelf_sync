@@ -5,6 +5,10 @@
 #   powershell -File packaging\release-build.ps1 -Python <python 3.14.8> -Makensis <makensis.exe> -Work <new empty folder>
 #       [-Tag v<X.Y.Z>] [-SourceCommit <40 hex>] [-Suffix -rehearsal] [-RealSecrets]
 #
+# -Suffix is empty, or "-" followed by 1 to 32 of A-Z a-z 0-9 . _ - (the rule of backend/shelfsync/platform/names.py):
+# the installer's names (/DSUFFIX) and the app's own Run value and AUMID (build.py --suffix writes it into the folder)
+# carry it, and smoke.py and test-installer.ps1 check the built and the installed Python report those names.
+#
 # Steps: build.py (folder, zip, files.txt) -> smoke.py -> makensis (the Setup, plus two fast test Setups 0.0.1 and
 # 99.0.0 that are never released) -> test-installer.ps1 (install, upgrade, prune, refusals, sentinels, uninstall with
 # Remove my data) -> manifest.json (unsigned, written by the built folder's own Python). Run from anywhere: it works
@@ -25,6 +29,11 @@ function Step([string]$what) { Write-Host ""; Write-Host "== $what" }
 function Run([string]$what, [scriptblock]$block) {
     & $block
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
+}
+
+# Checked first, before anything is made. \z, not $: PowerShell's $ also matches before a final line end.
+if ($Suffix -and ($Suffix -cnotmatch '^-[A-Za-z0-9._-]{1,32}\z')) {
+    throw "-Suffix '$Suffix' isn't '-' followed by 1 to 32 of A-Z, a-z, 0-9, '.', '_' or '-'"
 }
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -52,14 +61,17 @@ $zip = Join-Path $repo "build\shelfsync-$version-win64.zip"
 $nsi = "packaging\ShelfSync.nsi"
 
 Step "Build the folder, the zip and files.txt"
-if ($Tag) { Run "build.py" { & $Python -I packaging/build.py --tag $Tag } } else { Run "build.py" { & $Python -I packaging/build.py } }
+# "--suffix=<value>" in one argument: argparse takes a separate value that starts with "-" for an option.
+$buildArgs = @("-I", "packaging/build.py")
+if ($Tag) { $buildArgs += @("--tag", $Tag) }
+if ($Suffix) { $buildArgs += "--suffix=$Suffix" }
+Run "build.py" { & $Python @buildArgs }
 
 Step "Smoke-test the built folder"
-if ($RealSecrets) {
-    Run "smoke.py" { & $Python -I packaging/smoke.py $built --version $version --real-secrets }
-} else {
-    Run "smoke.py" { & $Python -I packaging/smoke.py $built --version $version }
-}
+$smokeArgs = @("-I", "packaging/smoke.py", $built, "--version", $version)
+if ($Suffix) { $smokeArgs += "--suffix=$Suffix" }
+if ($RealSecrets) { $smokeArgs += "--real-secrets" }
+Run "smoke.py" { & $Python @smokeArgs }
 
 Step "Compile the installer and the two test Setups"
 Run "makensis" { & $Makensis "/DVERSION=$version" "/DSUFFIX=$Suffix" "/DBUILD_DIR=$built" "/DOUTFILE=$setup" $nsi }

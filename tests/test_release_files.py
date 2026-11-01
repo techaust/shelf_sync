@@ -237,3 +237,45 @@ def test_round_6_one_exit_code_list_and_the_cant_check_notice() -> None:
     assert smoke.count("process.wait(timeout=10)") >= 2  # reaped after every kill
     build_text = (REPO / "packaging" / "build.py").read_text(encoding="utf-8")
     assert build_text.index("check_tray_icons(REPO") < build_text.index("download_embed_zip(REPO")
+
+
+def test_a_suffix_is_checked_first_and_reaches_the_build_and_the_smoke_test() -> None:
+    """SYS-04, SYS-05: release-build.ps1 checks -Suffix with `platform/names.py`'s rule (`\\z`, not `$`, which in
+    PowerShell also matches before a final line end) before anything else, then passes it to build.py and smoke.py as
+    one `--suffix=` argument (argparse takes a separate value that starts with `-` for an option). release.yml passes
+    no suffix."""
+    from shelfsync.platform import names
+
+    check = f"$Suffix -cnotmatch '^{names.SUFFIX_PATTERN}\\z'"
+    assert check in RELEASE_BUILD
+    assert RELEASE_BUILD.index(check) < RELEASE_BUILD.index("$repo = ") < RELEASE_BUILD.index("packaging/build.py")
+    assert RELEASE_BUILD.count('+= "--suffix=$Suffix"') == 2
+    assert "& $Python @buildArgs" in RELEASE_BUILD and "& $Python @smokeArgs" in RELEASE_BUILD
+    assert "-Suffix" not in RELEASE
+
+
+def test_the_installed_python_reports_the_names_the_setup_wrote() -> None:
+    """SYS-04, SYS-05: test-installer.ps1 asks the installed Python with smoke.py's own probe, and compares (case
+    included) with the Run value and AUMID names this Setup writes and its uninstaller removes."""
+    spec = importlib.util.spec_from_file_location("shelfsync_packaging_smoke_names", REPO / "packaging" / "smoke.py")
+    assert spec is not None and spec.loader is not None
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
+    assert f'-c "{smoke.NAMES_PROBE}"' in script
+    assert '$names[0] -ceq "ShelfSync$Suffix"' in script and '$names[1] -ceq "TecHaust.ShelfSync$Suffix"' in script
+    assert smoke.expected_names("-x") == ["ShelfSync-x", "TecHaust.ShelfSync-x"]
+
+
+def test_every_run_value_and_aumid_write_and_delete_uses_the_suffixed_names() -> None:
+    """SYS-04, SYS-05: the installer's names are `${RUN_VALUE}` and `${AUMID}` (both `...${SUFFIX}`) everywhere, the
+    same names the app reads from its build's suffix (the header says so)."""
+    code = [line for line in NSI.splitlines() if not line.lstrip().startswith(";")]
+    assert '!define RUN_VALUE "ShelfSync${SUFFIX}"' in code
+    run_lines = [line for line in code if "${RUN_KEY}" in line]
+    assert run_lines and all('"${RUN_KEY}" "${RUN_VALUE}"' in line for line in run_lines)
+    aumid_lines = [line for line in code if "AppUserModelId" in line or "${AUMID_KEY}" in line]
+    assert aumid_lines[0] == '!define AUMID_KEY "Software\\Classes\\AppUserModelId\\${AUMID}"'
+    assert all("${AUMID_KEY}" in line for line in aumid_lines[1:]) and len(aumid_lines) >= 4
+    header = NSI.split("Unicode true")[0]
+    assert "build-suffix.txt" in header and "release-build.ps1 -Suffix" in header
