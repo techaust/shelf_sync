@@ -69,7 +69,7 @@ _(builder, 2026-11-02; branch `t7/rehearse-current-build` from `fix/rehearse-cur
 **For the analyst to decide or check**
 1. **Reading the real names.** The clean-up check reads the real names (brief item 5 asks for it). The Credential Manager part calls `CredEnumerateW` (all of this user's credentials, filter NULL): Windows returns whole `CREDENTIAL` structures, but the script's ctypes structure has only `Flags`, `Type` and `TargetName`, so Python reads target names only and never touches a secret; the buffer is freed with `CredFree`. The alternative is a prefix filter (`ShelfSync*`), which misses keyring's `<entry>@ShelfSync` targets.
 2. **Run from inside the Claude app.** Its MSIX package keeps a private copy of new `%LOCALAPPDATA%` folders (04-A V36), and maybe of HKCU writes. The rehearsal reads and writes in the same context, so its before/after checks hold for that context; a write that went to the real Windows view (or only to the private one) would not be told apart. Running it in Windows PowerShell outside Claude would avoid the question; the brief has me run it.
-3. **Expected checks:** 27 as before, plus 4 name probes, 1 Run value check, 11 clean-up checks: **43**.
+3. **Expected checks:** 27 as before, plus 4 name probes, 1 Run value check, 11 clean-up checks: **43**. _(Lead, after the review: the old sequence had 30 checks, not 27 (3 + 8 + 8 + 4 + 7), so the run's 46 is the right total.)_
 
 **Stage 2 plan (after GO).** _(Superseded by the lead's locations below.)_ A short detached worktree of this branch, `build-cache\` copied from the main checkout, `npm ci` and `npm run build` in its `frontend\`, then through `tools/heavy.sh`: the release build, the rehearsal logged to `.logs/t7-rehearse.log`, the full `uv run pytest`; then the docs and §3.
 
@@ -84,7 +84,7 @@ _(analyst's early check, relayed by the lead, 2026-11-02; builder's resolutions,
 | C4 (medium) | `clean_up` could stop halfway (the logs copy raising skipped `rmtree(work)` and `check_clean`); the uninstall key was made outside the `try`. | **Done.** Each clean-up step runs through `guarded()` (a failure is a `clean-up: …` FAIL line and the next step runs); every clean-up check runs through `check_safely()`; `clean_up` and `check_clean` both run in the `finally`; the data folder and the throwaway uninstall key are made inside the `try`. |
 | C5 (low) | `App.stop` ended whatever PID `runtime.json` named. | **Done.** It opens a watch on the PID (`self.processes.watch`), and terminates only while holding it, only if the normcased image starts with the normcased `--work` path plus the separator; otherwise it says so and leaves it. |
 | C6 (low) | The PowerShell kill put the path inside the command with `-like`. | **Done.** The path goes through `SHELFSYNC_REHEARSAL_WORK`; the filter is `$_.Path -and $_.Path.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase)` with `$p` the path plus `\`. |
-| C7 | Report the script's own count. | **Will do** in §3: the script's "N of N checks passed" line, quoted as printed (the planned total is now 27 + 4 copy probes + 1 Run value + 1 `--base` check + 5 throwaway + 5 real = 43, but the report quotes the run). |
+| C7 | Report the script's own count. | **Will do** in §3: the script's "N of N checks passed" line, quoted as printed (the planned total is now 30 + 4 copy probes + 1 `--base` check + 5 throwaway + 5 real = 45, plus the Run value check inside the sequence's 31 = 46, but the report quotes the run). |
 
 **Checked offline** (no build, no Windows state; the venv's Python stood in for a copy's, as `tests/test_build_suffix.py` does): all seven copy patches match exactly once on a scratch copy of `backend/shelfsync`; the probe on the patched copy prints `ShelfSync-rehearse-<id> TecHaust.ShelfSync-rehearse-<id> ShelfSyncRehearsal-<id> ShelfSyncRehearsal-<id> no-data-folder` (gate passes); on the unpatched checkout it prints `ShelfSync TecHaust.ShelfSync ShelfSync ShelfSync data-folder-found` (gate fails, as it must); the `--base` scan finds nothing in today's package and finds a planted `import keyring` in `api/`. `ruff check`, `ruff format --check`, `mypy --explicit-package-bases` on `rehearse.py`: clean.
 
@@ -116,13 +116,13 @@ The first line of its output (`.logs/t7-rehearse.log`) names the run id `<id>` a
    ```
    Remove-Item -Path 'HKCU:\Software\ShelfSyncRehearsal-<id>' -Recurse
    ```
-4. Remove the throwaway Credential Manager entries: Start → type **Credential Manager** → open it → **Windows Credentials** → under **Generic Credentials**, each entry whose name starts with `ShelfSyncRehearsal-<id>` → expand it → **Remove** → **Yes**.
+4. Remove the throwaway Credential Manager entries: Start → type **Credential Manager** → open it → **Windows Credentials** → under **Generic Credentials**, each entry whose name starts with `ShelfSyncRehearsal-<id>` or ends with `@ShelfSyncRehearsal-<id>` (keyring's copies) → expand it → **Remove** → **Yes**.
 5. Remove the folder (`rmdir` doesn't follow the `current` junction):
    ```
    cmd /c rmdir /s /q "<work>"
    ```
 
-Even if step 2 is missed, the copy the Run value names stops at once at the next sign-in (C2a: no `SHELFSYNC_DATA_DIR`, so no data folder), and touches nothing real.
+Even if step 2 is missed, the copy the Run value names stops at once at the next sign-in (C2a: no `SHELFSYNC_DATA_DIR`, so no data folder), and touches nothing real. It does show ShelfSync's "couldn't start" toast naming `%LOCALAPPDATA%\ShelfSync` at each sign-in until the Run value is removed: that toast is expected here and means nothing was touched.
 
 ## 3. Builder report
 _(builder, 2026-11-02; branch `t7/rehearse-current-build`: 4378e76, 2a43438, e76b2a8 and this report's commit, on 4cebb6a. Run inside the Claude app on this PC.)_
@@ -175,8 +175,19 @@ _(builder, 2026-11-02; branch `t7/rehearse-current-build`: 4378e76, 2a43438, e76
 **Open questions:** none beyond the owner's outside-Claude run (§2).
 
 ## 5. Review
+_(reviewer `claude-opus-5-5/high`, `code-review` and `security-review` (both first ran on the wrong diff; applied by hand to `4cebb6a..7eb90cd`), 2026-11-02)_ **APPROVE**, 9/10. No critical, high or medium finding. Checked and holding: every throwaway name carries the run id and nothing real is deleted; the per-copy gate comes before signing or start; the `paths.py` patch stops a leftover copy before the mutex, the lock or the database; every patch matches exactly once; Credential Manager is read by prefix only and the buffer freed; the clean-up and its checks always run; termination only inside `--work`; no injection; the run file matches the code and the log (46 PASS, 0 FAIL). Lows:
+1. The real service is proven unreachable, not blocked: a future `KeyringSecretStore("ShelfSync")` call would pass the scan and the probe. Fix: a copy patch so `KeyringSecretStore.__init__` raises unless `service == SERVICE`. **Follow-up** (needs another real rehearsal run).
+2. Manual step 4 missed keyring's `<entry>@<service>` copies. **Fixed by the lead** (§2).
+3. One failed credential delete skips the rest of the clean-up. Fix: guard each delete. **Follow-up.**
+4. A `<name>@SERVICE` copy for a name outside `OWNED_SECRET_NAMES` would go unseen (the rehearsal creates no stores, so not today). **Follow-up** (when a rehearsal adds a store).
+5. `--work` isn't refused inside a real ShelfSync folder. Fix: refuse it. **Follow-up.**
+6. The kill note didn't mention the "couldn't start" toast. **Fixed by the lead** (§2).
+7. The planned count said 43; the old sequence had 30 checks, so 46 is right. **Fixed by the lead** (§2).
 
 ## 6. Integration notes
+_(lead, 2026-11-02)_ Integrated on `fix/rehearse-current-build-int` (the builder's five commits plus the lead's run-file fixes), rebased onto `main`; the full Python checks ran again after the rebase (results in the PR). No release build: `tools/release/` isn't shipped, and the builder's real run used a release build of its own commit.
+- **Open, the owner's:** the run outside the Claude app (§2's steps).
+- **Follow-ups:** review lows 1, 3, 4, 5 (one change, then one more real rehearsal run).
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the builder in its own worktree from `fix/rehearse-current-build`.
