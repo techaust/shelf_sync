@@ -12,6 +12,8 @@
 # Setup refused (exit 6, also by the version folders alone). -RemoveData also uninstalls with /REMOVEDATA against a
 # throwaway data folder; a build with a -Suffix passes `--service ShelfSync<suffix>`, so it never touches the real
 # Credential Manager service, but a build with no suffix does (only on a throwaway runner).
+# The installed Python must report the Run value name and AUMID this Setup writes (ShelfSync<suffix> and
+# TecHaust.ShelfSync<suffix>): a -Suffix build's app carries the suffix too (build.py --suffix).
 param(
     [Parameter(Mandatory = $true)][string]$Setup,
     [Parameter(Mandatory = $true)][string]$Version,
@@ -127,6 +129,10 @@ $a = Get-ItemProperty $aumidKey
 Check ($a.DisplayName -eq "ShelfSync" -and $a.IconUri -like "*current\shelfsync.ico") "AUMID key DisplayName and IconUri"
 $ver = & (Join-Path $current "python.exe") -c "import shelfsync; print(shelfsync.__version__)"
 Check ($ver -eq $Version) "the installed Python imports shelfsync $Version (got '$ver')"
+# The app's own names (backend/shelfsync/platform/names.py) are the ones this Setup wrote and its uninstaller removes.
+# smoke.py's NAMES_PROBE (a test keeps the two identical) also fails when shelfsync isn't the installed folder's own.
+$names = @(& (Join-Path $current "python.exe") -c "import os, sys; from shelfsync.platform import aumid, autostart, names; home = os.path.join(os.path.normcase(os.path.realpath(sys.prefix)), ''); outside = [m.__file__ for m in (aumid, autostart, names) if not os.path.normcase(os.path.realpath(m.__file__)).startswith(home)]; outside and sys.exit('shelfsync was imported from outside ' + sys.prefix + ': ' + ', '.join(outside)); print(autostart.VALUE_NAME); print(aumid.AUMID)")
+Check (($LASTEXITCODE -eq 0) -and ($names.Count -eq 2) -and ($names[0] -ceq "ShelfSync$Suffix") -and ($names[1] -ceq "TecHaust.ShelfSync$Suffix")) "the installed Python uses the Run value ShelfSync$Suffix and the AUMID TecHaust.ShelfSync$Suffix (got '$($names -join ', ')')"
 
 # "ShelfSync is running": the lock file held open with no sharing blocks a second Setup (exit 5) and the uninstaller (exit 5).
 New-Item -ItemType Directory -Force $script:data | Out-Null

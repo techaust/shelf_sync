@@ -1,4 +1,5 @@
-"""Build the installable folder: `python -I packaging/build.py [--tag vX.Y.Z]` (04 section 8, SYS-01).
+"""Build the installable folder: `python -I packaging/build.py [--tag vX.Y.Z] [--suffix=-rehearsal]` (04 section 8,
+SYS-01, SYS-04, SYS-05).
 
 Writes `build/ShelfSync-<version>/` (what the installer puts in `versions\\<version>\\`) and
 `build/shelfsync-<version>-win64.zip` (the same files, no top-level folder, for the updater) and
@@ -13,7 +14,12 @@ Writes `build/ShelfSync-<version>/` (what the installer puts in `versions\\<vers
    04 section 8's honest note);
 5. `backend/shelfsync`, the built UI (`frontend/dist`, as `ui/`), `brand/assets/app/shelfsync.ico` and the six tray
    icons (`brand/assets/tray`, as `tray/`) are copied in;
-6. everything is precompiled with `--invalidation-mode checked-hash`, so a first start writes nothing into the folder
+6. a build with `--suffix` (the local rehearsal; written `--suffix=-x` in one argument: the separate form
+   `--suffix -x` is refused, as tests/test_packaging_build.py pins) writes it into
+   `shelfsync/platform/build-suffix.txt`, so the app uses the same suffixed Run value and AUMID as its installer
+   (`platform/names.py`). A normal build writes no such file, and one left in the source tree is never copied. A
+   suffixed build can't be a tagged release: `--tag` and `--suffix` together are refused;
+7. everything is precompiled with `--invalidation-mode checked-hash`, so a first start writes nothing into the folder
    (V47).
 
 Nothing here reads a secret, and nothing is signed. Run it with `UV_PYTHON_DOWNLOADS=never` set.
@@ -50,6 +56,11 @@ PTH_TEMPLATE = "python{tag}.zip\n.\nLib\\site-packages\nimport site\n"
 
 _VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 
+# The suffix rule and file of `shelfsync/platform/names.py` (this script doesn't import the package; a test compares).
+SUFFIX_PATTERN = r"-[A-Za-z0-9._-]{1,32}"
+SUFFIX_FILE = "shelfsync/platform/build-suffix.txt"
+_SUFFIX = re.compile(SUFFIX_PATTERN)
+
 
 class BuildError(Exception):
     """A build step refused to go on. The message says what to fix."""
@@ -81,6 +92,20 @@ def check_versions(project: str, package: str, tag: str | None) -> None:
         raise BuildError(f"pyproject.toml says {project} but shelfsync.__version__ says {package}")
     if tag is not None and tag != f"v{project}":
         raise BuildError(f"The tag {tag} doesn't match the version {project} (expected v{project})")
+
+
+def check_suffix(suffix: str) -> None:
+    """Empty, or `-` followed by 1 to 32 of `A-Z a-z 0-9 . _ -` (the rule `platform/names.py` reads back)."""
+    if suffix and _SUFFIX.fullmatch(suffix) is None:
+        raise BuildError(f"The suffix {suffix!r} isn't '-' followed by 1 to 32 of A-Z, a-z, 0-9, '.', '_' or '-'")
+
+
+def write_build_suffix(folder: Path, suffix: str) -> None:
+    """Write `suffix` into the built folder's `shelfsync/platform/build-suffix.txt`; an empty one writes nothing, so a
+    normal build's folder, zip and files.txt are unchanged."""
+    check_suffix(suffix)
+    if suffix:
+        (folder / SUFFIX_FILE).write_text(suffix, encoding="ascii")  # no line end: the suffix alone
 
 
 def pth_text(tag: str = PYTHON_TAG) -> str:
@@ -297,10 +322,14 @@ def copy_tray_icons(source: Path, destination: Path) -> None:
 
 
 def copy_tree(source: Path, destination: Path) -> None:
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    """A copy without caches, and without a `build-suffix.txt` left in the source tree: only `--suffix` writes one."""
+    shutil.copytree(
+        source, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", PurePosixPath(SUFFIX_FILE).name)
+    )
 
 
-def build(out: Path, tag: str | None, embed_zip: Path | None) -> Path:
+def build(out: Path, tag: str | None, embed_zip: Path | None, suffix: str = "") -> Path:
+    check_suffix(suffix)  # before the slow steps
     version = read_version(REPO / "pyproject.toml")
     check_versions(version, read_package_version(REPO / "backend" / "shelfsync" / "__init__.py"), tag)
     ui = REPO / "frontend" / "dist"
@@ -338,6 +367,7 @@ def build(out: Path, tag: str | None, embed_zip: Path | None) -> Path:
     copy_tree(ui, folder / "ui")
     shutil.copy2(icon, folder / "shelfsync.ico")
     copy_tray_icons(REPO / "brand" / "assets" / "tray", folder / "tray")
+    write_build_suffix(folder, suffix)  # before the listing and the zip, so both include it
 
     precompile(folder)
     shutil.rmtree(work)
@@ -354,9 +384,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=REPO / "build", help="output folder (default: build/)")
     parser.add_argument("--tag", help="the release tag; must equal v<version> (CI passes it)")
     parser.add_argument("--embed-zip", type=Path, help="a local copy of the embeddable zip (still hash-checked)")
+    parser.add_argument(
+        "--suffix",
+        default="",
+        help="a rehearsal build's suffix, e.g. --suffix=-rehearsal: the app's Run value and AUMID carry it",
+    )
     arguments = parser.parse_args(argv)
+    if arguments.tag is not None and arguments.suffix:
+        parser.error("--tag and --suffix can't be used together: a tagged release carries no suffix")
     try:
-        build(arguments.out.resolve(), arguments.tag, arguments.embed_zip)
+        build(arguments.out.resolve(), arguments.tag, arguments.embed_zip, arguments.suffix)
     except (BuildError, subprocess.CalledProcessError, OSError) as error:
         print(f"Build failed: {error}", file=sys.stderr)  # noqa: T201
         return 1

@@ -52,15 +52,17 @@ _toaster_lock = threading.Lock()
 
 
 def toast_aumid(installed: bool, registered: bool) -> str | None:
-    """The AppUserModelID for toasts: ShelfSync's own for an installed copy whose key the installer registered;
-    None (windows-toasts' default, Command Prompt's, with "ShelfSync" as the attribution line) for a development run,
-    and for an installed copy with no key, because Windows may drop a toast sent for an unregistered AUMID."""
+    """The AppUserModelID for toasts: ShelfSync's own (`aumid.AUMID`, with this build's suffix) for an installed copy
+    whose key the installer registered; None (windows-toasts' default, Command Prompt's, with "ShelfSync" as the
+    attribution line) for a development run, for an installed copy with no key, because Windows may drop a toast sent
+    for an unregistered AUMID, and for a build whose suffix file is invalid (it has no AUMID, never the real one)."""
     return aumid.AUMID if installed and registered else None
 
 
 def show_toast(fields: list[str | None], *, notifier_aumid: str | None = None) -> None:
-    """Show one toast through windows-toasts (Windows only). An installed copy passes `TecHaust.ShelfSync` as the
-    `notifierAUMID` (see `platform/aumid.py`); `notifier_aumid` is for the Windows tests, which use throwaway ids."""
+    """Show one toast through windows-toasts (Windows only). An installed copy passes `TecHaust.ShelfSync` (plus the
+    build's suffix) as the `notifierAUMID` (see `platform/aumid.py`); `notifier_aumid` is for the Windows tests, which
+    use throwaway ids."""
     global _toaster
     from windows_toasts import InteractableWindowsToaster, Toast
 

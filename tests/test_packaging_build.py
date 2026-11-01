@@ -280,3 +280,143 @@ def test_the_signature_check_drops_psmodulepath_and_reports_powershells_error(
         build.powershell_signatures(tmp_path)
     assert not any(key.upper() == "PSMODULEPATH" for key in seen["env"])
     assert seen["env"]["SHELFSYNC_BUILD_FOLDER"] == str(tmp_path)
+
+
+# ---- --suffix (SYS-04, SYS-05): the app's Run value and AUMID carry a rehearsal build's suffix ---------------------
+
+
+@pytest.mark.parametrize("bad", ["rehearsal", "-", "-a b", "-a/b", "-" + "a" * 33, "-rép", "-ok\n", " -ok"])
+def test_an_invalid_suffix_is_refused(bad: str) -> None:
+    """SYS-04, SYS-05: the rule of `platform/names.py`."""
+    with pytest.raises(build.BuildError, match="isn't '-' followed by 1 to 32"):
+        build.check_suffix(bad)
+
+
+@pytest.mark.parametrize("good", ["", "-rehearsal", "-a.b_c-1", "-" + "x" * 32])
+def test_an_empty_or_valid_suffix_is_accepted(good: str) -> None:
+    """SYS-04, SYS-05."""
+    build.check_suffix(good)
+
+
+def test_the_suffix_rule_and_file_are_the_apps_own() -> None:
+    """SYS-04, SYS-05: build.py doesn't import the package, so its copy of the rule and the file's place must match."""
+    from shelfsync.platform import names
+
+    assert build.SUFFIX_PATTERN == names.SUFFIX_PATTERN
+    assert build.SUFFIX_FILE.split("/") == ["shelfsync", "platform", names.SUFFIX_FILE_NAME]
+    assert names.SUFFIX_FILE == REPO / "backend" / build.SUFFIX_FILE
+
+
+def test_build_py_refuses_an_invalid_suffix_before_anything_is_made(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-04, SYS-05: exit 1 with the rule in the message, and no output folder."""
+    assert build.main(["--out", str(tmp_path / "build"), "--suffix=rehearsal"]) == 1
+    assert "isn't '-' followed by 1 to 32" in capsys.readouterr().err
+    assert not (tmp_path / "build").exists()
+
+
+def _no_build(*args: object) -> None:
+    raise AssertionError("build() must not run")
+
+
+def test_build_py_refuses_the_suffix_as_a_separate_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-04, SYS-05: `--suffix -rehearsal` (two arguments) stops at argument parsing with exit 2, so the suffix is
+    always passed as `--suffix=-rehearsal` (release-build.ps1 does)."""
+    monkeypatch.setattr(build, "build", _no_build)
+    with pytest.raises(SystemExit) as stopped:
+        build.main(["--out", str(tmp_path / "build"), "--suffix", "-rehearsal"])
+    assert stopped.value.code == 2
+    assert "--suffix" in capsys.readouterr().err
+
+
+def test_build_py_takes_the_suffix_in_one_argument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-04, SYS-05: `--suffix=-rehearsal` reaches build()."""
+    seen: list[object] = []
+    monkeypatch.setattr(build, "build", lambda *args: seen.append(args))
+    assert build.main(["--out", str(tmp_path / "build"), "--suffix=-rehearsal"]) == 0
+    assert seen == [((tmp_path / "build").resolve(), None, None, "-rehearsal")]
+
+
+def test_build_py_refuses_a_tagged_build_with_a_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-01, SYS-04, SYS-05: a release-shaped build (`--tag`) never carries a suffix stamp; nothing is made. A tag
+    alone (CI) still builds."""
+    monkeypatch.setattr(build, "build", _no_build)
+    with pytest.raises(SystemExit) as stopped:
+        build.main(["--out", str(tmp_path / "build"), "--tag", "v0.1.0", "--suffix=-rehearsal"])
+    assert stopped.value.code == 2
+    assert "--tag and --suffix can't be used together" in capsys.readouterr().err
+    assert not (tmp_path / "build").exists()
+    seen: list[object] = []
+    monkeypatch.setattr(build, "build", lambda *args: seen.append(args))
+    assert build.main(["--out", str(tmp_path / "build"), "--tag", "v0.1.0"]) == 0
+    assert seen == [((tmp_path / "build").resolve(), "v0.1.0", None, "")]
+
+
+def test_the_suffix_is_written_only_when_there_is_one(tmp_path: Path) -> None:
+    """SYS-04, SYS-05: the suffix alone, read back by `platform/names.py`; an empty one writes no file."""
+    from shelfsync.platform import names
+
+    (tmp_path / "shelfsync" / "platform").mkdir(parents=True)
+    build.write_build_suffix(tmp_path, "")
+    assert not (tmp_path / build.SUFFIX_FILE).exists()
+    build.write_build_suffix(tmp_path, "-rehearsal")
+    assert (tmp_path / build.SUFFIX_FILE).read_bytes() == b"-rehearsal"
+    assert names.read_build_suffix(tmp_path / build.SUFFIX_FILE) == "-rehearsal"
+    with pytest.raises(build.BuildError):
+        build.write_build_suffix(tmp_path, "bad")
+
+
+def _fake_repo(root: Path) -> None:
+    """The inputs `build()` checks, with a `build-suffix.txt` left in the source package (which must never ship)."""
+    package = root / "backend" / "shelfsync"
+    (package / "platform").mkdir(parents=True)
+    (package / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
+    (package / "platform" / "names.py").write_text("", encoding="utf-8")
+    (package / "platform" / "build-suffix.txt").write_text("-stale", encoding="ascii")
+    (root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.1.0"\n', encoding="utf-8")
+    (root / "frontend" / "dist").mkdir(parents=True)
+    (root / "frontend" / "dist" / "index.html").write_text("x", encoding="utf-8")
+    (root / "brand" / "assets" / "app").mkdir(parents=True)
+    (root / "brand" / "assets" / "app" / "shelfsync.ico").write_bytes(b"ico")
+    (root / "brand" / "assets" / "tray").mkdir(parents=True)
+    for name in build.TRAY_ICON_NAMES:
+        (root / "brand" / "assets" / "tray" / name).write_bytes(b"ico")
+
+
+@pytest.mark.parametrize("suffix", ["", "-rehearsal"])
+def test_a_build_ships_the_suffix_file_only_with_a_suffix_in_the_folder_files_txt_and_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    """SYS-04, SYS-05: written before the precompile, so files.txt and the zip list it; a normal build has none,
+    even with a stale one in the source tree. (The download, signature, uv and compileall steps are stubbed.)"""
+    repo = tmp_path / "repo"
+    _fake_repo(repo)
+    monkeypatch.setattr(build, "REPO", repo)
+    monkeypatch.setattr(build, "verify_sha256", lambda path, expected: None)
+    monkeypatch.setattr(build, "check_embedded_signatures", lambda folder: None)
+    monkeypatch.setattr(build, "install_wheels", lambda site_packages, work: None)
+    at_precompile: list[bool] = []
+    monkeypatch.setattr(build, "precompile", lambda folder: at_precompile.append((folder / build.SUFFIX_FILE).exists()))
+    embed = tmp_path / "embed.zip"
+    with zipfile.ZipFile(embed, "w") as archive:
+        archive.writestr("python.exe", b"exe")
+
+    folder = build.build(tmp_path / "build", None, embed, suffix)
+
+    listed = {entry.path for entry in build.parse_files_txt((tmp_path / "build" / "files.txt").read_text("utf-8"))}
+    with zipfile.ZipFile(tmp_path / "build" / "shelfsync-0.1.0-win64.zip") as archive:
+        zipped = set(archive.namelist())
+    if suffix:
+        assert at_precompile == [True]
+        assert (folder / build.SUFFIX_FILE).read_text(encoding="ascii") == suffix
+        assert build.SUFFIX_FILE in listed and build.SUFFIX_FILE in zipped
+    else:
+        assert at_precompile == [False]
+        assert not (folder / build.SUFFIX_FILE).exists()
+        assert build.SUFFIX_FILE not in listed and build.SUFFIX_FILE not in zipped
+    assert "shelfsync/platform/names.py" in listed
