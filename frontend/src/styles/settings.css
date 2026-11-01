@@ -163,7 +163,7 @@
   .sk {
     display: block;
     border-radius: var(--radius-sm);
-    background: var(--color-fill-subtle);
+    background: var(--sk-background-dark, var(--color-fill-subtle));
   }
   .sk.is-title {
     width: 30%;
@@ -180,14 +180,6 @@
   .sk.is-field {
     width: 60%;
     height: var(--target-min);
-  }
-  :root[data-theme="dark"] .sk {
-    background: var(--color-border);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .sk {
-      background: var(--color-border);
-    }
   }
 
   /* ---------- the Settings shell ---------- */
