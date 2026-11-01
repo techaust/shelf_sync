@@ -62,10 +62,26 @@ and `security-review` (`platform/` and the installer).
 **Out of scope (follow-ups, not this task):** a rehearsal build installed interactively still uses the real data
 folder (`%LOCALAPPDATA%\ShelfSync`, so its uninstaller's "Remove my data" would act on the real data folder), the real
 Credential Manager service at run time, the real single-instance name, and the real default install folder
-(`InstallDir`). Rehearsal Setups stay silent-only until those are suffixed too. `frontend/**`, `pyproject.toml` and
+(`InstallDir`); and an update installed into a rehearsal copy drops the suffix (its zip has no stamp; not reachable
+while `release_key.PUBLIC_KEY` is None; early check finding 1). Rehearsal Setups stay silent-only until those are suffixed too. `frontend/**`, `pyproject.toml` and
 `uv.lock` are P0's; `docs/10-status.md` and `CHANGELOG.md` are the orchestrator's.
 
 ## 2. Early check
+_(analyst: Opus 5.5 high, 2026-11-02, on 405e566..48a45ac)_ **GO.** No path in a suffixed build writes or uses the real
+Run value or AUMID; `names.py`'s fail-safe holds (missing file → real names; empty, BOM, UTF-16, oversized, invalid,
+a directory or a PermissionError → None); a normal build adds no file; the updater's unpack and kept-file checks follow
+the manifest from `files.txt`, which lists the stamp. Agrees with "failed" for an invalid stamp. Targeted tests: 150
+passed, 3 skipped. Findings, all low:
+1. An update drops the suffix: once `release_key.PUBLIC_KEY` is set, a rehearsal copy could install a real release
+   whose zip has no stamp. Not reachable today (`PUBLIC_KEY` is None). **Follow-up**, added to the brief's out-of-scope
+   list: the update service could refuse to check or install when the build suffix isn't empty.
+2. `names.py`'s docstring shows `--suffix -rehearsal`; argparse needs `--suffix=-rehearsal`. → fix.
+3. A dangling link named `build-suffix.txt` reads as "no file" (real names). Not reachable (unpack refuses reparse
+   points), but a gap in the stated guarantee. → fix (`os.path.lexists`).
+4. The smoke and installer probes don't prove `shelfsync` came from the built folder. → fix (assert in the probe).
+
+The lead accepted the builder's choice that an invalid stamp makes `apply_start_with_windows_safely` return "failed",
+not "skipped" (which would show the owner "not installed").
 
 ## 3. Builder report
 _(builder, claude-opus-5-5/high, 2026-11-02; worktree `.claude/worktrees/agent-a261d20e7ef7604ba`, branch
