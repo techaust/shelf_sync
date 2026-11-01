@@ -8,6 +8,8 @@
 /* Unlayered, after Tailwind: these win over Tailwind's theme layer, and hold the dark values. */
 @import "./generated/tokens.css";
 @import "./generated/shelfsync-tokens.css";
+/* Component dark values and the theme switches, each theme scope written once (component-tokens.css) */
+@import "./component-tokens.css";
 @import "./fonts.css";
 /* Settings and its shared parts (ConfirmDialog, SecretField, Switch, alerts, forms): M1b.4 */
 @import "./settings.css";
@@ -126,22 +128,13 @@
     padding: 0;
   }
 
+  /* dark values come from component-tokens.css (one rule per component, the light value as the fallback) */
   .card {
     background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--card-border-dark, var(--color-border));
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-1);
     min-width: 0;
-  }
-  /* Dark rules, in the same two forms as tokens.css: the media query while no override is set (data-theme absent,
-     "Same as Windows"), and the Dark override. So a Windows switch restyles every screen live, signed out too. */
-  :root[data-theme="dark"] .card {
-    border-color: transparent;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .card {
-      border-color: transparent;
-    }
   }
 
   /* tooltips (Radix): drawn on the page's own surfaces, outside the app bar's dark tone */
@@ -305,7 +298,7 @@
     width: 0.625rem;
     height: 0.625rem;
     flex: none;
-    background: var(--dot-light);
+    background: var(--theme-dark, var(--dot-light)) var(--theme-light, var(--dot-dark));
   }
   .store-dot.is-circle {
     border-radius: 50%;
@@ -318,15 +311,6 @@
   }
   .store-dot.is-diamond {
     clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-  }
-  :root[data-theme="dark"] .store-dot,
-  .tone-dark .store-dot {
-    background: var(--dot-dark);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .store-dot {
-      background: var(--dot-dark);
-    }
   }
 
   /* theme menu (Radix DropdownMenu, non-modal) */
