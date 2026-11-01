@@ -2,6 +2,7 @@
 // sent; SET-04: the GitHub token's shape; the line after a save for each start_with_windows_result.
 import { describe, expect, it } from "vitest";
 import type { AppSettings, AppSettingsSaved } from "../../api/settings";
+import { T } from "../../lib/updatesWording";
 import {
   checkAppForm,
   checkGithubToken,
@@ -13,7 +14,7 @@ import {
   PORT_MIN,
   savedLine,
 } from "./forms";
-import { A, T } from "./wording";
+import { A } from "./wording";
 
 const stored: AppSettings = {
   port: 47615,

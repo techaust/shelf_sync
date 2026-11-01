@@ -1,7 +1,7 @@
 import { CircleCheck, RefreshCcw } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { U } from "../../lib/updatesWording";
 import type { Phase } from "./updatesModel";
-import { U } from "./wording";
 
 // The restart panel after an accepted Install or Roll back (SYS-06, SYS-07). Its own module, so the shell can show it
 // on any screen while Settings › Updates itself loads only when it is opened (the React.lazy split, m2.5b).

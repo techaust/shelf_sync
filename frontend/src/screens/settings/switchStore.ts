@@ -6,8 +6,8 @@ import { useSyncExternalStore } from "react";
 import { ApiError, ApiUnreachableError } from "../../api/client";
 import type { SessionCheck } from "../../api/settings";
 import { type Clock, type HealthAnswer, pollForRestart, realClock } from "../../lib/restartPoll";
+import { updatesActionError, updatesActionTone } from "../../lib/updatesWording";
 import type { Phase } from "./updatesModel";
-import { updatesActionError, updatesActionTone } from "./wording";
 
 /** How long an Install or Roll back request may stay unanswered before the page shows the restart panel anyway:
  *  the server hashes the whole version folder first, but never for minutes (review item 18). */

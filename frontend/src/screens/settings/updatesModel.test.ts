@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES } from "../../api/client";
 import type { LastCheck, SwitchResult, Updates } from "../../api/settings";
+import { checkProblem, lastSwitch, updatesActionError } from "../../lib/updatesWording";
 import { type DateFormat, describeUpdates } from "./updatesModel";
-import { checkProblem, lastSwitch, updatesActionError } from "./wording";
 
 /** Dates are shown as "<iso>" so the tests don't depend on the PC's time zone. */
 const date: DateFormat = (iso) => (iso ? `<${iso}>` : null);

@@ -7,11 +7,12 @@ import { createSessionStore } from "../../api/session";
 import type { AppSettingsSaved } from "../../api/settings";
 import type { SettingsWriter } from "../../api/settingsWriter";
 import { submitSecret } from "../../components/SecretField";
+import { T } from "../../lib/updatesWording";
 import { createThemeSync } from "../../theme/useSavedTheme";
 import { checkNow, pollAnswers, removeToken, resetAccess, saveApp, saveToken } from "./actions";
 import { rollBackWords } from "./UpdatesView";
 import type { UpdatesModel } from "./updatesModel";
-import { A, T } from "./wording";
+import { A } from "./wording";
 
 /** An API client over a fake fetch: a status and body, or "no answer". */
 function client(answer: number | "none", body: unknown = null): ApiClient {

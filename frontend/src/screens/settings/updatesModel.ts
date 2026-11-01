@@ -1,9 +1,9 @@
 // What Settings › Updates shows for a GET /api/updates answer (SYS-06, SYS-07, SET-04): a pure function, so every
-// state the API can report is tested without a browser (updatesModel.test.ts). Wording is in wording.ts.
+// state the API can report is tested without a browser (updatesModel.test.ts). Wording is in lib/updatesWording.ts.
 
 import type { Updates } from "../../api/settings";
 import { formatDate, formatDateTime, parseUtc } from "../../lib/time";
-import { BUSY_LINE, checkedAt, checkProblem, lastSwitch, NO_RELEASE, T, U } from "./wording";
+import { BUSY_LINE, checkedAt, checkProblem, lastSwitch, NO_RELEASE, T, U } from "../../lib/updatesWording";
 
 export type Tone = "info" | "success" | "warning" | "danger";
 
