@@ -76,7 +76,19 @@ describe("the endpoint (check_s3_endpoint)", () => {
 describe("region, bucket and template", () => {
   it("region: empty, or 2 to 32 lowercase letters, digits and hyphens", () => {
     for (const ok of ["", "ap-south-1", "eu", "a".repeat(32)]) expect(regionOk(ok)).toBe(true);
-    for (const bad of ["a", "AP-SOUTH-1", "ap_south_1", "a".repeat(33), "ap south", "12", "007", "eu-west-", "-eu", "--"]) expect(regionOk(bad)).toBe(false);
+    for (const bad of [
+      "a",
+      "AP-SOUTH-1",
+      "ap_south_1",
+      "a".repeat(33),
+      "ap south",
+      "12",
+      "007",
+      "eu-west-",
+      "-eu",
+      "--",
+    ])
+      expect(regionOk(bad)).toBe(false);
   });
 
   it("bucket: S3's naming rules plus RFC 1123", () => {
