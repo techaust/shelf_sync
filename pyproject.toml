@@ -74,6 +74,12 @@ packages = ["shelfsync"]
 module = ["pystray", "windows_toasts", "windows_toasts.*"]
 ignore_missing_imports = true
 
+# boto3 and botocore ship no type hints (no py.typed); a stub package would be a new package (M2.7). `Any` from them stays
+# inside apply/s3.py, behind its `S3Client` protocol.
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]
