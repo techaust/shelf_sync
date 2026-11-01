@@ -90,7 +90,16 @@ _(analyst's early check, relayed by the lead, 2026-11-02; builder's resolutions,
 
 **Stage 2 locations (lead).** The detached worktree at `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\sst7` (so `--base` is `…\sst7\build\ShelfSync-0.1.0`), `--work` `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\sst7r`, and the release build's `-Work` `C:\Users\r4rup\AppData\Local\Temp\ssrbt7a` (≤ 60 characters). Not under `%LOCALAPPDATA%`, where a build made inside Claude may exist only in the app's private copy.
 
-**Open (lead's decision):** T7 merges on the run inside Claude; **the owner's run outside Claude** (Windows PowerShell) is recorded as open, with the analyst's PowerShell steps, carried to [10](../10-status.md) by the lead.
+**Open (lead's decision):** T7 merges on the run inside Claude; **the owner's run outside Claude** (Windows PowerShell) is recorded as open, carried to [10](../10-status.md) by the lead. The analyst's steps (`<base>` = a build folder made from `main` after T7 merges, on D:):
+1. Quit ShelfSync from its tray icon.
+2. In Windows PowerShell (not inside Claude), check the base folder is visible (it should print `True`):
+   ```
+   Test-Path "<base>\python.exe"
+   ```
+3. Run the rehearsal, with its output kept in `.logs\t7-rehearse-outside.log`:
+   ```
+   Set-Location "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"; $env:UV_PYTHON_DOWNLOADS = "never"; $env:PYTHONPATH = "backend"; uv run python tools\release\rehearse.py --base "<base>" --work "$env:TEMP\sst7o" 2>&1 | Tee-Object -FilePath ".logs\t7-rehearse-outside.log"
+   ```
 
 #### If a rehearsal run is killed
 The first line of its output (`.logs/t7-rehearse.log`) names the run id `<id>` and the `--work` folder `<work>`. In Windows PowerShell (in the same place the run was started: inside the Claude app if it ran there), one command at a time, with `<id>` and `<work>` replaced:
@@ -116,6 +125,54 @@ The first line of its output (`.logs/t7-rehearse.log`) names the run id `<id>` a
 Even if step 2 is missed, the copy the Run value names stops at once at the next sign-in (C2a: no `SHELFSYNC_DATA_DIR`, so no data folder), and touches nothing real.
 
 ## 3. Builder report
+_(builder, 2026-11-02; branch `t7/rehearse-current-build`: 4378e76, 2a43438, e76b2a8 and this report's commit, on 4cebb6a. Run inside the Claude app on this PC.)_
+
+**Result:** the full rehearsal ran to the end against a fresh `-Suffix -rehearsal` release build of e76b2a8 (current `main` plus this branch, which changes only `tools/` and `docs/`). The script's own line: **`46 of 46 checks passed`** (`.logs/t7-rehearse.log`). The clean-up check passed and the real names and folders read the same before and after. The full `uv run pytest` passed.
+
+**Skills:** none loaded (see §2: `security-review` and `code-review` are the reviewer's, Context7 wasn't needed, `run` doesn't fit).
+
+**Files changed**
+- `tools/release/rehearse.py`: the patches, gates and clean-up in §2 (the builder's early report and the analyst's C1–C7).
+- `docs/runs/t7-rehearse-current-build.md`: §2, brief item 5 and Done (C3 wording), the manual clean-up steps, the owner's outside-Claude steps, this report.
+- No runbook names the command, so none changed. The m1b.2 and m2.1 run files name it as history and stay as written. Nothing in `backend/`, `packaging/`, `frontend/`, `tests/`, `pyproject.toml` or `uv.lock` changed.
+
+**Commands and results** (all with `UV_PYTHON_DOWNLOADS=never`; heavy ones through `tools/heavy.sh`, which waited its turn behind a techaust_platform test and another ShelfSync worktree's pytest)
+| # | Command | Result |
+|---|---|---|
+| 1 | `git worktree add --detach D:\…\SOFTWARE\sst7 e76b2a8`; `build-cache\python-3.14.8-embed-amd64.zip` copied from the main checkout (nothing downloaded; `build.py` checks its SHA-256) | done |
+| 2 | `heavy.sh --log t7-npm-ci npm --prefix …\sst7\frontend ci` | exit 0 (146 packages; npm reports 3 moderate advisories, unchanged lock) |
+| 3 | `heavy.sh --log t7-npm-build npm --prefix …\sst7\frontend run build` | exit 0 (tokens in step, vite build) |
+| 4 | `heavy.sh --log t7-release-build powershell -NoProfile -ExecutionPolicy Bypass -File …\sst7\packaging\release-build.ps1 -Python C:\Users\r4rup\AppData\Local\Programs\Python\Python314\python.exe -Makensis "D:\…\tools\nsis-3.13\makensis.exe" -Work C:\Users\r4rup\AppData\Local\Temp\ssrbt7a -Suffix -rehearsal -SourceCommit e76b2a8fde64af49f366b2ec7df5452ee9ae79dd` (the commit given, so the script needn't run git in the other worktree) | exit 0: `Built …\sst7\build\ShelfSync-0.1.0 (4370 files)`; smoke passed (Run value and AUMID `ShelfSync-rehearsal` / `TecHaust.ShelfSync-rehearsal`); 98 installer checks `ok`, "All installer checks passed"; manifest written |
+| 5 | `heavy.sh --log t7-rehearse uv run --locked python tools/release/rehearse.py --base "D:\…\SOFTWARE\sst7\build\ShelfSync-0.1.0" --work "D:\…\SOFTWARE\sst7r"` (`PYTHONPATH=backend`, from this worktree, in the background, not stopped) | exit 0, **46 of 46 checks passed** |
+| 6 | Independent look afterwards (PowerShell, throwaway names only): `Test-Path` of `sst7r` and `HKCU:\Software\ShelfSyncRehearsal-e124cf27`, the Run value `ShelfSync-rehearse-e124cf27`, processes under `sst7r` | folder gone, key gone, value gone, 0 processes |
+| 7 | `heavy.sh --log t7-pytest uv run --locked pytest` | exit 0: **2464 passed, 18 skipped, 52 deselected** in 215 s; coverage 93 % |
+| 8 | `ruff check`, `ruff format --check`, `mypy --explicit-package-bases` (with `MYPYPATH=backend;tools/release`) on `rehearse.py` | clean |
+| 9 | `heavy.sh --log t7-lint uv run ruff check` and `uv run ruff format --check` (the full lint, once, last) | see the line after this table |
+
+**The rehearsal's output, summarised** (run id `e124cf27`; the first line names the service `ShelfSyncRehearsal-e124cf27`, the Run value `ShelfSync-rehearse-e124cf27` in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, the key `HKCU\Software\ShelfSyncRehearsal-e124cf27`, the AUMID and the folder):
+- `--base` scan: no module but `platform/secrets.py` names a Credential Manager API (1 check).
+- Each of the four copies (0.0.1–0.0.4), before it was signed: its own Python printed `ShelfSync-rehearse-e124cf27 TecHaust.ShelfSync-rehearse-e124cf27 ShelfSyncRehearsal-e124cf27 ShelfSyncRehearsal-e124cf27 no-data-folder` (4 checks, all gates passed).
+- 1. Install 0.0.1: health 0.0.1; schema 2 (the build's own latest); Start with Windows wrote `ShelfSync-rehearse-e124cf27` naming the rehearsal's `current\pythonw.exe`; `GET /api/updates` installed 0.0.1, not development, key present (4).
+- 2. Update to 0.0.2: 202; `updated`; a new process answers 0.0.2; `current` → 0.0.2; schema 9001; throwaway `DisplayVersion` 0.0.2; one pre-migration backup; previous 0.0.1, roll back possible, database changed, backup available (8).
+- 3. Roll back: the running image was `…\sst7r\Programs\ShelfSync\versions\0.0.2\pythonw.exe`; 422 `confirm_required` without confirmation; 202 with it; `rolled_back`; 0.0.1 runs; schema back to 2 (backup restored); `DisplayVersion` 0.0.1; one pre-rollback snapshot; both version folders kept (8).
+- 4. Tampered 0.0.3: 409 `manifest_invalid` (wrong key); 409 `files_changed` (a file swapped after signing); the same 0.0.1 process still runs; `current` still 0.0.1 (4, plus its copy probe).
+- 5. Broken 0.0.4: 202; `kept_old` with `migration_failed`; 0.0.1 runs again; `current` 0.0.1; schema 2, no half-done table; `DisplayVersion` back to 0.0.1; the last result reported by `GET /api/updates` (7, plus its copy probe).
+- 6. Clean-up: nothing under the throwaway service (prefix targets and every owned entry); the throwaway uninstall key, Run value and `--work` folder gone; no AUMID key for the throwaway AUMID; the ShelfSync Run values, the real uninstall key, the real AUMID key, the real data folder and the real install folder the same as before (10). No `clean-up: …` FAIL line, so every clean-up step ran without an error.
+
+**Left behind and removed**
+- `sst7r` (`--work`): removed by the script's own clean-up (and confirmed gone).
+- `sst7` (the detached build worktree): the script doesn't touch it; removed by me with `git worktree remove --force` (it held the build, `node_modules` and `build-cache`, all untracked).
+- `C:\Users\r4rup\AppData\Local\Temp\ssrbt7a` (the release build's `-Work`): still holds `Setup-0.0.1.exe` and `Setup-99.0.0.exe`, the two test Setups `release-build.ps1` leaves there; not removed (outside the brief; safe to delete).
+- `.logs/rehearsal/` in this worktree: the copies' log and updater files, kept by the script on purpose (git-ignored).
+
+**Not verified**
+- **Outside the Claude app.** Everything ran inside it, so the real-side checks hold for the view this context has (the app's private copy of new `%LOCALAPPDATA%` folders, 04-A V36, and possibly of HKCU writes). The owner's run in Windows PowerShell is the open item in §2, with the analyst's steps.
+- **The real `ShelfSync` Credential Manager service** was not read, by design (C3): it is proven unreachable by the `--base` scan and the four copy probes, not observed.
+- **The single-instance mutex** keeps the real name in the copies (T6 follow-up, out of scope). The real ShelfSync wasn't running (the start check passed); had the owner started it during the run, it would have been a second launch and opened nothing.
+- **A killed run** wasn't rehearsed. The manual steps in §2 and the C2a patch weren't exercised end to end (the patch is proven by the four probes printing `no-data-folder`).
+- The `-SourceCommit` I passed is the branch head, e76b2a8. The build's code equals `main`'s (#40), plus this branch, which changes no shipped file. The rehearsal printed no "code differs" note, so the build's `shelfsync/` matched this checkout.
+
+**Open questions:** none beyond the owner's outside-Claude run (§2).
 
 ## 5. Review
 
