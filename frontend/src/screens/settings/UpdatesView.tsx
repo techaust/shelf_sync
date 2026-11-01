@@ -2,9 +2,9 @@ import { BookOpen, CircleCheck, CircleDot, Download, Info, LoaderCircle, Refresh
 import { Alert } from "../../components/Alert";
 import { helpStore } from "../../components/help/helpModel";
 import { SecretField } from "../../components/SecretField";
+import type { Phase, UpdatesModel } from "../../lib/updatesModel";
 import { T, U } from "../../lib/updatesWording";
 import { checkGithubToken, TOKEN_MAX_LENGTH } from "./forms";
-import type { Phase, UpdatesModel } from "./updatesModel";
 import { A } from "./wording";
 
 export interface UpdatesActions {
@@ -99,7 +99,7 @@ function StatusLine({ model }: { model: UpdatesModel }) {
   );
 }
 
-/** Settings › Updates for one GET /api/updates answer (described by updatesModel.ts) and the page's phase. */
+/** Settings › Updates for one GET /api/updates answer (described by lib/updatesModel.ts) and the page's phase. */
 export function UpdatesView({
   model,
   phase,

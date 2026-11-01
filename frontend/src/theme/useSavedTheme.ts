@@ -9,7 +9,7 @@ import {
 } from "../api/settings";
 import { settingsWriter } from "../api/settingsWriter";
 import { useServices } from "../app/services";
-import { isRestarting, useSwitchPhase } from "../screens/settings/switchStore";
+import { isRestarting, useSwitchPhase } from "../lib/switchStore";
 import type { ThemePreference } from "./theme";
 import { type ThemeStore, themeStore, useTheme } from "./useTheme";
 

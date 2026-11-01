@@ -1,10 +1,10 @@
 // UI-SET Updates (SYS-06, SYS-07, SET-04): what Settings › Updates shows for every state GET /api/updates can
 // report, with the wording of 13 section 3 (m1b.2's proposed rows), and every API error code's line.
 import { describe, expect, it } from "vitest";
-import { ERROR_CODES } from "../../api/client";
-import type { LastCheck, SwitchResult, Updates } from "../../api/settings";
-import { checkProblem, lastSwitch, updatesActionError } from "../../lib/updatesWording";
+import { ERROR_CODES } from "../api/client";
+import type { LastCheck, SwitchResult, Updates } from "../api/settings";
 import { type DateFormat, describeUpdates } from "./updatesModel";
+import { checkProblem, lastSwitch, updatesActionError } from "./updatesWording";
 
 /** Dates are shown as "<iso>" so the tests don't depend on the PC's time zone. */
 const date: DateFormat = (iso) => (iso ? `<${iso}>` : null);
