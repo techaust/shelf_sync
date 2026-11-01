@@ -4,15 +4,20 @@ With `redact` patched to do nothing, whatever reaches the log file or the proces
 wrote. These values must not be there, which proves they are never logged at all, not only masked.
 """
 
+import json
 from pathlib import Path
 
 import pytest
+from moto import mock_aws
+from moto.core import enable_iam_authentication
 
 from shelfsync import logs, server
+from shelfsync.api.storage import STORAGE_TEST_PATH
 from shelfsync.paths import DataPaths
 from shelfsync.platform.notify import FakeNotifier
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure import backup_crypto
+from shelfsync.secure.credentials import S3Credentials, S3Pair
 from shelfsync.secure.token import INSTALL_TOKEN_NAME
 from tests.backup_support import (
     FAST_N,
@@ -22,6 +27,17 @@ from tests.backup_support import (
     import_response,
     make_install,
     populate,
+)
+from tests.s3_support import (
+    BUCKET,
+    REGION,
+    aws_setup_env,  # noqa: F401  (a fixture)
+    closed_port,
+    create_bucket,
+    iam_user,
+    ro_policy,
+    rw_policy,
+    s3_guard,  # noqa: F401  (autouse: the Storage Test writes only its own test keys)
 )
 from tests.storage_support import (
     GOOD_SETTINGS,
@@ -224,6 +240,55 @@ def test_the_storage_flows_write_no_s3_key_anywhere_even_with_redaction_off(
         assert value[4:] not in everything
     for secret in (RW_SECRET, RO_SECRET, RW_SECRET_2):
         assert secret[: len(secret) // 2] not in everything
+
+
+@pytest.mark.usefixtures("aws_setup_env")
+def test_the_storage_test_flows_write_no_key_address_or_bucket_anywhere_even_with_redaction_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """LOG-01, SET-02, ERR-03 (M2.7): the Storage Test passing, refused for an unknown key ID and a wrong secret (moto
+    with IAM), and unreachable (a closed port on 127.0.0.1). No key ID, secret, endpoint address or bucket name
+    reaches the log, the process output or a response."""
+    monkeypatch.setattr(logs, "redact", lambda text: text)
+    handler = logs.configure_logging(tmp_path, retention_days=1)
+    responses: list[str] = []
+    port = closed_port()
+    try:
+        with mock_aws():
+            create_bucket()
+            rw = iam_user("shelfsync-rw", rw_policy())
+            ro = iam_user("shelfsync-ro", ro_policy())
+            rig = make_storage_rig()
+            settings = {**GOOD_SETTINGS, "s3_endpoint": "", "s3_region": REGION, "s3_bucket": BUCKET}
+            assert rig.client.put("/api/settings/storage", headers=WRITE_HEADERS, json=settings).status_code == 200
+            credentials = S3Credentials(rig.secrets)
+            credentials.save("ro", ro.key_id, ro.secret)
+            with enable_iam_authentication():
+                for rw_pair in (rw, S3Pair("AKIA" + "UNKNOWNUNKNOWN00", rw.secret), S3Pair(rw.key_id, "x" * 40)):
+                    credentials.save("rw", rw_pair.key_id, rw_pair.secret)
+                    response = rig.client.post(STORAGE_TEST_PATH, headers=WRITE_HEADERS)
+                    assert response.status_code == 200
+                    responses.append(response.text)
+        settings = {**settings, "s3_endpoint": f"http://127.0.0.1:{port}"}
+        assert rig.client.put("/api/settings/storage", headers=WRITE_HEADERS, json=settings).status_code == 200
+        response = rig.client.post(STORAGE_TEST_PATH, headers=WRITE_HEADERS)
+        responses.append(response.text)
+        handler.flush()
+    finally:
+        logs.remove_logging(handler)
+
+    reasons = [json.loads(text)["steps"][0]["reason"] for text in responses]
+    assert reasons == [None, "key_unknown", "secret_wrong", "unreachable"]  # every flow really ran
+    log_text = (tmp_path / logs.LOG_FILE_NAME).read_text(encoding="utf-8")
+    assert "Storage test passed" in log_text and "Storage test failed" in log_text  # logging was on
+    captured = capfd.readouterr()
+    everything = log_text + captured.out + captured.err + "\n".join(responses)
+    for value in (rw.key_id, rw.secret, ro.key_id, ro.secret, "UNKNOWNUNKNOWN00", "x" * 40):
+        assert value not in everything
+    for address in (BUCKET, f"127.0.0.1:{port}", "amazonaws.com", "shelfsync-test/"):
+        assert address not in log_text + captured.out + captured.err
+        if address != "shelfsync-test/":  # a left-behind test key may be named in a response, by design
+            assert address not in "\n".join(responses)
 
 
 def test_the_backup_flows_write_no_passphrase_secret_or_install_token_anywhere_even_with_redaction_off(
