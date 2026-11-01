@@ -64,7 +64,63 @@ A new hand-written **`frontend/src/styles/component-tokens.css`**, imported in `
 Run file (this) → `designer` (own worktree, commits there, never pushes) → `reviewer` (`code-review`) → fixes → re-check → lead integrates on `refactor/dark-tokens`, runs the checks, pushes. **No PR**: the orchestrator checks light and dark on the PC and opens it.
 
 ## 4. Designer report
-_(designer)_
+_(designer, cloud session, own worktree `agent-a47ec4f3c09046274`, base `ed3e3a7`; claude-opus-5-5/high)_
+
+**Skills and tools.** `frontend-design`: not available in this session (not in the skill list), so it changed nothing; nothing visual was designed, every colour stays as it was. Context7: not available (no Context7 tools, and no tool search to load them, are exposed to this agent); not needed, the change uses no Tailwind feature. `dataviz`: not relevant (no chart). No browser and no screenshots: visual checks never run in a cloud session (CLAUDE.md rule 10).
+
+**Files changed** (all under `frontend/src/styles/`)
+- `component-tokens.css` (new, unlayered, imported in `app.css` right after `generated/shelfsync-tokens.css`, with a one-line comment above the import): header comment on both mechanisms and on the two dark forms that must match; the theme switches on `:root`, both dark scopes and `.tone-dark`; the component dark tokens in the two dark scopes only.
+- `app.css`: the import; `.card` and `.store-dot` written once; both dark pairs, `.tone-dark .store-dot`, and the comment above the `.card` pair removed (a one-line pointer to `component-tokens.css` now sits above `.card`). Everything else unchanged.
+- `settings.css`: `.sk` written once, its pair removed. `stores.css`: `.secret-pair__mask` written once, its pair removed. `storage-backup.css`: untouched (it had none).
+- `component-tokens.test.ts` (new): see below.
+- No TSX file, class name, generated file, script or brand file changed.
+
+**Tokens added** (light = the fallback the rule uses; dark = the value in both dark scopes)
+
+| Token | Read by | Light | Dark |
+|---|---|---|---|
+| `--theme-light` | `.store-dot` | ` ` (single space, empty: light in force) | `initial` |
+| `--theme-dark` | `.store-dot` | `initial` | ` ` (single space, empty); also on `.tone-dark` |
+| `--card-border-dark` | `.card` `border` | not set (fallback `var(--color-border)`) | `transparent` |
+| `--sk-background-dark` | `.sk` `background` | not set (fallback `var(--color-fill-subtle)`) | `var(--color-border)` |
+| `--secret-pair-mask-background-dark` | `.secret-pair__mask` `background` | not set (fallback `var(--color-fill-subtle)`) | `var(--color-surface-alt)` |
+
+Name: `.secret-pair__mask` gives `--secret-pair-mask-background-dark` (the BEM `__` flattened to `-`, as custom property names usually are). `.store-dot`'s rule: `background: var(--theme-dark, var(--dot-light)) var(--theme-light, var(--dot-dark));`.
+
+Specificity: the old dark rules were `(0,3,0)` and now the dark value sits in the base rule `(0,1,0)`. I checked every rule in the four stylesheets: no other rule sets `border`/`border-color` on a `.card` or `background` on `.sk`, `.secret-pair__mask` or `.store-dot` (outside forced-colors mode), so nothing can now win over the dark value. The test enforces this (exactly one colouring declaration per component).
+
+**The test** (`component-tokens.test.ts`, 71 tests): a small CSS reader (style rules with their `@media` conditions; `@layer` transparent; a nested rule or an unknown theme scope throws) and a `var()` resolver: substitution where declared (`:root` declarations against `:root`, `.tone-dark` ones against `.tone-dark`, which inherits from `:root`; an element's own `--dot-*` against itself), nested fallbacks, `initial` and undeclared as guaranteed-invalid, the empty value, cycles, and a declaration that ends up invalid (a distinct result that never equals an expected colour). Cascade among the token scopes by specificity, then file order (`tokens.css`, `shelfsync-tokens.css`, `component-tokens.css`).
+- Resolver sanity (3): a hand-worked case (substitution where declared vs at the element, the switches, invalid results, a cycle with and without a fallback).
+- Colours (60): `data-theme` light, dark, absent × Windows light, dark × page, inside `.tone-dark` × `.card`, `.sk`, `.secret-pair__mask` and both `STORE_PALETTE` pairs; the rule is read from the stylesheet, the expectation comes from an independent table of the old rules (the brief's), turned into hex from `brand/tokens.json` in the right scope.
+- Structure (8): no `[data-theme="dark"]` or `prefers-color-scheme` in `app.css`, `settings.css`, `stores.css`, `storage-backup.css`; the two dark forms in `component-tokens.css` identical; the rules read exactly the tokens `component-tokens.css` declares (needed because `fill-subtle` and `surface-alt` are both `ink-750` in dark, so a misspelt mask token would still resolve to the right colour); `.tone-dark`'s `--color-*` values equal both dark blocks of `tokens.css`; `StoreBadge.tsx` still sets `--dot-light`/`--dot-dark` (read as text, not changed).
+- **It fails when broken** (tried locally, each restored after): `.tone-dark` switches removed (6 fail); a light value `--sk-background-dark: var(--color-fill-subtle)` on `:root` (3 fail: `.sk` inside `.tone-dark` in light); the dark forms drifting (3 fail); both switches empty in light (6 fail); `.card` reading no token (7 fail); the mask rule reading a misspelt token (1 fail). Back to 71 passed after restore.
+
+**Commands and results** (in the worktree's `frontend/`, through `bash ../tools/heavy.sh --log <name> …`; logs in `frontend/.logs/`, git-ignored)
+- `npm ci` (t5-npm-ci): exit 0.
+- `npm run lint` (t5-lint): first run exit 1, Biome formatting of the new test file only; after `npx biome check --write` on the new files, exit 0 (124 files, no fixes).
+- `npm run typecheck` (t5-typecheck): exit 0.
+- `npm test` (t5-test): exit 0, 29 files, 1008 tests passed. The three style tests alone (`component-tokens`, `tokens`, `contrast`): 440 passed. `tokens.test.ts` scans `component-tokens.css` too: it types no colour.
+- `npm run build` (t5-build): exit 0.
+
+**Built CSS** (`frontend/dist/assets/index-woCGEt7l.css`; the single-space values survive minification):
+```
+:root{--theme-light: ;--theme-dark:initial}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--theme-light:initial;--theme-dark: ;--card-border-dark:transparent;--sk-background-dark:var(--color-border);--secret-pair-mask-background-dark:var(--color-surface-alt)}
+.tone-dark{--theme-light:initial;--theme-dark: }
+:root[data-theme=dark]{--theme-light:initial;--theme-dark: ;--card-border-dark:transparent;--sk-background-dark:var(--color-border);--secret-pair-mask-background-dark:var(--color-surface-alt)}
+.card{background:var(--color-surface);border:1px solid var(--card-border-dark,var(--color-border));border-radius:var(--radius-md);box-shadow:var(--shadow-1);min-width:0}
+.store-dot{background:var(--theme-dark,var(--dot-light)) var(--theme-light,var(--dot-dark));flex:none;width:.625rem;height:.625rem}
+.sk{border-radius:var(--radius-sm);background:var(--sk-background-dark,var(--color-fill-subtle));display:block}
+.secret-pair__mask{padding:var(--space-1) var(--space-3);border-radius:var(--radius-sm);background:var(--secret-pair-mask-background-dark,var(--color-fill-subtle));display:inline-block}
+```
+No `.card`, `.store-dot`, `.sk` or `.secret-pair__mask` selector with `data-theme` or `.tone-dark` is left in the built CSS.
+
+**Not verified**
+- Real-browser rendering in light and dark (Same as Windows, Light, Dark; a live Windows switch; the app bar's store dots; skeletons; a saved secret mask; cards), and forced-colors mode: no browser in a cloud session. The orchestrator checks these on the PC.
+- That the browser (WebView/Edge) treats the single-space custom property as a valid empty value: modern CSS Variables allows it and Lightning CSS keeps it, but no browser ran here.
+- The resolver models the CSS rules it needs, not the whole of CSS (no `!important`, no nesting, no `inherit`/`unset` on custom properties: those throw); the colour table is my reading of the old rules, cross-checked against the brief's table.
+
+**Sample or placeholder data:** none. **Open questions:** none.
 
 ## 5. Review
 _(reviewer, copied in by the lead)_
