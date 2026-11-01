@@ -30,7 +30,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -341,9 +341,10 @@ class StorageTestProgress:
     cleanup_running: bool = False  # the clean-up after a write that may have reached S3 (L13)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def record(self, result: StepResult) -> None:
+    def record(self, *results: StepResult) -> None:
+        """Steps decided together are recorded together, so an overrun can't see one without the other."""
         with self._lock:
-            self.done.append(result)
+            self.done.extend(results)
 
     def start_cleanup(self) -> None:
         with self._lock:
@@ -352,14 +353,16 @@ class StorageTestProgress:
     def overrun(self, latency_ms: int) -> StorageTestOutcome:
         """The answer when the Test ran out of time: the steps done stand, the running one is `timeout`, the rest
         `not_run`. While the write, or the clean-up after a failed one, is running, steps 2 and 3 are `not_run` and the
-        key is named: the write may still land."""
+        key is named: the write may still land. Before the key exists (the clients were still being built), nothing
+        can have been written and no key is named."""
         with self._lock:
             done = list(self.done)
             cleanup_running = self.cleanup_running
+            key = self.key or None
         if not done or cleanup_running:
             write = done[0] if done else StepResult("write", "rw", "failed", None, "timeout")
             steps = (write, not_run("read", "ro"), not_run("delete", "rw"))
-            return StorageTestOutcome(steps, self.key, latency_ms, self.key)
+            return StorageTestOutcome(steps, self.key, latency_ms, key)
         listed: list[StepResult] = []
         for index, (step, pair) in enumerate(STEPS):
             if index < len(done):
@@ -369,7 +372,8 @@ class StorageTestProgress:
             else:
                 listed.append(not_run(step, pair))
         steps = (listed[0], listed[1], listed[2])
-        return StorageTestOutcome(steps, self.key, latency_ms, _left_after_delete(steps, self.key))
+        left = _left_after_delete(steps, key) if key is not None else None
+        return StorageTestOutcome(steps, self.key, latency_ms, left)
 
 
 def new_test_object(now: datetime) -> tuple[str, bytes]:
@@ -379,7 +383,7 @@ def new_test_object(now: datetime) -> tuple[str, bytes]:
     return key, b"ShelfSync storage test " + nonce.encode("ascii") + b"\n"
 
 
-def _elapsed_ms(monotonic: Callable[[], float], start: float) -> int:
+def elapsed_ms(monotonic: Callable[[], float], start: float) -> int:
     return max(0, round((monotonic() - start) * 1000))
 
 
@@ -395,10 +399,42 @@ def _only_a_test_key(key: str) -> None:
         raise ValueError("not a test key")
 
 
-def _write(rw: S3Client, bucket: str, key: str, body: bytes) -> None:
+class _WriteAttempts:
+    """A `needs-retry` handler that watches every attempt of the write, not only the last: botocore retries a lost
+    answer or a 5xx, so a first PUT that may have landed can be followed by a retry that fails before it is sent (a
+    connect timeout, SlowDown). It never changes the retry decision (it always returns None)."""
+
+    def __init__(self) -> None:
+        self.maybe_sent = False
+
+    def __call__(self, response: Any = None, caught_exception: Any = None, **_: Any) -> None:
+        from botocore.exceptions import ConnectionClosedError, ReadTimeoutError, ResponseStreamingError
+
+        if isinstance(caught_exception, (ReadTimeoutError, ConnectionClosedError, ResponseStreamingError)):
+            self.maybe_sent = True
+        elif isinstance(response, tuple) and len(response) == 2:
+            http, parsed = response
+            status = getattr(http, "status_code", None)
+            details = parsed.get("Error") if isinstance(parsed, Mapping) else None
+            code = details.get("Code") if isinstance(details, Mapping) else None
+            if type(status) is int and status >= 500 and code != "SlowDown":
+                self.maybe_sent = True
+
+
+_NEEDS_RETRY_PUT = "needs-retry.s3.PutObject"
+
+
+def _write(rw: S3Client, bucket: str, key: str, body: bytes, attempts: _WriteAttempts | None = None) -> None:
     _only_a_test_key(key)
     md5 = base64.b64encode(hashlib.md5(body, usedforsecurity=False).digest()).decode("ascii")
-    rw.put_object(Bucket=bucket, Key=key, Body=body, ContentType=TEST_CONTENT_TYPE, ContentMD5=md5)
+    events = getattr(getattr(rw, "meta", None), "events", None)  # on this client only, and only for this call
+    if attempts is not None and events is not None:
+        events.register(_NEEDS_RETRY_PUT, attempts)
+    try:
+        rw.put_object(Bucket=bucket, Key=key, Body=body, ContentType=TEST_CONTENT_TYPE, ContentMD5=md5)
+    finally:
+        if attempts is not None and events is not None:
+            events.unregister(_NEEDS_RETRY_PUT, attempts)
 
 
 def _read(ro: S3Client, bucket: str, key: str, body: bytes) -> Failure | None:
@@ -444,8 +480,8 @@ def _step(
     try:
         failure = run()
     except Exception as error:  # every failure becomes a fixed reason; the text of the error is never kept
-        return _failed(step, pair, _elapsed_ms(monotonic, start), classify(error))
-    ms = _elapsed_ms(monotonic, start)
+        return _failed(step, pair, elapsed_ms(monotonic, start), classify(error))
+    ms = elapsed_ms(monotonic, start)
     return StepResult(step, pair, "passed", ms) if failure is None else _failed(step, pair, ms, failure)
 
 
@@ -468,18 +504,26 @@ def run_storage_test(
     progress.key = key
     start = monotonic()
 
-    write_result = _step(lambda: _write(rw, bucket, key, body), "write", "rw", monotonic)
-    written = write_result.state == "passed"
-    if not written and write_result.maybe_sent:
-        progress.start_cleanup()  # before the write is recorded, so an overrun in between still names the key
-    progress.record(write_result)
-    if not written:
-        read_result = not_run("read", "ro")
-    elif abandoned():
-        read_result = StepResult("read", "ro", "failed", None, "timeout")
+    if abandoned():  # out of time before anything was sent (the clients took that long): send nothing
+        write_result = StepResult("write", "rw", "failed", None, "timeout")
     else:
-        read_result = _step(lambda: _read(ro, bucket, key, body), "read", "ro", monotonic)
-    progress.record(read_result)
+        attempts = _WriteAttempts()
+        write_result = _step(lambda: _write(rw, bucket, key, body, attempts), "write", "rw", monotonic)
+        if write_result.state != "passed" and attempts.maybe_sent:
+            write_result = replace(write_result, maybe_sent=True)  # an earlier attempt may have landed (L13)
+    written = write_result.state == "passed"
+    if not written:
+        if write_result.maybe_sent:
+            progress.start_cleanup()  # before the write is recorded, so an overrun in between still names the key
+        read_result = not_run("read", "ro")
+        progress.record(write_result, read_result)
+    else:
+        progress.record(write_result)
+        if abandoned():
+            read_result = StepResult("read", "ro", "failed", None, "timeout")
+        else:
+            read_result = _step(lambda: _read(ro, bucket, key, body), "read", "ro", monotonic)
+        progress.record(read_result)
     cleanup: Cleanup | None = None
     if written:  # always, after a passed write, whatever the read did (L2)
         delete_result = _step(lambda: _delete(rw, bucket, key), "delete", "rw", monotonic)
@@ -491,7 +535,7 @@ def run_storage_test(
     progress.record(delete_result)
     steps = (write_result, read_result, delete_result)
     left = _left_after_delete(steps, key) if written else (key if cleanup == "failed" else None)
-    return StorageTestOutcome(steps, key, _elapsed_ms(monotonic, start), left, cleanup)
+    return StorageTestOutcome(steps, key, elapsed_ms(monotonic, start), left, cleanup)
 
 
 def log_outcome(outcome: StorageTestOutcome, *, late: bool = False) -> None:
@@ -538,6 +582,7 @@ __all__ = [
     "classify",
     "client_config",
     "close_quietly",
+    "elapsed_ms",
     "log_outcome",
     "make_client",
     "new_test_object",

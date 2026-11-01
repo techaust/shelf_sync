@@ -126,7 +126,24 @@ def test_a_region_is_empty_or_lowercase_words(value: str) -> None:
     check_s3_region(value)
 
 
-@pytest.mark.parametrize("value", ["a", "x" * 33, "AP-south-1", "ap_south_1", "ap south", "ap-south-1\n", "région"])
+@pytest.mark.parametrize(
+    "value",
+    # the last five: botocore refuses an all-digit region or one with a hyphen at either end (M2.7 review)
+    [
+        "a",
+        "x" * 33,
+        "AP-south-1",
+        "ap_south_1",
+        "ap south",
+        "ap-south-1\n",
+        "région",
+        "12",
+        "007",
+        "eu-west-",
+        "-eu",
+        "--",
+    ],
+)
 def test_other_regions_are_refused(value: str) -> None:
     with pytest.raises(ValueError, match="s3_region"):
         check_s3_region(value)

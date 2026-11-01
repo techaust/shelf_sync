@@ -57,6 +57,7 @@ from shelfsync.apply.s3 import (
     StorageTestOutcome,
     StorageTestProgress,
     close_quietly,
+    elapsed_ms,
     log_outcome,
     make_client,
     run_storage_test,
@@ -158,7 +159,9 @@ class StorageTestResponse(BaseModel):
     tested_at: str  # UTC, ISO 8601
     latency_ms: int
     steps: list[StorageTestStep]  # always write, read, delete, in that order
-    left_behind: str | None  # the test file's key when the write passed and the delete didn't
+    # The test file's key when it may still be in the bucket: the write passed and the delete didn't; a write that may
+    # have reached S3 wasn't confirmed gone (L13); or the time ran out while either was running
+    left_behind: str | None
 
 
 _VALIDATORS = validators_for(StorageValues)
@@ -290,6 +293,7 @@ class StorageService:
             target, rw_pair, ro_pair = self._snapshot()
             gave_up = threading.Event()
             progress = StorageTestProgress()
+            tested_at = to_iso(self._now())  # once, before the worker starts
             result: dict[str, Any] = {}
             start = self._monotonic()
             deadline = start + self._limit_seconds
@@ -334,9 +338,9 @@ class StorageService:
                 answer: StorageTestOutcome = result["outcome"]
             else:
                 gave_up.set()
-                answer = progress.overrun(max(0, round((self._monotonic() - start) * 1000)))
+                answer = progress.overrun(elapsed_ms(self._monotonic, start))
                 _log.warning("The storage test ran out of time")
-            return answer, to_iso(self._now())
+            return answer, tested_at
         finally:
             if not handed_over or completed:
                 self._release_test()

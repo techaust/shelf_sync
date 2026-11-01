@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from moto import mock_aws
 from moto.core import enable_iam_authentication
 
 from shelfsync import logs
 from shelfsync.api.storage import STORAGE_TEST_PATH, StorageService, StorageTestError
 from shelfsync.apply.s3 import TEST_KEY, ClientFactory, S3Client, S3Target, make_client
+from shelfsync.db.settings import check_s3_region
 from shelfsync.secure.credentials import S3Credentials, S3Pair
 from tests.s3_support import (
     BUCKET,
@@ -290,11 +293,11 @@ def test_the_whole_test_through_a_real_socket_passes() -> None:
 def test_a_service_that_never_answers_times_out_within_the_limit() -> None:
     with ScriptedServer() as server:
         server.hold["PUT"] = threading.Event()  # never set until the end
-        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=0.5, grace_seconds=0.2)
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=2.0, grace_seconds=0.2)
         started = datetime.now(UTC)
         body = run_test(rig).json()
         took = (datetime.now(UTC) - started).total_seconds()
-        assert took < 3.0
+        assert took < 5.0  # the limit (2 s, room for building the clients) plus the grace, not 20 s of retries
         assert steps(body) == [("write", "failed", "timeout"), ("read", "not_run", None), ("delete", "not_run", None)]
         assert body["left_behind"] is not None and TEST_KEY.fullmatch(body["left_behind"])  # the write may land (L13)
         assert run_test(rig).json() == {"error": "busy"}  # held until the worker really ends
@@ -307,7 +310,7 @@ def test_a_service_that_never_answers_times_out_within_the_limit() -> None:
 def test_a_late_write_is_still_deleted_and_logged(caplog: pytest.LogCaptureFixture) -> None:
     with ScriptedServer() as server:
         server.hold["PUT"] = threading.Event()
-        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=0.3, grace_seconds=0.1)
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=2.0, grace_seconds=0.2)
         with caplog.at_level("INFO", logger="shelfsync.storage"):
             body = run_test(rig).json()
             assert steps(body)[0] == ("write", "failed", "timeout")
@@ -325,7 +328,7 @@ def test_running_out_of_time_during_the_read_still_deletes() -> None:
     """The write passed, the read hangs: the answer names the key (step 3 didn't pass), and the worker deletes it."""
     with ScriptedServer() as server:
         server.hold["GET"] = threading.Event()
-        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=0.5, grace_seconds=0.2)
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=2.0, grace_seconds=0.2)
         body = run_test(rig).json()
         assert steps(body) == [("write", "passed", None), ("read", "failed", "timeout"), ("delete", "not_run", None)]
         assert body["steps"][1]["latency_ms"] is None
@@ -384,6 +387,90 @@ def test_a_write_that_never_happened_is_not_cleaned_up(answer: Any) -> None:
     assert body["left_behind"] is None
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("lost", "connect_timeout"),  # the first PUT may have landed; its retry never left the PC
+        ("500", "SlowDown"),
+        ("lost", "unreachable"),
+        ("500", "400"),
+    ],
+)
+def test_any_attempt_that_may_have_landed_triggers_the_cleanup(first: str, second: str) -> None:
+    """M1 (review): the clean-up is decided from every attempt of the write, not only the last one's error."""
+    from botocore.exceptions import ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError
+
+    url = "https://s3.example.com"
+    answers: dict[str, Any] = {
+        "lost": ReadTimeoutError(endpoint_url=url),
+        "500": (500, error_xml("InternalError"), {}),
+        "connect_timeout": ConnectTimeoutError(endpoint_url=url),
+        "unreachable": EndpointConnectionError(endpoint_url=url),
+        "SlowDown": (503, error_xml("SlowDown"), {}),
+        "400": (400, error_xml("RequestTimeout"), {}),
+    }
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = answers[first]
+    fake.script[("PUT", 2)] = answers[second]
+    body = run_test(canned_rig(fake)).json()
+    assert body["steps"][0]["state"] == "failed"
+    assert fake.methods() == ["PUT", "PUT", "DELETE", "HEAD"]
+    assert steps(body)[1:] == [("read", "not_run", None), ("delete", "not_run", None)]
+    assert body["left_behind"] is None  # confirmed gone
+
+
+def test_a_write_retried_after_slowdown_and_refused_is_not_cleaned_up() -> None:
+    """Neither attempt can have landed (SlowDown, then 403): nothing is deleted."""
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = (503, error_xml("SlowDown"), {})
+    fake.script[("PUT", 2)] = (403, error_xml("AccessDenied"), {})
+    body = run_test(canned_rig(fake)).json()
+    assert fake.methods() == ["PUT", "PUT"] and body["left_behind"] is None
+
+
+def test_running_out_of_time_while_the_clients_are_built_sends_nothing_and_names_no_key() -> None:
+    """M3 (review): an overrun before the test key exists answers `left_behind: null` (not ""), and the late worker,
+    finding the time already gone, sends nothing at all."""
+    release = threading.Event()
+    fake = FakeS3()
+
+    def slow(target: S3Target, pair: S3Pair) -> S3Client:
+        release.wait(10)
+        return canned_factory(fake)(target, pair)
+
+    rig = rig_with(slow, limit_seconds=0.3, grace_seconds=0.1)
+    body = run_test(rig).json()
+    assert steps(body) == [("write", "failed", "timeout"), ("read", "not_run", None), ("delete", "not_run", None)]
+    assert body["left_behind"] is None
+    release.set()
+    assert wait_until(lambda: not rig.service._testing)  # the late worker has ended
+    assert fake.methods() == []  # it found the time already gone and sent nothing
+
+
+@pytest.mark.parametrize("region", ["12", "eu-west-", "-eu"])
+def test_a_region_botocore_would_refuse_is_refused_at_save(region: str) -> None:
+    """M2 (review): one rule for the save and the Test, so neither can reach botocore's InvalidRegionError (a 500)."""
+    rig = rig_with(canned_factory(FakeS3()))
+    settings = {**GOOD_SETTINGS, "s3_region": region, "s3_bucket": BUCKET}
+    response = rig.client.put("/api/settings/storage", json=settings, headers=WRITE_HEADERS)
+    assert (response.status_code, response.json()) == (422, {"error": "invalid_request"})
+
+
+@given(st.from_regex(r"[a-z0-9-]{2,32}", fullmatch=True))
+def test_every_region_the_save_accepts_botocore_accepts(region: str) -> None:
+    from botocore.exceptions import InvalidRegionError
+    from botocore.utils import validate_region_name
+
+    try:
+        check_s3_region(region)
+    except ValueError:
+        return
+    try:
+        validate_region_name(region)
+    except InvalidRegionError:  # pragma: no cover - the failure this test exists to catch
+        pytest.fail(f"accepted at save but refused by botocore: {region!r}")
+
+
 def test_a_connect_timeout_on_the_write_is_not_cleaned_up() -> None:
     from botocore.exceptions import ConnectTimeoutError
 
@@ -406,7 +493,7 @@ def test_running_out_of_time_during_the_cleanup_names_the_key(caplog: pytest.Log
     with ScriptedServer() as server:
         server.raw["PUT"] = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         server.hold["DELETE"] = threading.Event()
-        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=1.5, grace_seconds=0.2)
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=2.5, grace_seconds=0.2)
         with caplog.at_level("INFO", logger="shelfsync.storage"):
             body = run_test(rig).json()
             assert steps(body) == [
@@ -500,6 +587,8 @@ def test_an_empty_region_or_bucket_is_storage_not_set(change: dict[str, str]) ->
         ("s3_region", '"Not A Region"'),
         ("s3_bucket", '"Bad_Bucket"'),
         ("s3_bucket", "not json"),
+        ("s3_region", '"12"'),  # botocore refuses an all-digit region (InvalidRegionError, which was a 500)
+        ("s3_region", '"eu-west-"'),
     ],
 )
 def test_a_hand_edited_invalid_setting_is_storage_not_set_never_aws(key: str, raw: str) -> None:
