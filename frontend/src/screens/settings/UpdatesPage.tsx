@@ -5,12 +5,12 @@ import { ApiError } from "../../api/client";
 import { getUpdates, installUpdate, rollBack, UPDATES_QUERY_KEY } from "../../api/settings";
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { U } from "../../lib/updatesWording";
 import { checkNow, pollAnswers, removeToken, saveToken } from "./actions";
 import { Restarting } from "./RestartScreen";
 import { type SwitchLine, switchStore } from "./switchStore";
 import { RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
 import { describeUpdates } from "./updatesModel";
-import { U } from "./wording";
 
 /** While a check or a switch runs, the status is asked for again every two seconds. */
 const BUSY_REFRESH_MS = 2000;

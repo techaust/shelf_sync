@@ -2,9 +2,10 @@ import { BookOpen, CircleCheck, CircleDot, Download, Info, LoaderCircle, Refresh
 import { Alert } from "../../components/Alert";
 import { helpStore } from "../../components/help/helpModel";
 import { SecretField } from "../../components/SecretField";
+import { T, U } from "../../lib/updatesWording";
 import { checkGithubToken, TOKEN_MAX_LENGTH } from "./forms";
 import type { Phase, UpdatesModel } from "./updatesModel";
-import { A, T, U } from "./wording";
+import { A } from "./wording";
 
 export interface UpdatesActions {
   onCheck: () => void;
