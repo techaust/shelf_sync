@@ -18,9 +18,15 @@ const SPECIFIERS = [
   /^\s*(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']/gm, // import … from "…", export … from "…"
   /^\s*import\s*["']([^"']+)["']/gm, // import "…" (side effect)
   /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g, // import("…")
+  /\bvi\.(?:mock|doMock)\(\s*["']([^"']+)["']/g, // vi.mock("…"), vi.doMock("…")
 ];
+// Not seen (none in src/ today): a template-literal import(`…`) and a non-raw import.meta.glob.
 // ".d.ts": the API's types come from "./schema" (schema.d.ts).
 const CODE_SUFFIXES = ["", ".ts", ".tsx", ".d.ts", "/index.ts", "/index.tsx"];
+// TypeScript's bundler resolution lets "./x.js" name x.ts or x.tsx (and "./x.jsx" name x.tsx), so they resolve too.
+const suffixesFor = (extension: string | undefined) =>
+  extension === ".jsx" ? [".tsx"] : extension === ".js" ? [".ts", ".tsx"] : CODE_SUFFIXES;
+const ASSET = /\.(?:css|svg|json|png|jpe?g|webp|gif|ico|woff2?)$/i;
 
 interface Imports {
   edges: string[];
@@ -32,10 +38,14 @@ function importsOf(file: string, text: string): Imports {
   const found: Imports = { edges: [], unresolved: [] };
   for (const pattern of SPECIFIERS) {
     for (const [, specifier = ""] of text.matchAll(pattern)) {
-      // Packages aren't layers; a "?raw" import reads a file as text, and a CSS, SVG or JSON file holds no imports.
-      if (!specifier.startsWith(".") || specifier.includes("?") || /\.(?!tsx?$)\w+$/.test(specifier)) continue;
-      const base = resolveFrom(dir, specifier);
-      const target = CODE_SUFFIXES.map((suffix) => base + suffix).find((path) => sources.has(path));
+      // Packages aren't layers; a "?raw" import reads a file as text, and an asset (CSS, SVG, JSON…) holds no imports.
+      // Any other specifier must resolve to a source, or the self-check below fails.
+      if (!specifier.startsWith(".") || specifier.includes("?") || ASSET.test(specifier)) continue;
+      const extension = /\.jsx?$/.exec(specifier)?.[0];
+      const base = resolveFrom(dir, extension ? specifier.slice(0, -extension.length) : specifier);
+      const target = suffixesFor(extension)
+        .map((suffix) => base + suffix)
+        .find((path) => sources.has(path));
       if (target) found.edges.push(target);
       else found.unresolved.push(`${file}: "${specifier}"`);
     }
@@ -68,9 +78,10 @@ function pathToScreens(start: string): string | null {
 }
 
 describe("the import graph", () => {
-  it("finds static, re-exported and dynamic imports, and every relative import resolves", () => {
+  it("finds static, multi-line and dynamic imports, and every relative import resolves", () => {
     // If the extractor found nothing, the layer checks below would pass on any tree.
     expect(graph.get("main.tsx")?.edges).toContain("lib/switchStore.ts");
+    expect(graph.get("screens/settings/BackupPage.tsx")?.edges).toContain("screens/settings/backupModel.ts");
     expect(graph.get("screens/settings/Settings.tsx")?.edges).toContain("screens/settings/UpdatesPage.tsx");
     expect(graph.get("components/help/HelpPanel.tsx")?.edges).toContain("components/help/guides.tsx");
     expect(graph.get("api/settings.ts")?.edges).toContain("api/schema.d.ts");
