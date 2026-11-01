@@ -168,6 +168,37 @@ they cover changed behaviour for a given throwaway name.
 2026-10-28 follow-up row, which this task closes for the Run value and AUMID only (the brief's out-of-scope list stays
 open).
 
+### Review fixes
+_(builder, claude-opus-5-5/high, 2026-11-02; worktree `.claude/worktrees/agent-a9fe4ae75ffb82596`, branch
+`worktree-agent-a9fe4ae75ffb82596`, from aab5186; commit 468b636)_ No skill loaded: the fixes touch only the standard
+library (argparse, os, re) and PowerShell, so Context7 has nothing to add; `code-review` and `security-review` are the
+reviewer's.
+
+| Finding | Fix | Test |
+|---|---|---|
+| E2: `names.py`'s docstring shows `--suffix -rehearsal` | Now `--suffix=-rehearsal` | (docstring) |
+| E3: a dangling link named `build-suffix.txt` reads as "no file" (real names) | `read_build_suffix`: a FileNotFoundError on a path that `os.path.lexists` sees reads as None, never `""` | `test_a_dangling_link_named_like_the_suffix_file_never_yields_the_real_names` (a real symlink; skipped here, this account can't make them), `test_a_suffix_file_that_is_there_but_not_found_on_open_…` (the same branch on any account), `test_a_dangling_junction_…` (Windows; on this PC opening a dangling junction raised PermissionError, already None) |
+| E4: the names probe doesn't prove `shelfsync` came from the built or installed folder | `smoke.NAMES_PROBE` exits 1, printing no names, unless `aumid`, `autostart` and `names` sit under `sys.prefix` (realpath and normcase on both sides); the identical copy in `test-installer.ps1` now also requires `$LASTEXITCODE -eq 0`. Single quotes only, no `$` or backtick | `test_the_smoke_probe_fails_when_shelfsync_isnt_the_folders_own`, `test_the_smoke_probe_can_be_passed_inside_a_double_quoted_powershell_string`, the existing probe test (now with `sys.prefix` set to the copy's folder); `test_release_files` keeps both copies identical and checks the exit-code test |
+| R1: `-Tag`/`--tag` with `-Suffix`/`--suffix` makes a release-shaped zip with a stamp | `release-build.ps1` throws before anything else; `build.py` calls `parser.error` (exit 2) before `build()` | `test_build_py_refuses_a_tagged_build_with_a_suffix` (and a tag alone still builds), `test_a_tagged_release_build_with_a_suffix_is_refused_before_anything_is_made` (text, before `$repo =`) |
+| R2a: argparse's handling of `--suffix -rehearsal` stated as fact | Pinned: `build.main([..., "--suffix", "-rehearsal"])` raises SystemExit 2 before `build()`; build.py's docstring, the `release-build.ps1` comment and a test docstring now point at that test | `test_build_py_refuses_the_suffix_as_a_separate_argument`, `test_build_py_takes_the_suffix_in_one_argument` |
+| R2b: the PowerShell `$` vs `\z` comment asserts .NET behaviour | Reworded to intent: "ends in `\z` so that nothing may follow the suffix, not even a line end" (and the same in `test_release_files`' docstring); 04-A untouched | (comments) |
+| R3: `aumid.AUMID` and `autostart.VALUE_NAME` copy `names.*` at import | One comment at each: the module copy is what callers and tests use (patch it, not `names.*`) | (comments) |
+
+**Checks:** full `uv run ruff check` ("All checks passed!") and `ruff format --check` ("167 files already
+formatted"), once, through the queue (`.logs/t6fix-ruff-check.log`, `.logs/t6fix-ruff-format.log`); `uv run mypy` and `uv run mypy --platform linux`: Success, 74 files
+(`.logs/t6fix-mypy.log`, `.logs/t6fix-mypy-linux.log`); full `uv run pytest` through the queue: 2464 passed, 18
+skipped, 52 deselected, exit 0, coverage 93 % (`.logs/t6fix-pytest.log`); `uv run bandit -r backend`: exit 0, no
+issues. Windows PowerShell 5.1: both .ps1 files parse with no errors; `release-build.ps1 -Tag v0.1.0 -Suffix
+-rehearsal` stops with the new message (exit 1) and makes no work folder; the probe line, run by 5.1 against the
+existing `build\ShelfSync-0.1.0` (an older build without `names.py`, so the probe minus `names`), prints `ShelfSync`
+and `TecHaust.ShelfSync` (exit 0), and the same probe run from the system Python with that folder on `sys.path` exits
+1 with the "imported from outside" message. That built folder's `sys.prefix` is the folder itself.
+
+**Not verified:** the release build (the lead runs it): only it runs the new probe against a folder that has
+`names.py`, and against the installed `current\python.exe` (which may sit behind the `current` junction; realpath on
+both sides is meant to cover that). PowerShell 7 isn't installed here, so the probe quoting was checked on 5.1 only.
+The real-symlink test of E3 is skipped on this account (it runs where symlinks can be made, e.g. CI on Linux).
+
 ## 5. Review
 
 ## 6. Integration notes
