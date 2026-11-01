@@ -1,14 +1,19 @@
 import {
   BookOpen,
   CircleCheck,
+  CircleDashed,
+  CircleDot,
   HardDrive,
+  Info,
   KeyRound,
   LoaderCircle,
+  type LucideIcon,
   Plug,
   Plus,
   RefreshCw,
   Save,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import type { FormEvent, ReactNode, RefObject } from "react";
 import type { S3Slot } from "../../api/storage";
@@ -26,6 +31,7 @@ import {
   type StorageForm,
   TEMPLATE_MAX,
 } from "./storageModel";
+import type { StorageTestPlan, StorageTestView, TestStepLine, TestTone } from "./storageTestModel";
 import { ST } from "./storageWording";
 
 export interface Line {
@@ -415,20 +421,130 @@ export function KeysCard({ children }: { children: ReactNode }) {
   );
 }
 
-/** Where the Test button will be (m2.7): what is and isn't checked yet, and the S3 access policy guide. */
-export function StorageTestNote({ lines, onGuide }: { lines: string[]; onGuide: () => void }) {
+// ---------- the Test (SET-02, ERR-03) ----------
+
+const LINE_ICON: Record<TestTone, LucideIcon> = {
+  success: CircleCheck,
+  danger: TriangleAlert,
+  info: Info,
+  neutral: CircleDashed,
+};
+const STEP_ICON: Record<TestStepLine["state"], LucideIcon> = {
+  passed: CircleCheck,
+  failed: TriangleAlert,
+  not_run: CircleDot,
+};
+const STEP_CLASS: Record<TestStepLine["state"], string> = { passed: "is-ok", failed: "is-bad", not_run: "is-skip" };
+const TEST_ID = "storage-test";
+
+/** The mockup's s3Steps(): the three steps in order, each with the key it used and its word. Status is never colour
+ *  alone: each state has its own icon and its word. The rail between the marks turns dashed below a step that didn't
+ *  pass, so where the chain broke reads at a glance. */
+function TestSteps({ steps }: { steps: TestStepLine[] }) {
   return (
-    <div className="storage-note">
-      <Plug className="icon storage-note__icon" aria-hidden="true" />
-      <div className="storage-note__text">
-        {lines.map((line) => (
-          <p key={line}>{line}</p>
-        ))}
+    <ol className="test-steps" aria-label={ST.stepsLabel}>
+      {steps.map((step) => {
+        const Icon = STEP_ICON[step.state];
+        return (
+          <li key={step.step} className={STEP_CLASS[step.state]}>
+            <Icon className="icon test-steps__mark" aria-hidden="true" />
+            <span className="test-steps__what">
+              {step.what} <span className="muted">{step.key}</span>
+            </span>
+            <strong className="test-steps__word">{step.word}</strong>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * The Test card (UI-SET Storage; the mockup's test-row): Test connection, its one line (or why it can't test yet),
+ * the S3 access policy guide, then the three steps, the left-behind warning and the cost hint. The button stays in
+ * the tab order when it can't test (aria-disabled, with the reason tied to it), so the keyboard finds out why.
+ */
+export function StorageTestCard({
+  plan,
+  running,
+  view,
+  onTest,
+  onGuide,
+}: {
+  plan: StorageTestPlan;
+  running: boolean;
+  view: StorageTestView;
+  onTest: () => void;
+  onGuide: () => void;
+}) {
+  const blocked = !plan.can;
+  const line = plan.can ? view.line : { tone: "neutral" as const, text: plan.why };
+  const note = plan.can ? plan.note : null;
+  const Icon = running ? LoaderCircle : LINE_ICON[line.tone];
+  const described = [blocked ? `${TEST_ID}-line` : "", note ? `${TEST_ID}-note` : ""].filter(Boolean).join(" ");
+  const [before, folder, after] = ST.testHint;
+  const [lead, tail] = ST.leftBehind;
+  return (
+    <section className="card storage-test" aria-labelledby={`${TEST_ID}-button`}>
+      <div className="test-row">
+        <button
+          id={`${TEST_ID}-button`}
+          type="button"
+          className="btn"
+          aria-disabled={blocked || running || undefined}
+          aria-busy={running || undefined}
+          aria-describedby={described || undefined}
+          onClick={() => {
+            if (!blocked && !running) onTest();
+          }}
+        >
+          {running ? (
+            <LoaderCircle className="icon is-spinning" aria-hidden="true" />
+          ) : (
+            <Plug className="icon" aria-hidden="true" />
+          )}
+          {ST.test}
+        </button>
+        <div className="test-row__result" role="status">
+          <p className={`test-result is-${running ? "running" : line.tone}`} id={`${TEST_ID}-line`}>
+            <Icon className={`icon${running ? " is-spinning" : ""}`} aria-hidden="true" />
+            <span>
+              <span className="num">{line.text}</span>
+              {!blocked && view.when ? <span className="test-result__when num">{view.when}</span> : null}
+            </span>
+          </p>
+        </div>
+        <button type="button" className="btn is-ghost" onClick={onGuide}>
+          <BookOpen className="icon" aria-hidden="true" />
+          {ST.guide}
+        </button>
+        {note ? (
+          <p className="storage-test__note" id={`${TEST_ID}-note`}>
+            <Info className="icon" aria-hidden="true" />
+            <span>{note}</span>
+          </p>
+        ) : null}
+        {!blocked && view.steps.length > 0 ? <TestSteps steps={view.steps} /> : null}
+        {!blocked && view.leftBehind ? (
+          <div className="storage-test__left">
+            <Alert
+              tone="warning"
+              title={
+                <>
+                  {lead}
+                  <span className="mono file-name">{view.leftBehind}</span>
+                  {tail}
+                </>
+              }
+            />
+          </div>
+        ) : null}
+        <p className="field__hint test-row__hint">
+          {before}
+          <span className="mono">{folder}</span>
+          {after}
+        </p>
       </div>
-      <button type="button" className="btn is-ghost" onClick={onGuide}>
-        <BookOpen className="icon" aria-hidden="true" />
-        {ST.guide}
-      </button>
-    </div>
+    </section>
   );
 }

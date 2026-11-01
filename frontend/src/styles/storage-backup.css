@@ -61,33 +61,95 @@
     margin: 0;
   }
 
-  /* where the Test button will be (m2.7): what isn't checked yet, and the guide */
-  .storage-note {
+  /* ---------- the Test (SET-02, ERR-03): the stores' test row (stores.css) as a card of its own, since it tests
+     both cards above it; then the mockup's three steps (app-b.css .test-steps) and its cost hint ---------- */
+  .storage-test .test-row {
+    border-top: 0;
+  }
+  .test-result.is-info .icon {
+    color: var(--color-info);
+  }
+  /* the form above has unsaved changes: the test still uses what is saved, and says so under the button */
+  .storage-test__note {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3) var(--space-4);
-    padding: var(--space-4) var(--space-5);
-    border: 1px dashed var(--color-border-control);
-    border-radius: var(--radius-md);
-  }
-  .storage-note__icon {
-    flex: none;
-    color: var(--color-text-muted);
-  }
-  .storage-note__text {
-    display: grid;
-    gap: var(--space-1);
-    flex: 1 1 24rem;
-    min-width: 0;
+    flex-basis: 100%;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
     font-size: var(--text-sm);
     line-height: var(--text-sm--line-height);
   }
-  .storage-note__text p {
-    margin: 0;
+  .storage-test__note .icon {
+    margin-top: calc((var(--text-sm--line-height) * 1em - var(--space-4)) / 2);
+    color: var(--color-info);
   }
-  .storage-note__text p + p {
+  /* a sequence (write, then read, then delete), so it is an ordered list with a rail between the marks: solid below
+     a step that passed, dashed below one that failed or didn't run. The icon and the word carry the state; the rail
+     only shows where the chain broke. */
+  .test-steps {
+    --step-mark-top: calc((var(--text-sm--line-height) * 1em - var(--space-4)) / 2);
+    --step-gap: var(--space-3);
+    display: grid;
+    flex-basis: 100%;
+    gap: var(--step-gap);
+    max-width: 36rem;
+    margin: 0;
+    padding: var(--space-1) 0;
+    list-style: none;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+  .test-steps li {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--space-4) minmax(0, 1fr) auto;
+    gap: var(--space-1) var(--space-3);
+    align-items: start;
+  }
+  .test-steps li:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--space-4) / 2);
+    top: calc(var(--step-mark-top) + var(--space-4) + var(--space-1) / 2);
+    bottom: calc(var(--space-1) / 2 - var(--step-gap) - var(--step-mark-top));
+    border-left: 1px solid var(--color-border-control);
+    transform: translateX(-50%);
+  }
+  .test-steps li.is-bad::before,
+  .test-steps li.is-skip::before {
+    border-left-style: dashed;
+  }
+  .test-steps__mark {
+    margin-top: var(--step-mark-top);
+  }
+  .test-steps__word {
+    font-weight: 600;
+    text-align: end;
+    overflow-wrap: anywhere;
+  }
+  .test-steps .is-ok .test-steps__mark {
+    color: var(--color-success);
+  }
+  .test-steps .is-bad,
+  .test-steps .is-bad .muted,
+  .test-steps .is-bad .test-steps__mark {
+    color: var(--color-danger);
+  }
+  .test-steps .is-skip .test-steps__mark,
+  .test-steps .is-skip .test-steps__word {
     color: var(--color-text-muted);
+  }
+  .test-steps .is-skip .test-steps__word {
+    font-weight: 500;
+  }
+  .storage-test__left {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+  .test-row__hint {
+    flex-basis: 100%;
+    max-width: 72ch;
+    margin: 0;
   }
 
   /* ---------- Backup: the daily backups' facts, read like a row of instruments ---------- */

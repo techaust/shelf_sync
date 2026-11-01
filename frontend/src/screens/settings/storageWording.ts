@@ -4,9 +4,56 @@
 // - "13 M1b.4": the row "Settings screens (M1b.4)" (the save, refusal and no-answer patterns);
 // - "mockup": the approved P3.4 mockup (docs/05-design-system-appendix/mockup/js/screens-b.js, storagePage());
 // - "brief": docs/runs/m2.5b-storage-backup-screens.md section 1;
-// - "proposed (m2.5b)": new in this task, listed in that run file's section 3 for the lead.
+// - "proposed (m2.5b)": new in this task, listed in that run file's section 3 for the lead;
+// - "13 Test": the row "Storage Test (M2.7)", and section 6's "Storage Test, and the wizard's Test step" (the hint);
+// - "proposed (T2)": new with the Test button, listed in docs/runs/t2-storage-test-screen.md section 4 for the lead.
 
-import type { S3Slot } from "../../api/storage";
+import type { S3Slot, StorageTestStep } from "../../api/storage";
+
+type Step = StorageTestStep["step"];
+type Reason = NonNullable<StorageTestStep["reason"]>;
+
+/** What a reason sentence may name: the failing step's key ("read and write" / "read-only"), the region the test ran
+ *  against, and the step's S3 error code and HTTP status (either can be null). */
+export interface ReasonFacts {
+  key: string;
+  region: string;
+  code: string | null;
+  status: number | null;
+}
+
+/** 13 Test: the reason after "Failed at the <step> step: ". The forms without a code or a status are proposed (T2)
+ *  where 13 has none (`refused` with no status, `server_error` with no status). */
+const REASONS: Record<Reason, (facts: ReasonFacts) => string> = {
+  access_denied: ({ key }) => `the ${key} key got AccessDenied.`,
+  key_unknown: ({ key }) => `the ${key} key ID isn't known to the storage service (InvalidAccessKeyId).`,
+  secret_wrong: ({ key }) => `the ${key} secret key doesn't match its key ID (SignatureDoesNotMatch).`,
+  clock_wrong: () =>
+    "this PC's clock is too far off (RequestTimeTooSkewed). Turn on Set time automatically in Windows, then test again.",
+  bucket_missing: () => "the bucket doesn't exist (NoSuchBucket). Check its name and region.",
+  wrong_region: ({ region, code }) =>
+    code
+      ? `the bucket isn't in ${region} (${code}). Check the region.`
+      : `the bucket isn't in ${region}. Check the region.`,
+  not_found: ({ code }) =>
+    code ? `the test file wasn't there when read back (${code}).` : "the test file wasn't there when read back.",
+  mismatch: () => "the file read back wasn't the one written.",
+  confirm_forbidden: () =>
+    "the read and write key can't check that the file is gone (HTTP 403). Its policy needs s3:ListBucket on the bucket.",
+  still_there: () => "the test file was still there after it was deleted.",
+  refused: ({ code, status }) => {
+    const said = [code, status === null ? null : `HTTP ${status}`].filter(Boolean).join(", ");
+    return said ? `the storage service refused it (${said}).` : "the storage service refused it.";
+  },
+  server_error: ({ status }) =>
+    status === null
+      ? "the storage service had an error. Try again in a few minutes."
+      : `the storage service had an error (HTTP ${status}). Try again in a few minutes.`,
+  unreachable: () => "couldn't reach the storage service. Check the endpoint and your internet connection.",
+  timeout: () => "the storage service took too long to answer.",
+  tls_error: () => "the storage service's security certificate wasn't accepted.",
+  bad_response: () => "the storage service's answer wasn't what ShelfSync expected.",
+};
 
 export const ST = {
   // the card
@@ -83,10 +130,39 @@ export const ST = {
     ro: "Files can't be read back from the bucket until a new read-only pair is saved here.",
   } satisfies Record<S3Slot, string>,
 
-  // where the Test button will be (m2.7)
-  // brief (m2.0, proposed): "Testing the bucket arrives with the S3 update. Your settings and keys are saved." The
-  // second sentence reads as a claim when nothing is saved yet, so this task proposes the line below instead.
-  testLater: "Testing the bucket arrives with the S3 update. Until then, settings and keys are saved without a test.",
-  testNeeds: "Region and bucket must be filled in before the bucket can be tested.", // 13
+  // the Test (m2.7; T2)
+  test: "Test connection", // mockup
+  testing: "Testing the bucket. This can take up to a minute.", // proposed (T2), after 13 M2.5a's store line
+  notTested: "Not tested yet.", // 13 M2.5a (shared with the stores)
+  testedAt: (when: string) => `Tested ${when}.`, // 13 M2.5a (shared with the stores)
+  passed: (ms: string) => `Passed in ${ms} ms.`, // 13 Test
+  failedAt: (step: Step, reason: string) => `Failed at the ${step} step: ${reason}`, // 13 Test
+  failedAtNoReason: (step: Step) => `Failed at the ${step} step.`, // proposed (T2): a failed step with no reason
+  failedUnknown: "The test failed.", // 13 M2.5a: a failed answer with no failed step
+  reason: (reason: Reason, facts: ReasonFacts) => REASONS[reason](facts),
+  /** The key pair's word inside a reason or a step: "the read-only key got AccessDenied." (13 Test) */
+  keyWord: { rw: "read and write", ro: "read-only" } satisfies Record<S3Slot, string>,
+  /** mockup s3Steps(): each step and the key it uses ("Write a test file with the read and write key"). */
+  stepsLabel: "Test steps", // mockup
+  stepWhat: { write: "Write a test file", read: "Read it back", delete: "Delete it" } satisfies Record<Step, string>,
+  stepKey: (key: string) => `with the ${key} key`, // mockup
+  stepPassed: "Passed", // 13 Test
+  stepFailed: (said: string | null) => (said ? `Failed: ${said}` : "Failed"), // 13 Test; "Failed" alone proposed (T2)
+  stepNotRun: "Not run", // 13 Test
+  /** 13 Test, left behind: the key is shown in IBM Plex Mono, so the line is in two parts around it. */
+  leftBehind: ["The test file ", " may still be in the bucket. You can delete it in the S3 console."] as const,
+  // why the button can't test yet (13 Test, the API's own words), and what it tests when the form has changes
+  storageNotSet: "Region and bucket must be filled in and saved before the bucket can be tested.", // 13 Test
+  keysMissing: "Save both key pairs, read and write and read-only, before testing.", // 13 Test
+  testBusy: "A test of the bucket is already running.", // 13 Test
+  unsaved: "The test uses the saved settings. Save your changes to test them.", // proposed (T2)
+  testRefused: (status: number) => `ShelfSync refused the test (HTTP ${status}).`, // 13 M2.5a pattern (stores)
+  testNoAnswer: "ShelfSync didn't answer, so the test may not have finished. Test again to check.", // proposed (T2)
+  /** 13 section 6: "shelfsync-test/" is shown in IBM Plex Mono, so the hint is in three parts. */
+  testHint: [
+    "ShelfSync writes a tiny test file under ",
+    "shelfsync-test/",
+    " with the read and write key, reads it back with the read-only key, then deletes it: about 4 small S3 requests, a tiny AWS charge.",
+  ] as const,
   guide: "S3 access policy guide", // mockup
 };
