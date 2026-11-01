@@ -15,7 +15,9 @@ from shelfsync.secure.redact import clear_secrets
 
 
 class OutboundNetworkBlocked(AssertionError):
-    """A test reached for a non-loopback address. Not an OSError on purpose: code under test can't swallow it."""
+    """A test reached for a non-loopback address. Not an OSError, so code that catches network errors doesn't catch it;
+    but code that catches every exception can (botocore turns anything raised while sending into `HTTPClientError`).
+    So each blocked attempt is also recorded, and the fixture fails the test at its end if the record isn't empty."""
 
 
 def _is_loopback(host: Any) -> bool:
@@ -30,14 +32,18 @@ def _is_loopback(host: Any) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make any connection or name lookup for a non-loopback address fail the test."""
+def no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Make any connection or name lookup for a non-loopback address fail the test, even if the code under test
+    swallowed the error: the yielded record must be empty at the end. A test that triggers a blocked attempt on purpose
+    requests this fixture and clears the record."""
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
     real_getaddrinfo = socket.getaddrinfo
+    blocked: list[str] = []
 
     def guard(address: Any) -> None:
         if isinstance(address, tuple) and not _is_loopback(address[0]):
+            blocked.append(f"connect {address[0]!r}")
             raise OutboundNetworkBlocked(f"outbound connection to {address[0]!r} blocked (NFR-5)")
 
     def connect(self: socket.socket, address: Any) -> None:
@@ -50,12 +56,15 @@ def no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
         if not _is_loopback(host):
+            blocked.append(f"lookup {host!r}")
             raise OutboundNetworkBlocked(f"name lookup for {host!r} blocked (NFR-5)")
         return real_getaddrinfo(host, *args, **kwargs)
 
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    yield blocked
+    assert blocked == [], f"outbound attempts were blocked (NFR-5), even if the code under test hid them: {blocked}"
 
 
 @pytest.fixture(autouse=True)

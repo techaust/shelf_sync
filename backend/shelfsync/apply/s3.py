@@ -134,15 +134,26 @@ def _never_a_file() -> str:
 
 
 def _isolated_session_vars() -> dict[str, tuple[Any, Any, Any, Any]]:
-    """botocore session variables `(config file key, env vars, default, conversion)` that read nothing from the
-    environment or `~/.aws`: no profile, and config and credentials files that don't exist."""
-    nowhere = _never_a_file()
-    return {
-        "profile": (None, None, None, None),
-        "config_file": (None, None, nowhere, None),
-        "credentials_file": (None, None, nowhere, None),
-        "data_path": (None, None, None, None),
+    """Every botocore session variable `(config file key, env vars, default, conversion)` with its environment and
+    config-file slots emptied (the defaults kept), so none is read from the environment or `~/.aws`; no profile, no
+    model folder, and config and credentials files that don't exist. Built from botocore's own table, so a variable a
+    later botocore adds is closed too."""
+    from botocore.configprovider import BOTOCORE_DEFAUT_SESSION_VARIABLES
+
+    variables: dict[str, tuple[Any, Any, Any, Any]] = {
+        name: (None, None, default, convert)
+        for name, (_, _, default, convert) in BOTOCORE_DEFAUT_SESSION_VARIABLES.items()
     }
+    nowhere = _never_a_file()
+    variables.update(
+        {
+            "profile": (None, None, None, None),
+            "config_file": (None, None, nowhere, None),
+            "credentials_file": (None, None, nowhere, None),
+            "data_path": (None, None, None, None),
+        }
+    )
+    return variables
 
 
 def client_config(target: S3Target) -> Config:
@@ -163,7 +174,14 @@ def client_config(target: S3Target) -> Config:
         # 1.36 made checksums the default; some S3-compatible servers reject them (V10). AWS gets the new default.
         request_checksum_calculation="when_required" if custom else "when_supported",
         response_checksum_validation="when_required" if custom else "when_supported",
-        s3={"addressing_style": "path" if custom else "auto"},
+        # The `s3` section is also read from AWS_S3_* variables: every key that changes where a request goes is set.
+        s3={
+            "addressing_style": "path" if custom else "auto",
+            "us_east_1_regional_endpoint": "regional",
+            "use_arn_region": False,
+            "s3_disable_multiregion_access_points": True,
+            "use_accelerate_endpoint": False,
+        },
     )
 
 
@@ -206,6 +224,9 @@ class Failure:
     reason: Reason
     aws_code: str | None = None
     http_status: int | None = None
+    # The request may have reached S3 and been carried out (an answer lost on the way back, or a 5xx). Used only
+    # inside the Test, to clean up after a write (L13); never in a response.
+    maybe_sent: bool = False
 
 
 def _client_error_parts(error: Exception) -> tuple[str | None, int | None]:
@@ -233,10 +254,15 @@ def classify(error: BaseException) -> Failure:
         ConnectTimeoutError,
         FlexibleChecksumError,
         HTTPClientError,
+        IncompleteReadError,
         ReadTimeoutError,
+        ResponseStreamingError,
         SSLError,
     )
 
+    # Sent, then the answer was lost: the request may have been carried out. A connect timeout, a refused connection,
+    # a TLS failure and any 4xx mean it never was.
+    lost = isinstance(error, (ReadTimeoutError, ConnectionClosedError, ResponseStreamingError))
     if isinstance(error, ClientError):
         code, status = _client_error_parts(error)
         reason = _CODE_REASONS.get(code) if code is not None else None
@@ -251,15 +277,16 @@ def classify(error: BaseException) -> Failure:
                 reason = "refused"
             else:
                 reason = "bad_response"
-        return Failure(reason, code, status)
+        maybe_sent = status is not None and status >= 500 and code != "SlowDown"
+        return Failure(reason, code, status, maybe_sent)
     if isinstance(error, (ConnectTimeoutError, ReadTimeoutError, TimeoutError)):
-        return Failure("timeout")
+        return Failure("timeout", maybe_sent=lost)
     if isinstance(error, SSLError):
         return Failure("tls_error")
     if isinstance(error, (ConnectionError, ConnectionClosedError, HTTPClientError)):
-        return Failure("unreachable")
-    if isinstance(error, FlexibleChecksumError):
-        return Failure("mismatch")  # the answer's checksum didn't match its bytes
+        return Failure("unreachable", maybe_sent=lost)
+    if isinstance(error, (FlexibleChecksumError, IncompleteReadError)):
+        return Failure("mismatch")  # the bytes read back didn't match the answer's checksum or its length
     return Failure("bad_response")
 
 
@@ -275,10 +302,14 @@ class StepResult:
     reason: Reason | None = None
     aws_code: str | None = None
     http_status: int | None = None
+    maybe_sent: bool = False  # internal (see `Failure`); never in a response
 
 
 def not_run(step: StepName, key_pair: KeyPairName) -> StepResult:
     return StepResult(step, key_pair, "not_run")
+
+
+Cleanup = Literal["confirmed", "failed"]
 
 
 @dataclass(frozen=True)
@@ -286,16 +317,19 @@ class StorageTestOutcome:
     steps: tuple[StepResult, StepResult, StepResult]
     key: str
     latency_ms: int
+    # The test key when the test file may still be in the bucket: the write passed and the delete didn't; a write that
+    # may have reached S3 wasn't confirmed gone (L13); or the time ran out while either was running.
+    left_behind: str | None
+    cleanup: Cleanup | None = None  # after a failed write that may have reached S3 (L13)
 
     @property
     def ok(self) -> bool:
         return all(step.state == "passed" for step in self.steps)
 
-    @property
-    def left_behind(self) -> str | None:
-        """The test key when the write passed and the delete didn't: it may still be in the bucket."""
-        write, _, delete = self.steps
-        return self.key if write.state == "passed" and delete.state != "passed" else None
+
+def _left_after_delete(steps: tuple[StepResult, StepResult, StepResult], key: str) -> str | None:
+    write, _, delete = steps
+    return key if write.state == "passed" and delete.state != "passed" else None
 
 
 @dataclass
@@ -304,26 +338,38 @@ class StorageTestProgress:
 
     key: str = ""
     done: list[StepResult] = field(default_factory=list)
+    cleanup_running: bool = False  # the clean-up after a write that may have reached S3 (L13)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def record(self, result: StepResult) -> None:
         with self._lock:
             self.done.append(result)
 
+    def start_cleanup(self) -> None:
+        with self._lock:
+            self.cleanup_running = True
+
     def overrun(self, latency_ms: int) -> StorageTestOutcome:
         """The answer when the Test ran out of time: the steps done stand, the running one is `timeout`, the rest
-        `not_run`."""
+        `not_run`. While the write, or the clean-up after a failed one, is running, steps 2 and 3 are `not_run` and the
+        key is named: the write may still land."""
         with self._lock:
             done = list(self.done)
-        steps: list[StepResult] = []
+            cleanup_running = self.cleanup_running
+        if not done or cleanup_running:
+            write = done[0] if done else StepResult("write", "rw", "failed", None, "timeout")
+            steps = (write, not_run("read", "ro"), not_run("delete", "rw"))
+            return StorageTestOutcome(steps, self.key, latency_ms, self.key)
+        listed: list[StepResult] = []
         for index, (step, pair) in enumerate(STEPS):
             if index < len(done):
-                steps.append(done[index])
+                listed.append(done[index])
             elif index == len(done):
-                steps.append(StepResult(step, pair, "failed", None, "timeout"))
+                listed.append(StepResult(step, pair, "failed", None, "timeout"))
             else:
-                steps.append(not_run(step, pair))
-        return StorageTestOutcome((steps[0], steps[1], steps[2]), self.key, latency_ms)
+                listed.append(not_run(step, pair))
+        steps = (listed[0], listed[1], listed[2])
+        return StorageTestOutcome(steps, self.key, latency_ms, _left_after_delete(steps, self.key))
 
 
 def new_test_object(now: datetime) -> tuple[str, bytes]:
@@ -338,10 +384,19 @@ def _elapsed_ms(monotonic: Callable[[], float], start: float) -> int:
 
 
 def _failed(step: StepName, pair: KeyPairName, ms: int, failure: Failure) -> StepResult:
-    return StepResult(step, pair, "failed", ms, failure.reason, failure.aws_code, failure.http_status)
+    return StepResult(
+        step, pair, "failed", ms, failure.reason, failure.aws_code, failure.http_status, failure.maybe_sent
+    )
+
+
+def _only_a_test_key(key: str) -> None:
+    """The Test writes and deletes nothing but its own `shelfsync-test/...` object (APL-07, CAT-04)."""
+    if TEST_KEY.fullmatch(key) is None:
+        raise ValueError("not a test key")
 
 
 def _write(rw: S3Client, bucket: str, key: str, body: bytes) -> None:
+    _only_a_test_key(key)
     md5 = base64.b64encode(hashlib.md5(body, usedforsecurity=False).digest()).decode("ascii")
     rw.put_object(Bucket=bucket, Key=key, Body=body, ContentType=TEST_CONTENT_TYPE, ContentMD5=md5)
 
@@ -351,6 +406,10 @@ def _read(ro: S3Client, bucket: str, key: str, body: bytes) -> Failure | None:
     stream = answer["Body"]
     try:
         got = stream.read(len(body) + 1)  # never more than one byte past what was written
+        if len(got) == len(body):
+            # One more read, which must find the end: only then does botocore check the answer's Content-Length and
+            # its checksum (AWS), so a short or corrupted answer can't pass.
+            got += stream.read(1)
     finally:
         stream.close()
     return None if got == body else Failure("mismatch")
@@ -361,6 +420,7 @@ def _delete(rw: S3Client, bucket: str, key: str) -> Failure | None:
     has `s3:ListBucket` (without it S3 answers 403 for a missing key, V52)."""
     from botocore.exceptions import ClientError
 
+    _only_a_test_key(key)
     rw.delete_object(Bucket=bucket, Key=key)
     try:
         rw.head_object(Bucket=bucket, Key=key)
@@ -400,7 +460,9 @@ def run_storage_test(
     progress: StorageTestProgress | None = None,
 ) -> StorageTestOutcome:
     """The three steps. `abandoned` turns true when the Test is out of time (or the request stopped waiting): the read
-    is then skipped (`timeout`), but a passed write is still deleted. The caller logs the outcome (`log_outcome`)."""
+    is then skipped (`timeout`), but a passed write is still deleted. A failed write that may still have reached S3 is
+    cleaned up the same way (DELETE, then HEAD; L13), while steps 2 and 3 show `not_run`. The caller logs the outcome
+    (`log_outcome`)."""
     progress = progress if progress is not None else StorageTestProgress()
     key, body = new_test_object(now())
     progress.key = key
@@ -416,12 +478,19 @@ def run_storage_test(
     else:
         read_result = _step(lambda: _read(ro, bucket, key, body), "read", "ro", monotonic)
     progress.record(read_result)
+    cleanup: Cleanup | None = None
     if written:  # always, after a passed write, whatever the read did (L2)
         delete_result = _step(lambda: _delete(rw, bucket, key), "delete", "rw", monotonic)
     else:
         delete_result = not_run("delete", "rw")
+        if write_result.maybe_sent:  # the write may have landed: delete it all the same (L13)
+            progress.start_cleanup()
+            confirmed = _step(lambda: _delete(rw, bucket, key), "delete", "rw", monotonic).state == "passed"
+            cleanup = "confirmed" if confirmed else "failed"
     progress.record(delete_result)
-    return StorageTestOutcome((write_result, read_result, delete_result), key, _elapsed_ms(monotonic, start))
+    steps = (write_result, read_result, delete_result)
+    left = _left_after_delete(steps, key) if written else (key if cleanup == "failed" else None)
+    return StorageTestOutcome(steps, key, _elapsed_ms(monotonic, start), left, cleanup)
 
 
 def log_outcome(outcome: StorageTestOutcome, *, late: bool = False) -> None:
@@ -434,6 +503,8 @@ def log_outcome(outcome: StorageTestOutcome, *, late: bool = False) -> None:
         if step.latency_ms is not None:
             text += f" in {step.latency_ms} ms"
         parts.append(text)
+    if outcome.cleanup is not None:
+        parts.append(f"cleanup {outcome.cleanup}")
     left = "; the test file may be left behind" if outcome.left_behind is not None else ""
     when = " (finished after the answer was sent)" if late else ""
     _log.info("Storage test %s%s: %s%s", "passed" if outcome.ok else "failed", when, "; ".join(parts), left)
@@ -454,6 +525,7 @@ __all__ = [
     "TEST_KEY",
     "TEST_LIMIT_SECONDS",
     "TEST_PREFIX",
+    "Cleanup",
     "ClientFactory",
     "Failure",
     "Reason",

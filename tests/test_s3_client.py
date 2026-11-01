@@ -2,8 +2,14 @@
 (`classify`, `safe_aws_code`, the test key). No socket is opened here: every answer comes from `FakeS3` through a
 `before-send` hook, so the requests are recorded exactly as they would leave the PC."""
 
+import contextlib
+import socket
 import subprocess
 import sys
+import zlib
+from base64 import b64encode
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -88,7 +94,8 @@ def client_error(code: str | None, status: int, message: str = "arn:aws:iam::123
     ],
 )
 def test_classify_maps_each_s3_code(code: str, status: int, reason: str) -> None:
-    assert classify(client_error(code, status)) == Failure(reason, code, status)  # type: ignore[arg-type]
+    maybe_sent = status >= 500 and code != "SlowDown"  # L13
+    assert classify(client_error(code, status)) == Failure(reason, code, status, maybe_sent)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -97,7 +104,8 @@ def test_classify_maps_each_s3_code(code: str, status: int, reason: str) -> None
 )
 def test_a_code_botocore_made_up_from_the_status_is_not_kept(status: int, reason: str) -> None:
     """A HEAD answer has no body, so botocore uses the status as the Code: that is not S3's Code."""
-    assert classify(client_error(str(status), status)) == Failure(reason, None, status)  # type: ignore[arg-type]
+    expected = Failure(reason, None, status, status >= 500)  # type: ignore[arg-type]
+    assert classify(client_error(str(status), status)) == expected
 
 
 def test_a_client_error_without_a_status_is_a_bad_response() -> None:
@@ -113,6 +121,7 @@ def test_classify_maps_the_connection_errors() -> None:
         ConnectTimeoutError,
         EndpointConnectionError,
         FlexibleChecksumError,
+        IncompleteReadError,
         ProxyConnectionError,
         ReadTimeoutError,
         ResponseStreamingError,
@@ -121,13 +130,14 @@ def test_classify_maps_the_connection_errors() -> None:
 
     url = "https://s3.example.com/bucket/key"
     assert classify(ConnectTimeoutError(endpoint_url=url)) == Failure("timeout")
-    assert classify(ReadTimeoutError(endpoint_url=url)) == Failure("timeout")
+    assert classify(ReadTimeoutError(endpoint_url=url)) == Failure("timeout", maybe_sent=True)  # sent, answer lost
     assert classify(TimeoutError()) == Failure("timeout")
     assert classify(SSLError(endpoint_url=url, error="bad")) == Failure("tls_error")
     assert classify(EndpointConnectionError(endpoint_url=url)) == Failure("unreachable")
-    assert classify(ConnectionClosedError(endpoint_url=url)) == Failure("unreachable")
+    assert classify(ConnectionClosedError(endpoint_url=url)) == Failure("unreachable", maybe_sent=True)
     assert classify(ProxyConnectionError(proxy_url="x", error="x")) == Failure("unreachable")
-    assert classify(ResponseStreamingError(error="x")) == Failure("unreachable")
+    assert classify(ResponseStreamingError(error="x")) == Failure("unreachable", maybe_sent=True)
+    assert classify(IncompleteReadError(actual_bytes=1, expected_bytes=2)) == Failure("mismatch")
     assert classify(FlexibleChecksumError(error_msg="x")) == Failure("mismatch")
     assert classify(ValueError("anything else")) == Failure("bad_response")
 
@@ -196,7 +206,31 @@ def test_the_config_is_explicit_and_follows_the_endpoint_kind() -> None:
         assert config.defaults_mode == "legacy" and config.signature_version == "s3v4"
     assert aws.request_checksum_calculation == aws.response_checksum_validation == "when_supported"
     assert custom.request_checksum_calculation == custom.response_checksum_validation == "when_required"
-    assert aws.s3 == {"addressing_style": "auto"} and custom.s3 == {"addressing_style": "path"}
+    where = {
+        "us_east_1_regional_endpoint": "regional",
+        "use_arn_region": False,
+        "s3_disable_multiregion_access_points": True,
+        "use_accelerate_endpoint": False,
+    }
+    assert aws.s3 == {"addressing_style": "auto", **where} and custom.s3 == {"addressing_style": "path", **where}
+
+
+def test_every_botocore_session_variable_is_closed() -> None:
+    """C5: built from botocore's own table, so none reads the environment or a config file; the defaults are kept."""
+    from botocore.configprovider import BOTOCORE_DEFAUT_SESSION_VARIABLES
+
+    from shelfsync.apply.s3 import _isolated_session_vars
+
+    variables = _isolated_session_vars()
+    assert set(variables) == set(BOTOCORE_DEFAUT_SESSION_VARIABLES)
+    for name, (config_key, env, default, _) in variables.items():
+        assert (config_key, env) == (None, None), name
+        if name not in ("profile", "config_file", "credentials_file", "data_path"):
+            assert default == BOTOCORE_DEFAUT_SESSION_VARIABLES[name][2], name
+    assert variables["profile"][2] is None and variables["data_path"][2] is None
+    nowhere = variables["config_file"][2]
+    assert nowhere == variables["credentials_file"][2] and not Path(nowhere).exists()
+    assert Path(nowhere).parent.is_file()  # a child of a file: it can never exist
 
 
 def test_a_client_has_no_proxy_and_the_default_trust() -> None:
@@ -253,17 +287,149 @@ def test_aws_addressing_is_recorded_for_plain_and_dotted_buckets(bucket: str, ho
     assert put.headers.get("x-amz-sdk-checksum-algorithm") == "CRC32"
 
 
+def test_a_short_answer_to_the_read_is_a_mismatch() -> None:
+    """C6: a Content-Length larger than the bytes sent; the extra read finds the end, and botocore's length check
+    runs."""
+    fake = FakeS3()
+    fake_default = fake._default
+
+    def short(method: str, url: str, body: bytes) -> tuple[int, bytes, dict[str, str]]:
+        status, payload, headers = fake_default(method, url, body)
+        if method == "GET" and status == 200:
+            headers = {**headers, "Content-Length": str(len(payload) + 5)}
+        return status, payload, headers
+
+    fake._default = short  # type: ignore[method-assign]
+    outcome = run_canned(CUSTOM_TARGET, fake)
+    assert (outcome.steps[1].state, outcome.steps[1].reason) == ("failed", "mismatch")
+    assert outcome.steps[2].state == "passed"  # still deleted
+
+
+def test_a_wrong_checksum_on_aws_is_a_mismatch() -> None:
+    """C6: on AWS the read asks for the checksum (`x-amz-checksum-mode`); a wrong `x-amz-checksum-crc32` is caught only
+    when the body is read to its end, which the extra read makes sure of."""
+    fake = FakeS3()
+    wrong = b64encode(zlib.crc32(b"not the body").to_bytes(4, "big")).decode()
+    fake_default = fake._default
+
+    def corrupt(method: str, url: str, body: bytes) -> tuple[int, bytes, dict[str, str]]:
+        status, payload, headers = fake_default(method, url, body)
+        if method == "GET" and status == 200:
+            headers = {**headers, "x-amz-checksum-crc32": wrong}
+        return status, payload, headers
+
+    fake._default = corrupt  # type: ignore[method-assign]
+    outcome = run_canned(AWS_TARGET, fake)
+    assert fake.sent[1].headers.get("x-amz-checksum-mode") == "ENABLED"
+    assert (outcome.steps[1].state, outcome.steps[1].reason) == ("failed", "mismatch")
+
+
+def test_the_right_checksum_on_aws_passes() -> None:
+    fake = FakeS3()
+    fake_default = fake._default
+
+    def checked(method: str, url: str, body: bytes) -> tuple[int, bytes, dict[str, str]]:
+        status, payload, headers = fake_default(method, url, body)
+        if method == "GET" and status == 200:
+            headers = {**headers, "x-amz-checksum-crc32": b64encode(zlib.crc32(payload).to_bytes(4, "big")).decode()}
+        return status, payload, headers
+
+    fake._default = checked  # type: ignore[method-assign]
+    assert run_canned(AWS_TARGET, fake).ok
+
+
+def test_the_write_and_delete_refuse_any_key_but_a_test_key() -> None:
+    """C7: an `if`, not an `assert`: nothing is sent for another key."""
+    from shelfsync.apply.s3 import _delete, _write
+
+    fake = FakeS3()
+    client = canned_factory(fake)(CUSTOM_TARGET, RW_PAIR)
+    try:
+        for key in ("product-1.0.zip", "shelfsync-test/x.txt", "shelfsync-test/../product-1.0.zip"):
+            with pytest.raises(ValueError, match="not a test key"):
+                _write(client, BUCKET, key, b"x")
+            with pytest.raises(ValueError, match="not a test key"):
+                _delete(client, BUCKET, key)
+    finally:
+        client.close()
+    assert fake.sent == []
+
+
+def test_the_real_factory_against_an_outside_host_is_unreachable_and_recorded(no_outbound_network: list[str]) -> None:
+    """C2: botocore turns the guard's error into `HTTPClientError` (`unreachable`), so only the record shows the
+    attempt. Every other test fails on a non-empty record; this one empties it after checking."""
+    rw, ro = make_client(CUSTOM_TARGET, RW_PAIR), make_client(CUSTOM_TARGET, RO_PAIR)
+    try:
+        outcome = run_storage_test(rw, ro, BUCKET, now=lambda: NOW)
+    finally:
+        rw.close()
+        ro.close()
+    assert (outcome.steps[0].state, outcome.steps[0].reason) == ("failed", "unreachable")
+    assert no_outbound_network and all("s3.example.com" in item for item in no_outbound_network)
+    no_outbound_network.clear()
+
+
 # ---- isolation from the environment (L9) -----------------------------------------------------------------------------
 
 
-def hostile_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@dataclass
+class Hostile:
+    csm: socket.socket  # a UDP listener on 127.0.0.1 where AWS_CSM_* would send client-side monitoring datagrams
+
+    def csm_datagrams(self) -> list[bytes]:
+        got: list[bytes] = []
+        self.csm.setblocking(False)
+        with contextlib.suppress(BlockingIOError, OSError):
+            while True:
+                got.append(self.csm.recv(65535))
+        return got
+
+
+@pytest.fixture
+def csm_listener() -> Iterator[socket.socket]:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        yield sock
+
+
+def junk_s3_and_session_variables(monkeypatch: pytest.MonkeyPatch, csm: socket.socket) -> None:
+    """C5: the `s3` section's AWS_S3_* variables and other session variables set to junk, and client-side monitoring
+    turned on towards a local UDP listener (it would carry the access key ID)."""
+    for name, value in {
+        "AWS_S3_US_EAST_1_REGIONAL_ENDPOINT": "junk",
+        "AWS_S3_USE_ARN_REGION": "junk",
+        "AWS_S3_DISABLE_MULTIREGION_ACCESS_POINTS": "junk",
+        "AWS_S3_DISABLE_EXPRESS_SESSION_AUTH": "junk",
+        "AWS_CSM_ENABLED": "true",
+        "AWS_CSM_HOST": "127.0.0.1",
+        "AWS_CSM_PORT": str(csm.getsockname()[1]),
+        "AWS_CSM_CLIENT_ID": "evil",
+        "AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES": "junk",
+        "AWS_DISABLE_REQUEST_COMPRESSION": "junk",
+        "AWS_ACCOUNT_ID_ENDPOINT_MODE": "junk",
+        "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "false",
+        "AWS_METADATA_SERVICE_TIMEOUT": "junk",
+        "AWS_METADATA_SERVICE_NUM_ATTEMPTS": "junk",
+        "AWS_SIGV4A_SIGNING_REGION_SET": "junk",
+        "AWS_AUTH_SCHEME_PREFERENCE": "junk",
+        "AWS_STS_REGIONAL_ENDPOINTS": "junk",
+        "AWS_ENDPOINT_DISCOVERY_ENABLED": "junk",
+        "AWS_DISABLE_HOST_PREFIX_INJECTION": "junk",
+        "AWS_PARAMETER_VALIDATION": "junk",
+        "AWS_TCP_KEEPALIVE": "junk",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
+def hostile_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, csm: socket.socket) -> Hostile:
     config = tmp_path / "config"
     config.write_text(
         "[default]\nregion = eu-west-3\nendpoint_url = https://evil-config.example\nretry_mode = adaptive\n"
         "max_attempts = 9\nrequest_checksum_calculation = when_supported\nca_bundle = "
         + str(tmp_path / "ca.pem")
         + "\n"
-        "s3 =\n  addressing_style = virtual\n\n[profile missing-not]\nregion = eu-west-1\n",
+        "s3 =\n  addressing_style = virtual\n  use_accelerate_endpoint = true\n  us_east_1_regional_endpoint = legacy\n"
+        "\n[profile missing-not]\nregion = eu-west-1\n",
         encoding="utf-8",
     )
     (tmp_path / "ca.pem").write_text("not a certificate", encoding="utf-8")
@@ -306,42 +472,56 @@ def hostile_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
         "AWS_DEFAULT_REGION": "eu-west-3",
     }.items():
         monkeypatch.setenv(name, value)
+    junk_s3_and_session_variables(monkeypatch, csm)
+    return Hostile(csm)
 
 
-@pytest.mark.parametrize("target", [CUSTOM_TARGET, AWS_TARGET], ids=["custom", "aws"])
+US_EAST_1_TARGET = S3Target(None, "us-east-1", BUCKET)
+
+
+@pytest.mark.parametrize(
+    ("target", "host"),
+    [
+        (CUSTOM_TARGET, "s3.example.com"),
+        (AWS_TARGET, f"{BUCKET}.s3.{REGION}.amazonaws.com"),
+        # regional, never the global `s3.amazonaws.com` that `us_east_1_regional_endpoint = legacy` would give
+        (US_EAST_1_TARGET, f"{BUCKET}.s3.us-east-1.amazonaws.com"),
+    ],
+    ids=["custom", "aws", "aws-us-east-1"],
+)
 def test_a_hostile_environment_changes_nothing(
-    target: S3Target, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    target: S3Target, host: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, csm_listener: socket.socket
 ) -> None:
-    hostile_environment(monkeypatch, tmp_path)
+    hostile = hostile_environment(monkeypatch, tmp_path, csm_listener)
     fake = FakeS3()
     client: Any = canned_factory(fake)(target, RW_PAIR)
     try:
         session = client._endpoint.http_session
         assert session._proxy_config._proxies == {}  # no proxy from HTTPS_PROXY or Windows
         assert session._verify is True  # not AWS_CA_BUNDLE, REQUESTS_CA_BUNDLE or the config file's ca_bundle
-        assert client.meta.region_name == REGION
+        assert client.meta.region_name == target.region
     finally:
         client.close()
     outcome = run_canned(target, fake)
     assert outcome.ok
-    expected_host = "s3.example.com" if target.endpoint else f"{BUCKET}.s3.{REGION}.amazonaws.com"
     for sent in fake.sent:
-        assert urlsplit(sent.url).netloc == expected_host  # no fips, dualstack, env or config endpoint
+        assert urlsplit(sent.url).netloc == host  # no fips, dualstack, accelerate, env or config endpoint
         assert "x-amz-security-token" not in {name.lower() for name in sent.headers}
         assert "AKIAEVIL" not in sent.headers["Authorization"]
-        assert f"/{REGION}/s3/aws4_request" in sent.headers["Authorization"]
+        assert f"/{target.region}/s3/aws4_request" in sent.headers["Authorization"]
     if target.endpoint:
         assert not any(name.lower().startswith("x-amz-sdk-checksum") for name in fake.sent[0].headers)
+    assert hostile.csm_datagrams() == []  # no client-side monitoring
 
 
 def test_the_hostile_environment_does_break_a_client_that_isnt_isolated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, csm_listener: socket.socket
 ) -> None:
     """The control: the same environment does reach a plain botocore client, so the test above proves something."""
     import botocore.exceptions
     import botocore.session
 
-    hostile_environment(monkeypatch, tmp_path)
+    hostile_environment(monkeypatch, tmp_path, csm_listener)
     with pytest.raises(botocore.exceptions.ProfileNotFound):
         botocore.session.Session().create_client("s3", region_name=REGION)
     monkeypatch.delenv("AWS_PROFILE")
@@ -353,14 +533,56 @@ def test_the_hostile_environment_does_break_a_client_that_isnt_isolated(
         botocore.session.Session().create_client("s3", region_name=REGION)
 
 
-def test_a_hostile_environment_does_not_raise_the_retries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_junk_variables_do_reach_a_client_that_isnt_isolated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, csm_listener: socket.socket
+) -> None:
+    """The control for C5: one junk variable at a time breaks a plain client, and client-side monitoring sends
+    datagrams from one; ShelfSync's client with all of them set does neither (above, and at the end here)."""
+    import botocore.exceptions
+    import botocore.session
+
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "none"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
+    for name in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_DATA_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    keys = {"aws_access_key_id": RW_PAIR.key_id, "aws_secret_access_key": RW_PAIR.secret}
+    breaking = {
+        "AWS_S3_US_EAST_1_REGIONAL_ENDPOINT": botocore.exceptions.InvalidS3UsEast1RegionalEndpointConfigError,
+        "AWS_STS_REGIONAL_ENDPOINTS": botocore.exceptions.InvalidSTSRegionalEndpointsConfigError,
+    }
+    for name, error in breaking.items():
+        monkeypatch.setenv(name, "junk")
+        with pytest.raises(error):
+            botocore.session.Session().create_client("s3", region_name="us-east-1", **keys)
+        monkeypatch.delenv(name)
+    hostile = Hostile(csm_listener)
+    monkeypatch.setenv("AWS_CSM_ENABLED", "true")
+    monkeypatch.setenv("AWS_CSM_HOST", "127.0.0.1")
+    monkeypatch.setenv("AWS_CSM_PORT", str(csm_listener.getsockname()[1]))
+    plain: Any = botocore.session.Session().create_client("s3", region_name=REGION, **keys)
+    plain.meta.events.register_first("before-send.s3", FakeS3())
+    try:
+        with contextlib.suppress(Exception):  # the answer doesn't matter here: the monitoring datagram does
+            plain.head_object(Bucket=BUCKET, Key="shelfsync-test/x")
+    finally:
+        plain.close()
+    sent = hostile.csm_datagrams()
+    assert sent and any(RW_PAIR.key_id.encode() in datagram for datagram in sent)  # it even carries the key ID
+    junk_s3_and_session_variables(monkeypatch, csm_listener)
+    assert run_canned(US_EAST_1_TARGET, FakeS3()).ok
+    assert hostile.csm_datagrams() == []  # ShelfSync's client sends none
+
+
+def test_a_hostile_environment_does_not_raise_the_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, csm_listener: socket.socket
+) -> None:
     """`AWS_MAX_ATTEMPTS=9` and `max_attempts = 9` in a config file are ignored: two attempts, then the answer."""
-    hostile_environment(monkeypatch, tmp_path)
+    hostile_environment(monkeypatch, tmp_path, csm_listener)
     fake = FakeS3()
     for n in range(1, 10):
         fake.script[("PUT", n)] = (500, b"", {})
     outcome = run_canned(CUSTOM_TARGET, fake)
-    assert fake.methods() == ["PUT", "PUT"]
+    assert fake.methods().count("PUT") == 2
     assert outcome.steps[0].reason == "server_error" and outcome.steps[0].http_status == 500
 
 

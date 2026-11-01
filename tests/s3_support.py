@@ -1,9 +1,8 @@
 """Helpers for the Storage Test (M2.7). No live AWS, bucket or store is ever reached:
 
 - `s3_guard` (autouse in every S3 test module, imported with `# noqa: F401`): records every S3 operation any botocore
-  client makes and fails the test if one ever PUTs or DELETEs a key outside `shelfsync-test/<pattern>`. It also fails
-  the test on any blocked outbound attempt: botocore wraps whatever a socket raises in its own errors, so the conftest
-  guard's failure could otherwise be read as `unreachable` and pass.
+  client makes and fails the test if one ever PUTs or DELETEs a key outside `shelfsync-test/<pattern>`. (A blocked
+  outbound attempt fails the test through the conftest guard's record, even when botocore hides the error.)
 - `FakeS3`: canned answers through a `before-send` hook on a real ShelfSync client (no socket): a tiny object store
   that records each request, with per-call overrides for what moto can't model (SlowDown, RequestTimeTooSkewed, ...).
 - `aws_setup_env`: an environment for moto's own setup clients that reads nothing from this PC's `~/.aws`.
@@ -27,7 +26,6 @@ import pytest
 
 from shelfsync.apply.s3 import TEST_KEY, ClientFactory, S3Client, S3Target, make_client
 from shelfsync.secure.credentials import S3Pair
-from tests.conftest import OutboundNetworkBlocked
 from tests.storage_support import RO_ID, RO_SECRET, RW_ID, RW_SECRET
 
 BUCKET = "shelfsync-test-bucket"
@@ -48,7 +46,6 @@ _OBJECT_WRITES = re.compile(r"(Put|Delete|Copy|Create|Upload|Complete|Restore|Ab
 @dataclass
 class S3Guard:
     calls: list[tuple[str, str | None]] = field(default_factory=list)  # (operation, Key)
-    blocked: list[str] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def operations(self) -> list[str]:
@@ -57,7 +54,7 @@ class S3Guard:
 
 
 @pytest.fixture(autouse=True)
-def s3_guard(no_outbound_network: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Guard]:
+def s3_guard(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Guard]:
     import botocore.session
 
     guard = S3Guard()
@@ -76,27 +73,7 @@ def s3_guard(no_outbound_network: None, monkeypatch: pytest.MonkeyPatch) -> Iter
 
     monkeypatch.setattr(botocore.session.Session, "create_client", create_client)
 
-    guarded_getaddrinfo = socket.getaddrinfo
-    guarded_connect = socket.socket.connect
-
-    def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
-        try:
-            return guarded_getaddrinfo(host, *args, **kwargs)
-        except OutboundNetworkBlocked:
-            guard.blocked.append(str(host))
-            raise
-
-    def connect(self: socket.socket, address: Any) -> None:
-        try:
-            guarded_connect(self, address)
-        except OutboundNetworkBlocked:
-            guard.blocked.append(str(address))
-            raise
-
-    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
-    monkeypatch.setattr(socket.socket, "connect", connect)
     yield guard
-    assert guard.blocked == [], f"outbound attempts were made: {guard.blocked}"
     with guard.lock:
         for name, key in guard.calls:
             if _OBJECT_WRITES.fullmatch(name) and name not in ("CreateBucket", "DeleteBucket"):
@@ -303,12 +280,14 @@ def canned_factory(fake: FakeS3) -> ClientFactory:
 
 class ScriptedServer:
     """An S3-shaped HTTP server on 127.0.0.1 (any port): PUT stores, GET reads, DELETE removes, HEAD answers 404 for a
-    missing key. `hold[method]` makes that method wait until the event is set (a held answer, for the timeouts)."""
+    missing key. `hold[method]` makes that method wait until the event is set (a held answer, for the timeouts);
+    `raw[method]` is written as the whole answer instead (a malformed header line, say)."""
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.seen: list[tuple[str, str]] = []
         self.hold: dict[str, threading.Event] = {}
+        self.raw: dict[str, bytes] = {}
         self.done = threading.Event()  # set when a DELETE has been answered
         outer = self
 
@@ -335,7 +314,11 @@ class ScriptedServer:
                 held = outer.hold.get(self.command)
                 if held is not None:
                     held.wait(30)
-                if self.command == "PUT":
+                raw = outer.raw.get(self.command)
+                if raw is not None:
+                    self.wfile.write(raw)
+                    self.close_connection = True
+                elif self.command == "PUT":
                     outer.objects[path] = body
                     self._answer(200, b"", {"ETag": '"etag"'})
                 elif self.command == "DELETE":

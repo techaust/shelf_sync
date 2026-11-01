@@ -3,17 +3,20 @@ users holding the exact 06 section 5 policies), `FakeS3` for what moto can't mod
 the network failures. No live AWS, bucket or store is ever reached."""
 
 import json
+import logging
 import sqlite3
 import threading
 from contextlib import closing
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 from moto import mock_aws
 from moto.core import enable_iam_authentication
 
-from shelfsync.api.storage import STORAGE_TEST_PATH, StorageService
+from shelfsync import logs
+from shelfsync.api.storage import STORAGE_TEST_PATH, StorageService, StorageTestError
 from shelfsync.apply.s3 import TEST_KEY, ClientFactory, S3Client, S3Target, make_client
 from shelfsync.secure.credentials import S3Credentials, S3Pair
 from tests.s3_support import (
@@ -293,7 +296,7 @@ def test_a_service_that_never_answers_times_out_within_the_limit() -> None:
         took = (datetime.now(UTC) - started).total_seconds()
         assert took < 3.0
         assert steps(body) == [("write", "failed", "timeout"), ("read", "not_run", None), ("delete", "not_run", None)]
-        assert body["left_behind"] is None
+        assert body["left_behind"] is not None and TEST_KEY.fullmatch(body["left_behind"])  # the write may land (L13)
         assert run_test(rig).json() == {"error": "busy"}  # held until the worker really ends
         server.hold["PUT"].set()  # the write lands late: the worker still deletes it
         assert server.done.wait(10)
@@ -308,6 +311,7 @@ def test_a_late_write_is_still_deleted_and_logged(caplog: pytest.LogCaptureFixtu
         with caplog.at_level("INFO", logger="shelfsync.storage"):
             body = run_test(rig).json()
             assert steps(body)[0] == ("write", "failed", "timeout")
+            assert body["left_behind"] is not None
             server.hold["PUT"].set()
             assert server.done.wait(10)
             assert wait_until(lambda: "after the answer was sent" in caplog.text)
@@ -315,6 +319,150 @@ def test_a_late_write_is_still_deleted_and_logged(caplog: pytest.LogCaptureFixtu
         assert server.objects == {}
     assert "ran out of time" in caplog.text
     assert "read failed (timeout" in caplog.text
+
+
+def test_running_out_of_time_during_the_read_still_deletes() -> None:
+    """The write passed, the read hangs: the answer names the key (step 3 didn't pass), and the worker deletes it."""
+    with ScriptedServer() as server:
+        server.hold["GET"] = threading.Event()
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=0.5, grace_seconds=0.2)
+        body = run_test(rig).json()
+        assert steps(body) == [("write", "passed", None), ("read", "failed", "timeout"), ("delete", "not_run", None)]
+        assert body["steps"][1]["latency_ms"] is None
+        assert body["left_behind"] is not None and TEST_KEY.fullmatch(body["left_behind"])
+        server.hold["GET"].set()
+        assert server.done.wait(10)
+        assert wait_until(lambda: run_test(rig).status_code != 409)
+        assert server.methods()[:4] == ["PUT", "GET", "DELETE", "HEAD"]
+
+
+# ---- a write that may have reached S3 (L13) --------------------------------------------------------------------------
+
+
+def test_a_write_that_got_500_twice_is_cleaned_up() -> None:
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = fake.script[("PUT", 2)] = (500, error_xml("InternalError"), {})
+    body = run_test(canned_rig(fake)).json()
+    assert fake.methods() == ["PUT", "PUT", "DELETE", "HEAD"]
+    assert steps(body) == [("write", "failed", "server_error"), ("read", "not_run", None), ("delete", "not_run", None)]
+    assert body["left_behind"] is None  # the clean-up's HEAD answered 404
+    assert body["ok"] is False
+
+
+def test_a_cleanup_that_cant_confirm_names_the_key() -> None:
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = fake.script[("PUT", 2)] = (500, error_xml("InternalError"), {})
+    fake.script[("HEAD", 1)] = (403, b"", {})
+    body = run_test(canned_rig(fake)).json()
+    assert fake.methods() == ["PUT", "PUT", "DELETE", "HEAD"]
+    assert steps(body)[1:] == [("read", "not_run", None), ("delete", "not_run", None)]
+    assert body["left_behind"] is not None and TEST_KEY.fullmatch(body["left_behind"])
+
+
+def test_a_lost_answer_to_the_write_is_cleaned_up() -> None:
+    from botocore.exceptions import ReadTimeoutError
+
+    fake = FakeS3()
+    lost = ReadTimeoutError(endpoint_url="https://s3.example.com")
+    fake.script[("PUT", 1)] = fake.script[("PUT", 2)] = lost
+    body = run_test(canned_rig(fake)).json()
+    assert steps(body)[0] == ("write", "failed", "timeout")
+    assert fake.methods() == ["PUT", "PUT", "DELETE", "HEAD"]
+    assert body["left_behind"] is None
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [(403, error_xml("AccessDenied"), {}), (503, error_xml("SlowDown"), {}), (400, error_xml("InvalidRequest"), {})],
+    ids=["403", "SlowDown", "400"],
+)
+def test_a_write_that_never_happened_is_not_cleaned_up(answer: Any) -> None:
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = fake.script[("PUT", 2)] = answer
+    body = run_test(canned_rig(fake)).json()
+    assert "DELETE" not in fake.methods() and "HEAD" not in fake.methods()
+    assert body["left_behind"] is None
+
+
+def test_a_connect_timeout_on_the_write_is_not_cleaned_up() -> None:
+    from botocore.exceptions import ConnectTimeoutError
+
+    fake = FakeS3()
+    fake.script[("PUT", 1)] = fake.script[("PUT", 2)] = ConnectTimeoutError(endpoint_url="https://s3.example.com")
+    body = run_test(canned_rig(fake)).json()
+    assert steps(body)[0] == ("write", "failed", "timeout")
+    assert fake.methods() == ["PUT", "PUT"] and body["left_behind"] is None
+
+
+def test_a_closed_port_is_not_cleaned_up(request: pytest.FixtureRequest) -> None:
+    guard = request.getfixturevalue("s3_guard")
+    body = run_test(rig_with(endpoint=f"http://127.0.0.1:{closed_port()}")).json()
+    assert steps(body)[0] == ("write", "failed", "unreachable")
+    assert "DeleteObject" not in guard.operations() and "HeadObject" not in guard.operations()
+    assert body["left_behind"] is None
+
+
+def test_running_out_of_time_during_the_cleanup_names_the_key(caplog: pytest.LogCaptureFixture) -> None:
+    with ScriptedServer() as server:
+        server.raw["PUT"] = b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        server.hold["DELETE"] = threading.Event()
+        rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}", limit_seconds=1.5, grace_seconds=0.2)
+        with caplog.at_level("INFO", logger="shelfsync.storage"):
+            body = run_test(rig).json()
+            assert steps(body) == [
+                ("write", "failed", "server_error"),
+                ("read", "not_run", None),
+                ("delete", "not_run", None),
+            ]
+            assert body["left_behind"] is not None and TEST_KEY.fullmatch(body["left_behind"])
+            server.hold["DELETE"].set()
+            assert wait_until(lambda: "cleanup confirmed" in caplog.text)
+        assert server.methods() == ["PUT", "PUT", "DELETE", "HEAD"]
+
+
+# ---- the logs: no address, bucket or key, from ShelfSync or the libraries (C1) ---------------------------------------
+
+MALFORMED_HEADER = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nthis header line has no colon\r\n\r\n"
+
+
+@pytest.mark.parametrize("configure", [logs.configure_logging, None, logs.configure_append_logging])
+def test_the_http_libraries_never_log_an_address_bucket_or_key(
+    configure: Any, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """urllib3 logs a header it can't parse at WARNING with the full URL (`Failed to parse headers (url=...)`), and
+    botocore logs URLs and headers at DEBUG. With ShelfSync's logging set up, neither reaches a log."""
+    saved = {name: logging.getLogger(name).level for name in logs.QUIET_LOGGERS}
+    for name in logs.QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.NOTSET)  # undo any earlier setup (setLevel clears the cache)
+    handler = None
+    try:
+        with ScriptedServer() as server:
+            server.raw["PUT"] = MALFORMED_HEADER
+            rig = rig_with(endpoint=f"http://127.0.0.1:{server.port}")
+            if configure is not None:
+                handler = configure(tmp_path, 1) if configure is logs.configure_logging else configure(tmp_path)
+                for name, level in logs.QUIET_LOGGERS.items():
+                    assert logging.getLogger(name).level == level
+            caplog.clear()
+            caplog.set_level(logging.DEBUG)
+            run_test(rig)
+            records = list(caplog.records)
+            port = server.port
+    finally:
+        if handler is not None:
+            logs.remove_logging(handler)
+        for name, level in saved.items():
+            logging.getLogger(name).setLevel(level)
+    text = "\n".join(
+        record.getMessage() + (caplog.handler.format(record) if record.exc_info else "") for record in records
+    )
+    private = (f"127.0.0.1:{port}", BUCKET, "shelfsync-test/")
+    if configure is None:  # without the setup the libraries do log them: so the checks below mean something
+        assert "Failed to parse headers" in text and all(item in text for item in private)
+        return
+    assert "Failed to parse headers" not in text
+    for item in private:
+        assert item not in text
 
 
 # ---- the API: guard, errors, one at a time ---------------------------------------------------------------------------
@@ -422,6 +570,24 @@ def test_a_client_that_cant_be_built_is_an_internal_error_and_frees_the_test() -
     assert client.post(STORAGE_TEST_PATH, headers=WRITE_HEADERS).status_code == 500
     rig.service._client_factory = canned_factory(FakeS3())
     assert run_test(rig).status_code == 200
+
+
+def test_an_error_inside_the_test_never_carries_its_text_to_the_500() -> None:
+    """C3: botocore's own errors can name the endpoint (`Invalid endpoint: ...`); the 500's exception holds only the
+    kind of error, with no chained context, and the Test is free again after it."""
+
+    def broken(target: S3Target, pair: S3Pair) -> S3Client:
+        raise ValueError("Invalid endpoint: https://s3.example.com/" + BUCKET)
+
+    rig = rig_with(broken)
+    with pytest.raises(StorageTestError) as caught:
+        rig.client.post(STORAGE_TEST_PATH, headers=WRITE_HEADERS)
+    error = caught.value
+    assert str(error) == "The storage test stopped (ValueError)"
+    assert "s3.example.com" not in repr(error) and BUCKET not in str(error)
+    assert error.__suppress_context__ and error.__cause__ is None
+    rig.service._client_factory = canned_factory(FakeS3())
+    assert run_test(rig).status_code == 200  # the busy flag was freed
 
 
 def test_the_real_factory_is_the_default() -> None:

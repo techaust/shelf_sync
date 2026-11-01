@@ -1,5 +1,6 @@
 """NFR-5: the suite can't reach the internet."""
 
+import contextlib
 import socket
 
 import pytest
@@ -7,19 +8,32 @@ import pytest
 from tests.conftest import OutboundNetworkBlocked
 
 
-def test_connection_to_example_com_fails_the_test() -> None:
+def test_connection_to_example_com_fails_the_test(no_outbound_network: list[str]) -> None:
     with pytest.raises(OutboundNetworkBlocked):
         socket.create_connection(("example.com", 80), timeout=1)
+    assert no_outbound_network == ["lookup 'example.com'"]
+    no_outbound_network.clear()  # blocked on purpose
 
 
-def test_connect_to_a_public_ip_fails_the_test() -> None:
+def test_connect_to_a_public_ip_fails_the_test(no_outbound_network: list[str]) -> None:
     with socket.socket() as sock, pytest.raises(OutboundNetworkBlocked):
         sock.connect(("93.184.216.34", 80))
+    assert no_outbound_network == ["connect '93.184.216.34'"]
+    no_outbound_network.clear()
 
 
-def test_loopback_is_allowed() -> None:
+def test_a_swallowed_block_is_still_recorded(no_outbound_network: list[str]) -> None:
+    """Code that catches every exception hides the block from the test; the record doesn't."""
+    with contextlib.suppress(Exception):  # what careless code under test would do
+        socket.getaddrinfo("example.org", 443)
+    assert no_outbound_network == ["lookup 'example.org'"]
+    no_outbound_network.clear()
+
+
+def test_loopback_is_allowed(no_outbound_network: list[str]) -> None:
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
         server.listen(1)
         with socket.create_connection(server.getsockname(), timeout=1):
             pass
+    assert no_outbound_network == []

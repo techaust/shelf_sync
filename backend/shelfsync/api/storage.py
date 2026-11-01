@@ -165,6 +165,14 @@ _VALIDATORS = validators_for(StorageValues)
 _TARGET_KEYS = ("s3_endpoint", "s3_region", "s3_bucket")
 
 
+class StorageTestError(RuntimeError):
+    """The Test stopped on an error of its own (a bug, not an answer from the storage service): a 500. Its text names
+    only the kind of error, never the error's own text, which can hold the endpoint."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(f"The storage test stopped ({kind})")
+
+
 class StorageService:
     """What the routes and start-up talk to. `connect` opens a connection to the database (one per call, closed
     after); `secrets` is Credential Manager (a fake in tests)."""
@@ -321,8 +329,8 @@ class StorageService:
             handed_over = True
             completed = finished.wait(self._limit_seconds + self._grace_seconds)
             if completed:
-                if "error" in result:
-                    raise result["error"]
+                if "error" in result:  # a fixed text: botocore's own can hold the endpoint (`Invalid endpoint: ...`)
+                    raise StorageTestError(type(result["error"]).__name__) from None
                 answer: StorageTestOutcome = result["outcome"]
             else:
                 gave_up.set()
@@ -458,6 +466,7 @@ __all__ = [
     "STORAGE_SETTINGS_PATH",
     "STORAGE_TEST_PATH",
     "StorageService",
+    "StorageTestError",
     "StorageTestResponse",
     "StorageTestStep",
     "build_storage_service",
