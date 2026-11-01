@@ -6,11 +6,11 @@ import { APP_SETTINGS_QUERY_KEY, type AppSettings, getAppSettings } from "../../
 import { settingsWriter } from "../../api/settingsWriter";
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { useSwitchPhase } from "../../lib/switchStore";
 import { cacheSaved, useSavedTheme } from "../../theme/useSavedTheme";
 import { AppFailed, AppLoading, type AppResult, AppView } from "./AppView";
 import { resetAccess, saveApp } from "./actions";
 import { type AppForm, type AppFormErrors, checkAppForm, formFrom } from "./forms";
-import { useSwitchPhase } from "./switchStore";
 import { A } from "./wording";
 
 /** The form, started from the stored settings; a save puts what was saved back into it. */

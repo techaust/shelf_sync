@@ -3,9 +3,10 @@ import type { FormEvent } from "react";
 import { Alert, type AlertTone } from "../../components/Alert";
 import { FieldError } from "../../components/FieldError";
 import { Switch } from "../../components/Switch";
+import { U } from "../../lib/updatesWording";
 import type { ThemePreference } from "../../theme/theme";
 import type { AppForm, AppFormErrors } from "./forms";
-import { A, U } from "./wording";
+import { A } from "./wording";
 
 const THEMES: { value: ThemePreference; Icon: LucideIcon }[] = [
   { value: "system", Icon: Monitor },

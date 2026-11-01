@@ -5,7 +5,7 @@
 // e2e/shell.spec.ts.
 import { describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../api/session";
-import { createSwitchStore } from "../screens/settings/switchStore";
+import { createSwitchStore } from "../lib/switchStore";
 import { type BootWindow, boot } from "./boot";
 
 const TICKET = "Qx3_vB9-kLmN0pRsTuVwXyZ01234567890abcdEFGHij";

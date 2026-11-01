@@ -14,6 +14,7 @@ import {
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { helpStore } from "../../components/help/helpModel";
+import { useSwitchPhase } from "../../lib/switchStore";
 import {
   KeyPairPanel,
   KeysCard,
@@ -40,7 +41,6 @@ import {
   testLines,
 } from "./storageModel";
 import { ST } from "./storageWording";
-import { useSwitchPhase } from "./switchStore";
 
 const openGuide = () => helpStore.open("s3-policy");
 

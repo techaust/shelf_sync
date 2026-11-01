@@ -2,8 +2,9 @@
 // api/secrets.py), so a value the API would refuse is caught in the form, next to its field.
 
 import type { AppSettings, AppSettingsSaved, AppSettingsValues } from "../../api/settings";
+import { T } from "../../lib/updatesWording";
 import type { ThemePreference } from "../../theme/theme";
-import { A, T } from "./wording";
+import { A } from "./wording";
 
 /** ports.py DEFAULT_PORT and LAST_PORT; logs.py MAX_LOG_RETENTION_DAYS. */
 export const PORT_MIN = 47615;
