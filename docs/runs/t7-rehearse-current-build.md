@@ -147,7 +147,7 @@ _(builder, 2026-11-02; branch `t7/rehearse-current-build`: 4378e76, 2a43438, e76
 | 6 | Independent look afterwards (PowerShell, throwaway names only): `Test-Path` of `sst7r` and `HKCU:\Software\ShelfSyncRehearsal-e124cf27`, the Run value `ShelfSync-rehearse-e124cf27`, processes under `sst7r` | folder gone, key gone, value gone, 0 processes |
 | 7 | `heavy.sh --log t7-pytest uv run --locked pytest` | exit 0: **2464 passed, 18 skipped, 52 deselected** in 215 s; coverage 93 % |
 | 8 | `ruff check`, `ruff format --check`, `mypy --explicit-package-bases` (with `MYPYPATH=backend;tools/release`) on `rehearse.py` | clean |
-| 9 | `heavy.sh --log t7-lint uv run ruff check` and `uv run ruff format --check` (the full lint, once, last) | see the line after this table |
+| 9 | `heavy.sh --log t7-lint uv run --locked ruff check` and `heavy.sh --log t7-format uv run --locked ruff format --check` (the full lint, once, last; `tools/` is excluded by the configuration, so row 8 covers `rehearse.py`) | exit 0: "All checks passed!", "167 files already formatted" |
 
 **The rehearsal's output, summarised** (run id `e124cf27`; the first line names the service `ShelfSyncRehearsal-e124cf27`, the Run value `ShelfSync-rehearse-e124cf27` in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, the key `HKCU\Software\ShelfSyncRehearsal-e124cf27`, the AUMID and the folder):
 - `--base` scan: no module but `platform/secrets.py` names a Credential Manager API (1 check).
