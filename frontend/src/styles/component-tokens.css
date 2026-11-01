@@ -1,6 +1,6 @@
 /* ShelfSync component tokens: each theme scope is written once, here, not once per stylesheet (T5). Hand-written,
    not generated: every value is a semantic token or a CSS keyword, no brand data. Unlayered, like the token files.
-   As the CSS Custom Properties spec defines it (browser rendering is checked on the PC; not yet recorded in 04-A):
+   As the CSS Custom Properties spec defines it, and as the PC's browser pane renders it (04-A V54):
    1. Component dark tokens (--<component>-<property>-dark) are set only in the two dark scopes, and a rule reads one
       with its light value as the fallback: var(--card-border-dark, var(--color-border)). Not also set on :root for
       light: a var() in a custom property's value is substituted on the element that declares it, so :root's colour

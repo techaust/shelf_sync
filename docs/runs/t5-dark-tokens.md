@@ -166,6 +166,9 @@ _(lead, 2026-11-02, cloud session)_
 - **Duplicated dark pairs left:** none, in `app.css` or any other stylesheet. The only theme scopes are in the token files: `generated/tokens.css`, `generated/shelfsync-tokens.css`, and `component-tokens.css`. `component-tokens.css` holds its own one pair of scope blocks, as the token files do; the test keeps the two blocks identical.
 - **Pushed** `refactor/dark-tokens`. **No PR** (the orchestrator checks light and dark on the PC, then opens it).
 
+- **Visual check on the PC (orchestrator, 2026-11-02, CLAUDE.md rule 10):** `main` and this branch, each built and served by the real `create_app` with in-memory stores and two test stores, in the built-in pane. Every element's computed colours (text, background, four border colours, shadow, outline, fill, stroke, opacity, background image), transitions off, on all 12 pages: **identical to `main` in all 48 comparisons** (light, Dark by setting, dark from Windows, Light over a dark Windows). That covers the store dots in the health chips, on Settings › Stores and in the identifier picker, the cards and the secret masks. Recorded as 04-A V54; `component-tokens.css` now points to it (review low 5).
+- **Not checked visually:** the loading skeletons (`.sk`, only for a moment while Settings loads) and forced colours (the pane can't emulate them); both are covered by `component-tokens.test.ts`.
+
 ## 7. Handover
 _(lead, 2026-11-02)_ Code done, reviewed and pushed; the task waits on the orchestrator.
 
