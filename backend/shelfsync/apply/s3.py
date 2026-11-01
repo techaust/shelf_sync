@@ -469,8 +469,10 @@ def run_storage_test(
     start = monotonic()
 
     write_result = _step(lambda: _write(rw, bucket, key, body), "write", "rw", monotonic)
-    progress.record(write_result)
     written = write_result.state == "passed"
+    if not written and write_result.maybe_sent:
+        progress.start_cleanup()  # before the write is recorded, so an overrun in between still names the key
+    progress.record(write_result)
     if not written:
         read_result = not_run("read", "ro")
     elif abandoned():
@@ -484,7 +486,6 @@ def run_storage_test(
     else:
         delete_result = not_run("delete", "rw")
         if write_result.maybe_sent:  # the write may have landed: delete it all the same (L13)
-            progress.start_cleanup()
             confirmed = _step(lambda: _delete(rw, bucket, key), "delete", "rw", monotonic).state == "passed"
             cleanup = "confirmed" if confirmed else "failed"
     progress.record(delete_result)
