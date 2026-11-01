@@ -1,9 +1,12 @@
-"""Smoke test of the built folder: `python -I packaging/smoke.py build/ShelfSync-<v> --version <v>` (SYS-01, V38, V47).
+"""Smoke test of the built folder: `python -I packaging/smoke.py build/ShelfSync-<v> --version <v> [--suffix=-x]`
+(SYS-01, SYS-04, SYS-05, V38, V47).
 
 Starts the folder's own `python.exe` running the server (no tray) with a throwaway `SHELFSYNC_DATA_DIR`, then
 checks that `/api/health` answers with the right version, that `/` serves the folder's `ui/index.html`, and
 that afterwards nothing under the folder has changed: no file added, removed or rewritten, so a first start leaves
-the folder matching `files.txt` (V47: the precompiled `checked-hash` caches are enough). Nothing is read from or
+the folder matching `files.txt` (V47: the precompiled `checked-hash` caches are enough). The folder's own Python must
+also report the Run value name and AUMID its installer writes, `ShelfSync<suffix>` and `TecHaust.ShelfSync<suffix>`,
+for the suffix the folder was built with (`--suffix`, none by default). Nothing is read from or
 written to the real data folder or the Run key, and by default not to Credential Manager either (an in-memory
 store); CI adds `--real-secrets` to run the real `python -m shelfsync`.
 Run it with the Python that built the folder, not the folder's own.
@@ -82,6 +85,14 @@ SCRYPT_PROBE = (
     "import hashlib; "
     "print(len(hashlib.scrypt(b'x', salt=b'0' * 16, n=2**17, r=8, p=1, maxmem=256 * 1024 * 1024, dklen=32)))"
 )
+
+# The Run value name and the AUMID the app itself uses (`platform/names.py`), as the folder's own Python reports them.
+NAMES_PROBE = "from shelfsync.platform import aumid, autostart; print(autostart.VALUE_NAME); print(aumid.AUMID)"
+
+
+def expected_names(suffix: str) -> list[str]:
+    """What NAMES_PROBE must print for a folder built with `suffix`: the names the installer's `/DSUFFIX` writes."""
+    return [f"ShelfSync{suffix}", f"TecHaust.ShelfSync{suffix}"]
 
 
 def load_build() -> object:
@@ -167,6 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="run `python -m shelfsync` with the real Credential Manager (CI's throwaway runner only)",
     )
+    parser.add_argument("--suffix", default="", help="the suffix the folder was built with, e.g. --suffix=-rehearsal")
     arguments = parser.parse_args(argv)
     build = load_build()
     folder: Path = arguments.folder.resolve()
@@ -197,6 +209,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if scrypt.returncode != 0 or scrypt.stdout.strip() != "32":
         sys.stderr.write(f"The built Python can't derive a backup key (hashlib.scrypt):\n{scrypt.stderr[-800:]}\n")
+        return 1
+    names = subprocess.run(  # nosec B603
+        [str(folder_python), "-c", NAMES_PROBE], capture_output=True, text=True, timeout=60, check=False
+    )
+    if names.returncode != 0 or names.stdout.split() != expected_names(arguments.suffix):
+        sys.stderr.write(
+            f"The built Python reports the Run value and AUMID {names.stdout.split()}, not"
+            f" {expected_names(arguments.suffix)}:\n{names.stderr[-800:]}\n"
+        )
         return 1
 
     with tempfile.TemporaryDirectory(prefix="shelfsync-smoke-") as data:
@@ -233,8 +254,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write("The folder changed during the first start (V47):\n" + "\n".join(differences[:40]) + "\n")
         return 1
     sys.stdout.write(
-        f"Smoke test passed: version {arguments.version} answered, UI served, the tray icons load, the launcher"
-        " started and quit through request_quit, folder unchanged\n"
+        f"Smoke test passed: version {arguments.version} answered, UI served, the tray icons load, the Run value and"
+        f" AUMID are {' and '.join(expected_names(arguments.suffix))}, the launcher started and quit through"
+        " request_quit, folder unchanged\n"
     )
     return 0
 

@@ -145,7 +145,8 @@ class AppSettingsService:
 
     def save(self, new: AppSettingsValues) -> AppSettingsSaved:
         """Saves all five in one transaction, then applies what changed. `start_with_windows_result`: "applied" (the
-        Run value was made to match, or already did), "failed" (Windows refused; tried again at the next save),
+        Run value was made to match, or already did), "failed" (Windows refused, or this build's suffix file is
+        invalid so it has no Run value name; tried again at the next save),
         "not_installed" (a development copy touches nothing). When the setting is unchanged and was already applied
         since the start, the Run key isn't touched again: the result is "applied" for an installed copy and
         "not_installed" otherwise."""

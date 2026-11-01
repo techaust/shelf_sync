@@ -1,7 +1,9 @@
 """Start with Windows (SYS-04): one value in `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`.
 
-The value is named `ShelfSync` and holds the quoted path of the installed `pythonw.exe`, `-m shelfsync.launcher` and
-`--background` (sign-in starts ShelfSync in the tray with no browser tab; shortcuts have no flag and open a tab).
+The value is named `ShelfSync` (plus the build's suffix in a rehearsal build, `platform/names.py`; a build whose
+suffix file is invalid leaves the Run key alone) and holds the quoted path of the installed `pythonw.exe`,
+`-m shelfsync.launcher` and `--background` (sign-in starts ShelfSync in the tray with no browser tab; shortcuts have
+no flag and open a tab).
 Turning the setting off removes the value. It is written only by an installed copy (`update.layout.installed_root`,
 the one test: the Python sits in `<root>\\versions\\<v>\\`): a development run never touches the owner's Run key. The
 value always names `<root>\\current\\pythonw.exe`, so an update needs no new value.
@@ -13,12 +15,13 @@ import sys
 from pathlib import PureWindowsPath
 from typing import Literal, Protocol
 
+from shelfsync.platform import names
 from shelfsync.update.layout import installed_root
 
 _log = logging.getLogger("shelfsync.autostart")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-VALUE_NAME = "ShelfSync"
+VALUE_NAME: str | None = names.RUN_VALUE_NAME  # "ShelfSync" plus this build's suffix; None: an invalid suffix file
 
 ApplyOutcome = Literal["set", "removed", "unchanged", "skipped"]
 CURRENT_FOLDER_NAME = "current"
@@ -129,7 +132,7 @@ def apply_start_with_windows(
     enabled: bool,
     run_key: RunKey | None = None,
     *,
-    name: str = VALUE_NAME,
+    name: str | None = None,
     command: str | None = None,
     installed: bool | None = None,
 ) -> ApplyOutcome:
@@ -137,12 +140,18 @@ def apply_start_with_windows(
     "set", "removed", "unchanged" or "skipped".
 
     Only an installed copy writes (`installed` defaults to `is_installed_copy()`). A development run logs that it
-    skipped and touches nothing. Windows tests pass their own throwaway `name` and `command`.
+    skipped and touches nothing. The value is `name`, or this build's `VALUE_NAME` when it is None; Windows tests pass
+    their own throwaway `name` and `command`. A build whose suffix file is invalid has no name: it raises
+    `AutostartError` and touches nothing, never falling back to the real `ShelfSync` value.
     """
     is_installed = is_installed_copy() if installed is None else installed
     if not is_installed:
         _log.info("Start with Windows: skipped, this isn't the installed copy")
         return "skipped"
+    if name is None:
+        name = VALUE_NAME
+    if name is None:
+        raise AutostartError("This build's suffix file is invalid, so the Run value was left alone")
     key = run_key if run_key is not None else WindowsRunKey()
     current = key.get(name)
     if enabled:
@@ -163,8 +172,9 @@ def apply_start_with_windows_safely(
     enabled: bool, run_key: RunKey | None = None, *, installed: bool | None = None
 ) -> ApplyOutcome | Literal["failed"]:
     """`apply_start_with_windows` that never raises: returns "set", "removed", "unchanged", "skipped", or "failed" (an
-    `AutostartError`, logged as a warning with its fixed text). The one place the launcher (at start) and the settings
-    API (at a save) apply the setting."""
+    `AutostartError`, logged as a warning with its fixed text: Windows refused, or this build's suffix file is invalid,
+    a broken build the owner should hear about rather than a development copy's "skipped"). The one place the
+    launcher (at start) and the settings API (at a save) apply the setting."""
     try:
         outcome = apply_start_with_windows(enabled, run_key, installed=installed)
     except AutostartError as error:
