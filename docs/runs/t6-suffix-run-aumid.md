@@ -68,6 +68,89 @@ Credential Manager service at run time, the real single-instance name, and the r
 ## 2. Early check
 
 ## 3. Builder report
+_(builder, claude-opus-5-5/high, 2026-11-02; worktree `.claude/worktrees/agent-a261d20e7ef7604ba`, branch
+`worktree-agent-a261d20e7ef7604ba`, from 5883279)_
+
+**Skills and tools loaded:** Context7 for windows-toasts (`/websites/windows-toasts_readthedocs_io_en`): confirmed
+that `InteractableWindowsToaster(applicationText, notifierAUMID=None)` falls back to Command Prompt's AUMID and uses
+`applicationText` as the attribution line, so "no AUMID" for an invalid suffix file is the M1a default. No other
+library is touched (argparse, re and pathlib are the standard library; the NSIS change is a comment, so the NSIS docs
+weren't needed). `security-review` and `code-review` are the reviewer's (09 §3). Not loaded: `frontend-design`,
+`dataviz`, `aws-*`, `artifact-design`, `run` (no screen, S3, page or running-app check in this task).
+
+**What was built (brief points 1 to 6):**
+1. `backend/shelfsync/platform/names.py` (new): `SUFFIX_FILE` (`build-suffix.txt` next to it), `SUFFIX_PATTERN`
+   (`-[A-Za-z0-9._-]{1,32}`), `is_valid_suffix`, `read_build_suffix(path)` (`""` with no file; the suffix for a valid
+   non-empty one, one trailing `\n` or `\r\n` allowed; None for an empty file, a broken rule, non-ASCII, more than 64
+   bytes or an unreadable file), `run_value_name(suffix)` and `aumid_for(suffix)` (None for None or an invalid suffix),
+   and the module values `BUILD_SUFFIX`, `RUN_VALUE_NAME`, `AUMID`, read once at import.
+2. `autostart.VALUE_NAME` and `aumid.AUMID` come from `names` (`str | None`). `apply_start_with_windows(name=None)`
+   resolves the name at call time (a given throwaway `name` still wins); with no name it raises `AutostartError`
+   ("This build's suffix file is invalid, so the Run value was left alone") after the installed-copy check, so it
+   writes and removes nothing. `aumid.is_registered(aumid=None)` defaults to this build's AUMID and is False when there
+   is none, so `notify.toast_aumid` gives None. `notify.py` only had its docstrings updated.
+3. `packaging/build.py --suffix` (written `--suffix=-x`: argparse takes a separate value that starts with `-` for an
+   option; checked here): `check_suffix` runs first in `build()`, before any slow step; `write_build_suffix` writes the
+   file after the copies and before `precompile`, so files.txt and the zip list it; `copy_tree` never copies a
+   `build-suffix.txt` left in the source tree, so a normal build can't ship a stale one.
+4. `release-build.ps1` checks `-Suffix` first (`-cnotmatch '^-[A-Za-z0-9._-]{1,32}\z'`; `\z` because PowerShell's `$`
+   also matches before a final line end) and passes `"--suffix=$Suffix"` to build.py and smoke.py only when it isn't
+   empty, through argument arrays. `release.yml` is unchanged (no suffix).
+5. `smoke.py --suffix` runs `NAMES_PROBE` with the folder's own Python and requires `expected_names(suffix)`;
+   `test-installer.ps1` runs the same probe with the installed `current\python.exe` and compares, case included, with
+   `ShelfSync$Suffix` and `TecHaust.ShelfSync$Suffix`.
+6. `ShelfSync.nsi`: every Run value and AUMID write and delete already used `${RUN_VALUE}` / `${AUMID_KEY}` (built from
+   `${AUMID}`); only the header comment changed. A test now holds that.
+
+**Decision the brief left to me (Lead to confirm):** an invalid suffix file makes `apply_start_with_windows_safely`
+return **"failed"** (logged as a warning), not "skipped". "skipped" maps to the API's `not_installed`, which would tell
+the owner this is a development copy, which is false; "failed" says Start with Windows wasn't applied, which is true,
+and touches nothing. `ApplyOutcome` and `start_with_windows_result` keep their values; the settings API retries at the
+next save, which again touches nothing. The launcher already goes through the safe apply, so start-up logs the warning
+and carries on. Smaller choices: an empty `build-suffix.txt` counts as invalid (a suffixed build always writes a
+non-empty one, so an empty file is a broken build, never the real names); build.py keeps its own copy of the rule
+(it runs with `python -I` and doesn't import the package) and a test compares it with `names.py`'s.
+
+**Files changed:** `backend/shelfsync/platform/names.py` (new), `backend/shelfsync/platform/autostart.py`,
+`backend/shelfsync/platform/aumid.py`, `backend/shelfsync/platform/notify.py` (docstrings),
+`backend/shelfsync/api/app_settings.py` (docstring only: "failed" also covers an invalid suffix file),
+`packaging/build.py`, `packaging/smoke.py`, `packaging/release-build.ps1`, `packaging/test-installer.ps1`,
+`packaging/ShelfSync.nsi` (header comment), `tests/test_build_suffix.py` (new), `tests/test_packaging_build.py`,
+`tests/test_release_files.py`. The launcher needed no change (it names neither the Run value nor the AUMID).
+
+**Tests added (Done when):** suffixed vs normal names (`test_a_suffixed_build_carries_the_suffix_in_both_names`,
+`test_a_normal_build_or_a_development_run_uses_the_real_names`, and a throwaway copy of the package run in its own
+Python process with no file, `-rehearsal` and an invalid file); an invalid file never yields the real names (14
+parametrized contents, an unreadable file, and a hypothesis property over any bytes); the Run value, settings API
+("failed", Run key untouched), launcher and toast paths with an invalid file; build.py refuses an invalid `--suffix`
+(`check_suffix`, and `main` exits 1 before making anything) and writes the file only for a non-empty one (a stubbed
+`build()` shows it in the folder, files.txt and the zip, present at precompile, and a stale source copy not shipped);
+release-build/test-installer/NSIS text checks in `test_release_files.py`.
+
+**Commands and results:**
+- per-file while working: `uv run ruff check` / `ruff format --check` on the changed files: clean; the touched test
+  files (`test_packaging_build`, `test_build_suffix`, `test_autostart`, `test_m1b1_launcher`, `test_notify_toast`,
+  `test_app_settings`, `test_launcher`, `test_release_files`, `test_backup_misc`): 268 passed, 4 skipped (platform or
+  symlink skips that were there before), 9 deselected (Windows marks).
+- `uv run mypy`: Success, no issues in 74 source files. `uv run mypy --platform linux`: Success, 74 files.
+- `uv run bandit -r backend`: exit 0, no issues (only the existing "nosec encountered" and comment warnings).
+- PowerShell 5.1 by hand (no release build): the `-Suffix` rule refuses `rehearsal`, `-`, `-a b`, `-ok<LF>`, 33
+  characters and accepts empty, `-rehearsal`, 32 characters, `-A.b_c-1`; `& $Python @buildArgs` passes
+  `--suffix=-rehearsal` as one argument; both .ps1 files parse with no errors.
+- full suite through the queue, `bash tools/heavy.sh --log t6-pytest uv run pytest`: 2456 passed, 17 skipped, 52
+  deselected, exit 0, total coverage 93 % (`names.py` fully covered; the `aumid.py` lines still uncovered are the
+  existing registry-read lines only the Windows checks reach).
+- full lint once, through the queue: `uv run ruff check` "All checks passed!" (exit 0, `.logs/t6-ruff-check.log`);
+  `uv run ruff format --check` "167 files already formatted" (exit 0, `.logs/t6-ruff-format.log`).
+
+**Not verified:** the release build (`release-build.ps1 -Suffix -rehearsal`) was not run, as instructed: the lead runs
+it, and only it exercises the new smoke probe on the real built folder, the installed-Python check in
+test-installer.ps1, and makensis on the edited header. The Windows-marked tests (`-m windows`) weren't run: no code
+they cover changed behaviour for a given throwaway name.
+
+**Open questions:** none blocking. For the lead: the decision above ("failed"), and the `docs/11-decisions.md`
+2026-10-28 follow-up row, which this task closes for the Run value and AUMID only (the brief's out-of-scope list stays
+open).
 
 ## 5. Review
 
