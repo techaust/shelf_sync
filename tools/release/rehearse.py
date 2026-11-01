@@ -1,7 +1,9 @@
 """A local rehearsal of the updater (SYS-06, SYS-07) against a release build, with THROWAWAY roots, keys, names and
 Credential Manager service. Run by a developer on Windows, from the repository root. It never contacts GitHub, a store
-or S3, and never changes the real data folder, install folder, Run value, uninstall key, AUMID or Credential Manager
-entries: it reads them (never printing a value) before and after the run and checks they are the same.
+or S3, and never changes the real data folder, install folder, Run value, uninstall key or AUMID: it reads them (never
+printing a value) before and after the run and checks they are the same. The real Credential Manager service is never
+read at all: it is proven unreachable instead (no module of the build but `platform/secrets.py` talks to Credential
+Manager, and each copy's own Python reports the throwaway service as both its service and the store's default).
 
     PYTHONPATH=backend uv run python tools/release/rehearse.py --base <build\\ShelfSync-<v>> --work <new empty folder>
 
@@ -15,13 +17,18 @@ is a copy of it, changed in the copy only, for the rehearsal:
   * opening a browser tab does nothing (the plain launcher a switch starts would open one);
   * `shelfsync/platform/build-suffix.txt` holds a throwaway suffix, so the Run value a copy writes (it counts as an
     installed copy, and Start with Windows is on by default) and its AUMID are `ShelfSync-rehearse-<id>` and
-    `TecHaust.ShelfSync-rehearse-<id>`, never the real names. Each copy's own Python reports both before it runs.
-Then it follows the updater's sequence: install 0.0.1; update to 0.0.2 (one extra migration); roll back (backup
-restored); a tampered 0.0.3 is refused; a broken 0.0.4 (its migration fails, exit 2) is switched back. Last it removes
-everything it made and checks that: no throwaway Credential Manager entry, uninstall key, Run value, AUMID key or folder
-is left, and the real ones read the same as before.
+    `TecHaust.ShelfSync-rehearse-<id>`, never the real names;
+  * `paths.py`: a copy started without SHELFSYNC_DATA_DIR stops instead of using the real data folder (so the Run
+    value a killed run leaves behind can never start a copy on the real database at the next sign-in).
+Before a copy runs, its own Python must report the throwaway Run value, AUMID and Credential Manager service and
+refuse to find a data folder without SHELFSYNC_DATA_DIR; anything else stops the run. Then it follows the updater's
+sequence: install 0.0.1; update to 0.0.2 (one extra migration); roll back (backup restored); a tampered 0.0.3 is
+refused; a broken 0.0.4 (its migration fails, exit 2) is switched back. Last it removes everything it made and checks
+that: no throwaway Credential Manager entry, uninstall key, Run value, AUMID key or folder is left, and the real names
+and folders read the same as before.
 
-Quit ShelfSync first: the copies use the app's single-instance lock, so the rehearsal stops if a copy is running.
+Quit ShelfSync first: the copies use the app's single-instance lock, so the rehearsal stops if a copy is running. If
+the run is killed, its first lines name what to remove by hand (docs/runs/t7-rehearse-current-build.md has the steps).
 """
 
 import argparse
@@ -40,7 +47,7 @@ import sys
 import time
 import uuid
 import winreg
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ctypes import wintypes
 from datetime import UTC, datetime
@@ -58,7 +65,7 @@ from shelfsync.platform import aumid, names
 from shelfsync.platform.autostart import RUN_KEY
 from shelfsync.platform.junction import WindowsJunctions
 from shelfsync.platform.process import RealProcesses
-from shelfsync.platform.secrets import OWNED_SECRET_NAMES, SERVICE_NAME, KeyringSecretStore
+from shelfsync.platform.secrets import OWNED_SECRET_NAMES, KeyringSecretStore
 from shelfsync.platform.sockets import current_user_sid
 from shelfsync.platform.uninstall_entry import UNINSTALL_KEY
 from shelfsync.secure.token import INSTALL_TOKEN_NAME
@@ -89,6 +96,26 @@ AUMID = names.aumid_for(SUFFIX) or ""  # TecHaust.ShelfSync-rehearse-<id>
 # first and deletes at the end, so the real `...\Uninstall\ShelfSync` key is never opened for writing.
 UNINSTALL_PARENT = rf"Software\ShelfSyncRehearsal-{RUN_ID}"
 UNINSTALL_KEY_PATH = rf"{UNINSTALL_PARENT}\Uninstall"
+# A copy's data folder comes only from SHELFSYNC_DATA_DIR: without it, it stops (never %LOCALAPPDATA%\ShelfSync).
+REAL_DATA_FOLDER_LINE = '    return DataPaths(Path(local_app_data) / "ShelfSync")'
+NO_REAL_DATA_FOLDER_LINE = '    raise RuntimeError("a rehearsal copy runs only with SHELFSYNC_DATA_DIR")'
+# Only platform/secrets.py (patched to SERVICE) may talk to Credential Manager; checked in --base before anything runs.
+CREDENTIAL_CALL = re.compile(r"keyring|win32cred|Cred(Read|Write|Delete|Enumerate)")
+SECRETS_MODULE = "platform/secrets.py"
+# What each copy's own Python runs: smoke.py's names probe (it also requires the modules to be the copy's own), then
+# the Credential Manager service it would use and whether it finds a data folder without SHELFSYNC_DATA_DIR.
+COPY_PROBE_TAIL = """
+from shelfsync import paths
+from shelfsync.platform import secrets
+print(secrets.SERVICE_NAME)
+print(secrets.KeyringSecretStore.__init__.__defaults__[0])
+try:
+    paths.resolve_data_paths()
+except RuntimeError:
+    print('no-data-folder')
+else:
+    print('data-folder-found')
+"""
 
 steps: list[tuple[str, bool, str]] = []
 
@@ -217,12 +244,12 @@ _advapi32.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWO
 _advapi32.CredDeleteW.restype = wintypes.BOOL
 
 
-def credential_targets(service: str) -> list[str]:
-    """The Credential Manager target names under `service`, as keyring stores them: `<service>` and
-    `<entry>@<service>`. Only names are read."""
+def throwaway_targets() -> list[str]:
+    """The Credential Manager target names that start with the throwaway service (`ShelfSyncRehearsal-<id>`; the run id
+    makes the prefix this run's own). Only this filter is ever passed: no other credential is enumerated."""
     count = wintypes.DWORD()
     found = ctypes.POINTER(ctypes.POINTER(_CredentialHead))()
-    if not _advapi32.CredEnumerateW(None, 0, ctypes.byref(count), ctypes.byref(found)):
+    if not _advapi32.CredEnumerateW(f"{SERVICE}*", 0, ctypes.byref(count), ctypes.byref(found)):
         error = ctypes.get_last_error()
         if error == _ERROR_NOT_FOUND:
             return []
@@ -231,7 +258,14 @@ def credential_targets(service: str) -> list[str]:
         targets = [found[index].contents.TargetName or "" for index in range(count.value)]
     finally:
         _advapi32.CredFree(found)
-    return sorted(target for target in targets if target == service or target.endswith(f"@{service}"))
+    return sorted(target for target in targets if target.startswith(SERVICE))
+
+
+def throwaway_entries_left() -> list[str]:
+    """What is left under the throwaway service: targets that start with it, and each owned entry keyring still finds
+    under it (that also covers keyring's `<entry>@<service>` targets, which the prefix filter can't)."""
+    store = KeyringSecretStore(service=SERVICE)
+    return throwaway_targets() + [name for name in OWNED_SECRET_NAMES if store.get(name) is not None]
 
 
 def folder_listing(root: Path) -> dict[str, tuple[Any, ...]] | None:
@@ -262,7 +296,8 @@ def folder_listing(root: Path) -> dict[str, tuple[Any, ...]] | None:
 
 def real_state() -> dict[str, Any]:
     """What the run must leave exactly as it found it: the real names and folders (and any other ShelfSync Run value,
-    a rehearsal install's included)."""
+    a rehearsal install's included). The real Credential Manager service isn't read: `check_base` and each copy's
+    probe prove the copies can't reach it."""
     local = Path(os.environ["LOCALAPPDATA"])
     run_values = registry_values(RUN_KEY) or {}
     return {
@@ -273,7 +308,6 @@ def real_state() -> dict[str, Any]:
         },
         "the real uninstall key": registry_values(UNINSTALL_KEY),
         "the real AUMID key": registry_values(aumid.key_path(names.BASE_AUMID)),
-        "the real Credential Manager service": credential_targets(SERVICE_NAME),
         "the real data folder": folder_listing(local / "ShelfSync"),
         "the real install folder": folder_listing(local / "Programs" / "ShelfSync"),
     }
@@ -309,15 +343,29 @@ def code_differences(base: Path) -> list[str]:
     return differences
 
 
-def reported_names(folder: Path) -> list[str]:
-    """The Run value name and AUMID the copy's own Python reports (smoke.py's probe), or why it couldn't."""
+def credential_callers(base: Path) -> list[str]:
+    """The build's modules, other than `platform/secrets.py`, that name a Credential Manager API (none may)."""
+    package = base / "shelfsync"
+    return sorted(
+        found.relative_to(package).as_posix()
+        for found in package.rglob("*.py")
+        if found.relative_to(package).as_posix() != SECRETS_MODULE
+        and CREDENTIAL_CALL.search(found.read_text(encoding="utf-8"))
+    )
+
+
+def copy_report(folder: Path) -> list[str]:
+    """What the copy's own Python reports (COPY_PROBE_TAIL after smoke.py's names probe), with SHELFSYNC_DATA_DIR
+    removed from its environment, or why it couldn't."""
+    env = child_env()
+    env.pop("SHELFSYNC_DATA_DIR", None)
     done = subprocess.run(
-        [str(folder / "python.exe"), "-B", "-c", SMOKE.NAMES_PROBE],
+        [str(folder / "python.exe"), "-B", "-c", SMOKE.NAMES_PROBE + "\n" + COPY_PROBE_TAIL],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
-        env=child_env(),
+        env=env,
     )
     return done.stdout.split() if done.returncode == 0 else [f"exit {done.returncode}: {done.stderr[-300:]}"]
 
@@ -354,6 +402,7 @@ def build_version(
         "os.startfile(url)  # nosec B606",
         "None  # the rehearsal opens no browser tab",
     )
+    replace(package / "paths.py", REAL_DATA_FOLDER_LINE, NO_REAL_DATA_FOLDER_LINE)
     # The suffix the build may carry (-rehearsal) is replaced by this run's own, in the place platform/names.py reads.
     (package / "platform" / names.SUFFIX_FILE_NAME).write_text(SUFFIX, encoding="ascii", newline="")
     migrations = package / "db" / "migrations"
@@ -375,12 +424,14 @@ def build_version(
         check=True,
         env=child_env(),
     )
-    reported = reported_names(folder)
-    check(
-        f"{version}: its own Python reports the throwaway Run value and AUMID",
-        reported == [RUN_VALUE, AUMID],
+    reported = copy_report(folder)
+    if not check(
+        f"{version}: its own Python reports the throwaway Run value, AUMID and Credential Manager service (as the "
+        "service and the store's default), and finds no data folder without SHELFSYNC_DATA_DIR",
+        reported == [RUN_VALUE, AUMID, SERVICE, SERVICE, "no-data-folder"],
         " ".join(reported),
-    )
+    ):
+        raise RehearsalError(f"the {version} copy isn't safe to run: the rehearsal stops here")
     write_manifest(layout, folder, version, schema, signer)
     return folder
 
@@ -411,8 +462,8 @@ def write_manifest(layout: InstallLayout, folder: Path, version: str, schema: in
 
 
 class App:
-    def __init__(self, layout: InstallLayout, paths: DataPaths, env: dict[str, str]) -> None:
-        self.layout, self.paths, self.env = layout, paths, env
+    def __init__(self, layout: InstallLayout, paths: DataPaths, env: dict[str, str], work: Path) -> None:
+        self.layout, self.paths, self.env, self.work = layout, paths, env, work
         self.processes = RealProcesses()
 
     def start(self) -> None:
@@ -469,9 +520,23 @@ class App:
             client.close()
 
     def stop(self) -> None:
+        """End the running copy, and only if Windows says its program file is under --work (runtime.json is the
+        copy's, but a stale one could name a PID that some other program has since been given)."""
         found = self.runtime()
-        if found is not None:
-            self.processes.terminate_pid(found[1])
+        if found is None:
+            return
+        watch = self.processes.watch(found[1])
+        if watch is None:
+            return
+        try:  # the open handle keeps the PID from being reused until the process is ended
+            image = watch.image
+            inside = os.path.join(os.path.normcase(str(self.work)), "")
+            if image is not None and os.path.normcase(image).startswith(inside):
+                self.processes.terminate_pid(found[1])
+            else:
+                say(f"  (PID {found[1]} isn't a program under --work: left alone)")
+        finally:
+            watch.close()
 
 
 def wait_result(paths: DataPaths, to_version: str, newer_than: str, seconds: float = 150.0) -> SwitchResult | None:
@@ -638,58 +703,113 @@ def sequence(app: App, layout: InstallLayout, paths: DataPaths, base: Path) -> N
 # ---- clean-up --------------------------------------------------------------------------------------------------------
 
 
-def clean_up(app: App, layout: InstallLayout, paths: DataPaths, work: Path) -> None:
-    """Remove everything the run made (only names carrying this run's id, and the --work folder)."""
-    time.sleep(6.0)  # the plain launcher a switch starts (a second launch) must finish before the app is stopped
-    app.stop()
-    time.sleep(2.0)
-    # whatever is still running from the throwaway folder (nothing, normally) goes too, so the folder can be removed
+def guarded(what: str, action: Callable[[], object]) -> None:
+    """One clean-up step: a failure is a FAIL line, and the next step still runs."""
+    try:
+        action()
+    except Exception as error:
+        check(f"clean-up: {what}", False, f"{type(error).__name__}: {error}")
+
+
+def check_safely(name: str, test: Callable[[], bool]) -> None:
+    """A check whose test may itself fail (a registry or Credential Manager read): that is a FAIL, not a stop."""
+    try:
+        ok, detail = test(), ""
+    except Exception as error:
+        ok, detail = False, f"{type(error).__name__}: {error}"
+    check(name, ok, detail)
+
+
+def stop_leftovers(work: Path) -> None:
+    """End whatever still runs from --work (nothing, normally), so the folder can be removed. The path reaches
+    PowerShell through the environment, never inside the command text."""
+    command = (
+        r"$p = $env:SHELFSYNC_REHEARSAL_WORK + '\'; "
+        r"Get-Process | Where-Object { $_.Path -and "
+        r"$_.Path.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force"
+    )
     subprocess.run(
-        [
-            "powershell", "-NoProfile", "-Command",
-            f"Get-Process | Where-Object {{ $_.Path -like '{work}\\*' }} | Stop-Process -Force",
-        ],
+        ["powershell", "-NoProfile", "-Command", command],
         check=False,
-    )  # fmt: skip
-    time.sleep(1.0)
-    for path in (UNINSTALL_KEY_PATH, UNINSTALL_PARENT):  # the throwaway uninstall key goes, children first
-        with contextlib.suppress(OSError):
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+        env={**os.environ, "SHELFSYNC_REHEARSAL_WORK": str(work)},
+    )
+
+
+def delete_throwaway_run_value() -> None:
     with (
-        contextlib.suppress(OSError),
+        contextlib.suppress(FileNotFoundError),
         winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key,
     ):
         winreg.DeleteValue(key, RUN_VALUE)  # the throwaway Run value (ShelfSync-rehearse-<id>) only
+
+
+def delete_throwaway_uninstall_key() -> None:
+    for path in (UNINSTALL_KEY_PATH, UNINSTALL_PARENT):  # children first
+        with contextlib.suppress(FileNotFoundError):
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+
+
+def delete_throwaway_credentials() -> None:
     store = KeyringSecretStore(service=SERVICE)
     for name in OWNED_SECRET_NAMES:  # removing one that was never stored is not an error
-        try:
-            store.delete(name)
-        except Exception as error:
-            say(f"(a throwaway Credential Manager entry could not be removed: {type(error).__name__})")
-    with contextlib.suppress(OSError):  # anything else under the throwaway service (a keyring leftover copy)
-        for target in credential_targets(SERVICE):
-            _advapi32.CredDeleteW(target, _CRED_TYPE_GENERIC, 0)
-    if os.path.lexists(layout.current):
-        with contextlib.suppress(Exception):
-            WindowsJunctions().remove(layout.current)
+        store.delete(name)
+    for target in throwaway_targets():  # anything else whose name starts with the throwaway service
+        _advapi32.CredDeleteW(target, _CRED_TYPE_GENERIC, 0)
+
+
+def keep_logs(paths: DataPaths) -> None:
     keep = REPO / ".logs" / "rehearsal"  # what a failed run needs: the app's log and the updater's two files
     shutil.rmtree(keep, ignore_errors=True)
     for source in (paths.logs, UpdatePaths(paths).root):
         if source.exists():
             shutil.copytree(source, keep / source.name, ignore=shutil.ignore_patterns("downloads"), dirs_exist_ok=True)
-    shutil.rmtree(work, ignore_errors=True)
+
+
+def remove_junction(layout: InstallLayout) -> None:
+    if os.path.lexists(layout.current):
+        WindowsJunctions().remove(layout.current)
+
+
+def clean_up(app: App, layout: InstallLayout, paths: DataPaths, work: Path) -> None:
+    """Remove everything the run made (only names carrying this run's id, and the --work folder). Each step is
+    guarded, so one that fails never skips the others."""
+    time.sleep(6.0)  # the plain launcher a switch starts (a second launch) must finish before the app is stopped
+    guarded("stop the running copy", app.stop)
+    time.sleep(2.0)
+    guarded("stop what still runs from --work", lambda: stop_leftovers(work))
+    time.sleep(1.0)
+    guarded("remove the throwaway Run value", delete_throwaway_run_value)
+    guarded("remove the throwaway uninstall key", delete_throwaway_uninstall_key)
+    guarded("remove the throwaway Credential Manager entries", delete_throwaway_credentials)
+    guarded("remove the current junction", lambda: remove_junction(layout))
+    guarded("keep the logs in .logs/rehearsal", lambda: keep_logs(paths))
+    guarded("remove --work", lambda: shutil.rmtree(work, ignore_errors=True))
 
 
 def check_clean(work: Path, before: dict[str, Any]) -> None:
     say("\n6. Nothing is left, and nothing real was touched")
-    check(f"no Credential Manager entry under the throwaway service {SERVICE}", credential_targets(SERVICE) == [])
-    check("the throwaway uninstall key is gone", not registry_key_exists(UNINSTALL_PARENT))
-    check(f"the throwaway Run value {RUN_VALUE} is gone", run_value(RUN_VALUE) is None)
-    check(f"no AUMID key for {AUMID} (the app only reads it)", not registry_key_exists(aumid.key_path(AUMID)))
-    check("the --work folder is gone", not os.path.lexists(work))
-    after = real_state()
+    check_safely(f"nothing is left under the throwaway Credential Manager service {SERVICE}",
+                 lambda: throwaway_entries_left() == [])  # fmt: skip
+    check_safely("the throwaway uninstall key is gone", lambda: not registry_key_exists(UNINSTALL_PARENT))
+    check_safely(f"the throwaway Run value {RUN_VALUE} is gone", lambda: run_value(RUN_VALUE) is None)
+    check_safely(f"no AUMID key for {AUMID} (the app only reads it)",
+                 lambda: not registry_key_exists(aumid.key_path(AUMID)))  # fmt: skip
+    check_safely("the --work folder is gone", lambda: not os.path.lexists(work))
+    try:
+        after: dict[str, Any] | None = real_state()
+    except Exception as error:
+        after = None
+        check("the real names and folders can be read again", False, f"{type(error).__name__}: {error}")
     for name, found in before.items():
-        check(f"{name}: the same as before the run", after[name] == found)
+        check(f"{name}: the same as before the run", after is not None and after[name] == found)
+
+
+def summary() -> int:
+    failed = [name for name, ok, _ in steps if not ok]
+    say(f"\n{len(steps) - len(failed)} of {len(steps)} checks passed")
+    for name in failed:
+        say(f"FAILED: {name}")
+    return 1 if failed else 0
 
 
 def main() -> int:
@@ -707,35 +827,37 @@ def main() -> int:
         raise SystemExit(f"the throwaway suffix {SUFFIX!r} breaks the suffix rule")
     if shelfsync_running():
         raise SystemExit("ShelfSync is running: quit it from its tray icon first (the copies use its single lock)")
+    # What a killed run leaves behind, named first so it can be removed by hand (the run file has the steps).
+    say(f"Throwaway names of this run (id {RUN_ID}): Credential Manager service {SERVICE}; Run value {RUN_VALUE} in "
+        rf"HKCU\{RUN_KEY}; uninstall key HKCU\{UNINSTALL_PARENT}; AUMID {AUMID}; folder {work}")  # fmt: skip
     BASE_SCHEMA = latest_schema(base / "shelfsync" / "db" / "migrations")  # the build's own, not this repo's
     differences = code_differences(base)
     if differences:
         shown = ", ".join(differences[:5]) + (", ..." if len(differences) > 5 else "")
         say(f"(note: this checkout's code differs from the build's in {len(differences)} files: {shown}; the build's "
             "code is what runs)")  # fmt: skip
-    say(f"Throwaway names of this run: service {SERVICE}, Run value {RUN_VALUE}, AUMID {AUMID}")
+    callers = credential_callers(base)
+    if not check(f"--base: no module but {SECRETS_MODULE} names a Credential Manager API", callers == [],
+                 ", ".join(callers)):  # fmt: skip
+        return summary()  # nothing was made
     before = real_state()
     layout = InstallLayout(work / "Programs" / "ShelfSync")
     paths = DataPaths(work / "data")
-    paths.root.mkdir(parents=True)
     env = child_env()
     env["SHELFSYNC_DATA_DIR"] = str(paths.root)
-    app = App(layout, paths, env)
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY_PATH) as throwaway:  # the throwaway uninstall key
-        winreg.SetValueEx(throwaway, "DisplayName", 0, winreg.REG_SZ, "ShelfSync (rehearsal)")
-        winreg.SetValueEx(throwaway, "DisplayVersion", 0, winreg.REG_SZ, "0.0.1")
+    app = App(layout, paths, env, work)
     try:
+        paths.root.mkdir(parents=True)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY_PATH) as throwaway:  # the throwaway uninstall key
+            winreg.SetValueEx(throwaway, "DisplayName", 0, winreg.REG_SZ, "ShelfSync (rehearsal)")
+            winreg.SetValueEx(throwaway, "DisplayVersion", 0, winreg.REG_SZ, "0.0.1")
         sequence(app, layout, paths, base)
     except Exception as error:
         check("the sequence ran to the end", False, f"{type(error).__name__}: {error}")
     finally:
         clean_up(app, layout, paths, work)
-    check_clean(work, before)
-    failed = [name for name, ok, _ in steps if not ok]
-    say(f"\n{len(steps) - len(failed)} of {len(steps)} checks passed")
-    for name in failed:
-        say(f"FAILED: {name}")
-    return 1 if failed else 0
+        check_clean(work, before)
+    return summary()
 
 
 if __name__ == "__main__":

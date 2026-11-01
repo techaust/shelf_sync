@@ -19,7 +19,7 @@ SYS-06 and SYS-07 (the updater: install, update, roll back, refuse a tampered re
 2. **Throwaway Run value and AUMID (new since T6):** every fake version carries a valid throwaway `build-suffix.txt` (in the place `platform/names.py` reads it), so Start with Windows and toasts use `ShelfSync<suffix>` and `TecHaust.ShelfSync<suffix>`, never the real names. Prove it in the run (read the names back, or check the stamp).
 3. **The overlay:** `OVERLAY` and the copy of `cryptography`/`cffi`/`pycparser` from the venv date from m1b.2, when the base build didn't ship them. Keep, change or drop each, with the reason in the report.
 4. **Run it for real** against a fresh build from current `main`: `release-build.ps1 … -Suffix -rehearsal` (the CLAUDE.md "Release build" command; a new work folder of at most 60 characters, and run from a short path: T6 found that a long worktree path breaks `compileall` past 260 characters). Then `PYTHONPATH=backend uv run python tools/release/rehearse.py --base <the embedded build folder> --work <a new empty short folder>`. Every step in its sequence must report ok: install 0.0.1, update to 0.0.2 (one extra migration), roll back (backup restored), a tampered 0.0.3 refused, a broken 0.0.4 (its migration fails, exit 2) switched back.
-5. **Clean up:** afterwards no throwaway Credential Manager entry, uninstall key, Run value or folder is left (check each), and nothing real was touched: the `ShelfSync` service, the `ShelfSync` Run value, the real uninstall key, the real data and install folders.
+5. **Clean up:** afterwards no throwaway Credential Manager entry, uninstall key, Run value or folder is left (check each), and nothing real was touched: the `ShelfSync` Run value, the real uninstall key, the real data and install folders (each read before and after, and the same). The real `ShelfSync` Credential Manager service is **not read**: it is proven unreachable instead (analyst C3: only `platform/secrets.py` talks to Credential Manager, and each copy reports the throwaway service).
 6. **Docs:** the docstring's "two wiring changes of this task" text, and any runbook or run file that names the rehearsal command, match what it does now.
 
 ### Files
@@ -33,7 +33,7 @@ SYS-06 and SYS-07 (the updater: install, update, roll back, refuse a tampered re
 
 ### Done
 - The full rehearsal runs to the end with every check ok, against a fresh release build from current `main`; the output is in `.logs/t7-rehearse.log` and summarised in the report.
-- The cleanup check passes, and the real names were never touched.
+- The cleanup check passes, and the real names were never touched (the real Credential Manager service proven unreachable, never read).
 - The builder report lists each kept, changed and dropped patch with its reason.
 - The full `uv run pytest` still passes (nothing in `tests/` should change; if a test covers rehearse.py, it passes).
 
@@ -71,7 +71,49 @@ _(builder, 2026-11-02; branch `t7/rehearse-current-build` from `fix/rehearse-cur
 2. **Run from inside the Claude app.** Its MSIX package keeps a private copy of new `%LOCALAPPDATA%` folders (04-A V36), and maybe of HKCU writes. The rehearsal reads and writes in the same context, so its before/after checks hold for that context; a write that went to the real Windows view (or only to the private one) would not be told apart. Running it in Windows PowerShell outside Claude would avoid the question; the brief has me run it.
 3. **Expected checks:** 27 as before, plus 4 name probes, 1 Run value check, 11 clean-up checks: **43**.
 
-**Stage 2 plan (after GO).** A short detached worktree of this branch (`C:\Users\r4rup\AppData\Local\Temp\sst7`; the 260-character `compileall` limit), `build-cache\` copied from the main checkout if present (otherwise `build.py` downloads the pinned embeddable zip from python.org, checked by SHA-256), `npm ci` and `npm run build` in its `frontend\`, then through `tools/heavy.sh`: `release-build.ps1 -Suffix -rehearsal -Work C:\Users\r4rup\AppData\Local\Temp\ssrbt7a`, the rehearsal (`--base <that worktree>\build\ShelfSync-0.1.0 --work C:\Users\r4rup\AppData\Local\Temp\sst7r`) logged to `.logs/t7-rehearse.log`, the full `uv run pytest`; then the docs and §3.
+**Stage 2 plan (after GO).** _(Superseded by the lead's locations below.)_ A short detached worktree of this branch, `build-cache\` copied from the main checkout, `npm ci` and `npm run build` in its `frontend\`, then through `tools/heavy.sh`: the release build, the rehearsal logged to `.logs/t7-rehearse.log`, the full `uv run pytest`; then the docs and §3.
+
+### Analyst: CHANGE (C1–C7)
+_(analyst's early check, relayed by the lead, 2026-11-02; builder's resolutions, commit after 2a43438. The patch list itself was confirmed: every drop is in `main`, every kept target matches once, the suffix is valid and reaches every copy.)_
+
+| # | Finding | Resolution |
+|---|---|---|
+| C1 (high) | The name probe only recorded a FAIL; the copy was still signed and run. | **Done.** One probe and one check per copy (`copy_report`); anything but the expected five lines records the FAIL and raises `RehearsalError` before `write_manifest`, so the copy is never signed or started, and the clean-up still runs. |
+| C2 (high) | A hard-killed run leaves `Run\ShelfSync-rehearse-<id>`; at the next sign-in that copy would start with no `SHELFSYNC_DATA_DIR` and use the **real** data folder (real database migrated to 9001/9002). | **Done.** (a) Copy-only patch in `shelfsync/paths.py`: `    return DataPaths(Path(local_app_data) / "ShelfSync")` (exactly once) becomes `    raise RuntimeError("a rehearsal copy runs only with SHELFSYNC_DATA_DIR")`, so such a start stops at "the data folder is unknown" (`run_application`, exit 3) before any lock or database. Gate: the copy's own Python, with `SHELFSYNC_DATA_DIR` removed from its environment, must print `no-data-folder` from `resolve_data_paths()`. (b) Stage 2 runs the rehearsal with `run_in_background` and never stops it. (c) The first line names the run id, the throwaway service, the Run value with its key, `HKCU\Software\ShelfSyncRehearsal-<id>`, the AUMID and the `--work` folder; the manual steps are below. |
+| C3 (medium) | The unfiltered `CredEnumerateW` returned every credential's structure to the process. | **Done.** `throwaway_targets()` passes only `f"{SERVICE}*"` (the run id makes it this run's own); `throwaway_entries_left()` adds `KeyringSecretStore(SERVICE).get(name) is None` for each `OWNED_SECRET_NAMES` (covers keyring's `<entry>@<service>` targets). The real-service read and the `SERVICE_NAME` import are gone. Proof by construction instead: (i) the per-copy probe prints `secrets.SERVICE_NAME` and `secrets.KeyringSecretStore.__init__.__defaults__[0]`, both must equal the throwaway service (part of the C1 gate); (ii) before anything is made, one check that no `shelfsync/**/*.py` of `--base` other than `platform/secrets.py` matches `keyring|win32cred|Cred(Read|Write|Delete|Enumerate)` (a failure ends the run with nothing made). Docstring and the brief's item 5 and Done now say the real service is not read but proven unreachable. |
+| C4 (medium) | `clean_up` could stop halfway (the logs copy raising skipped `rmtree(work)` and `check_clean`); the uninstall key was made outside the `try`. | **Done.** Each clean-up step runs through `guarded()` (a failure is a `clean-up: …` FAIL line and the next step runs); every clean-up check runs through `check_safely()`; `clean_up` and `check_clean` both run in the `finally`; the data folder and the throwaway uninstall key are made inside the `try`. |
+| C5 (low) | `App.stop` ended whatever PID `runtime.json` named. | **Done.** It opens a watch on the PID (`self.processes.watch`), and terminates only while holding it, only if the normcased image starts with the normcased `--work` path plus the separator; otherwise it says so and leaves it. |
+| C6 (low) | The PowerShell kill put the path inside the command with `-like`. | **Done.** The path goes through `SHELFSYNC_REHEARSAL_WORK`; the filter is `$_.Path -and $_.Path.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase)` with `$p` the path plus `\`. |
+| C7 | Report the script's own count. | **Will do** in §3: the script's "N of N checks passed" line, quoted as printed (the planned total is now 27 + 4 copy probes + 1 Run value + 1 `--base` check + 5 throwaway + 5 real = 43, but the report quotes the run). |
+
+**Checked offline** (no build, no Windows state; the venv's Python stood in for a copy's, as `tests/test_build_suffix.py` does): all seven copy patches match exactly once on a scratch copy of `backend/shelfsync`; the probe on the patched copy prints `ShelfSync-rehearse-<id> TecHaust.ShelfSync-rehearse-<id> ShelfSyncRehearsal-<id> ShelfSyncRehearsal-<id> no-data-folder` (gate passes); on the unpatched checkout it prints `ShelfSync TecHaust.ShelfSync ShelfSync ShelfSync data-folder-found` (gate fails, as it must); the `--base` scan finds nothing in today's package and finds a planted `import keyring` in `api/`. `ruff check`, `ruff format --check`, `mypy --explicit-package-bases` on `rehearse.py`: clean.
+
+**Stage 2 locations (lead).** The detached worktree at `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\sst7` (so `--base` is `…\sst7\build\ShelfSync-0.1.0`), `--work` `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\sst7r`, and the release build's `-Work` `C:\Users\r4rup\AppData\Local\Temp\ssrbt7a` (≤ 60 characters). Not under `%LOCALAPPDATA%`, where a build made inside Claude may exist only in the app's private copy.
+
+**Open (lead's decision):** T7 merges on the run inside Claude; **the owner's run outside Claude** (Windows PowerShell) is recorded as open, with the analyst's PowerShell steps, carried to [10](../10-status.md) by the lead.
+
+#### If a rehearsal run is killed
+The first line of its output (`.logs/t7-rehearse.log`) names the run id `<id>` and the `--work` folder `<work>`. In Windows PowerShell (in the same place the run was started: inside the Claude app if it ran there), one command at a time, with `<id>` and `<work>` replaced:
+
+1. End anything still running from the folder:
+   ```
+   $p = '<work>\'; Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force
+   ```
+2. Remove the throwaway Run value (Start with Windows):
+   ```
+   Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ShelfSync-rehearse-<id>'
+   ```
+3. Remove the throwaway uninstall key:
+   ```
+   Remove-Item -Path 'HKCU:\Software\ShelfSyncRehearsal-<id>' -Recurse
+   ```
+4. Remove the throwaway Credential Manager entries: Start → type **Credential Manager** → open it → **Windows Credentials** → under **Generic Credentials**, each entry whose name starts with `ShelfSyncRehearsal-<id>` → expand it → **Remove** → **Yes**.
+5. Remove the folder (`rmdir` doesn't follow the `current` junction):
+   ```
+   cmd /c rmdir /s /q "<work>"
+   ```
+
+Even if step 2 is missed, the copy the Run value names stops at once at the next sign-in (C2a: no `SHELFSYNC_DATA_DIR`, so no data folder), and touches nothing real.
 
 ## 3. Builder report
 
