@@ -1,13 +1,16 @@
 /* ShelfSync component tokens: each theme scope is written once, here, not once per stylesheet (T5). Hand-written,
    not generated: every value is a semantic token or a CSS keyword, no brand data. Unlayered, like the token files.
+   As the CSS Custom Properties spec defines it (browser rendering is checked on the PC; not yet recorded in 04-A):
    1. Component dark tokens (--<component>-<property>-dark) are set only in the two dark scopes, and a rule reads one
       with its light value as the fallback: var(--card-border-dark, var(--color-border)). Not also set on :root for
-      light: a var() inside a custom property is substituted where it is declared, so :root's colour would be frozen
-      and .tone-dark (which redefines the semantic tokens) could no longer reach the rule; a fallback is substituted
-      at the element. Dark values from :root are safe: .tone-dark's semantic values are the dark ones.
+      light: a var() in a custom property's value is substituted on the element that declares it, so :root's colour
+      would be frozen and .tone-dark (which redefines the semantic tokens) could no longer reach the rule; a fallback
+      is substituted on the element itself. Dark values from :root are safe: .tone-dark's semantic values are the
+      dark ones.
    2. Theme switches, for .store-dot, whose colours are set on each element from store data: --theme-light and
-      --theme-dark are a single space (empty) while that theme is in force, and `initial` (guaranteed-invalid, so a
-      var() fallback is used) otherwise. var(--theme-dark, X) reads "X unless dark".
+      --theme-dark are a single space (an empty value) while that theme is in force, and `initial` (the
+      guaranteed-invalid value, for which var() uses its fallback) otherwise. var(--theme-dark, X) reads "X unless
+      dark".
    The two dark forms (the system-dark media query while data-theme is absent, and the Dark override) must declare
    the same tokens with the same values; component-tokens.test.ts checks that, and every resolved colour. */
 
