@@ -2,9 +2,9 @@
 // fake answers and fake timers: a 202 or no answer → the restart panel; no answer for 3 minutes → the panel anyway;
 // confirm_required → ask again; a 409 → its 13 line; the poll's outcome → reload or "a new tab opened".
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, ApiUnreachableError } from "../../api/client";
-import type { Clock } from "../../lib/restartPoll";
-import { POLL_EVERY_MS } from "../../lib/restartPoll";
+import { ApiError, ApiUnreachableError } from "../api/client";
+import type { Clock } from "./restartPoll";
+import { POLL_EVERY_MS } from "./restartPoll";
 import { createSwitchStore, type PollAnswers, SEND_WAIT_MS } from "./switchStore";
 
 const clock: Clock = {

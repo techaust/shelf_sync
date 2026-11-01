@@ -14,6 +14,7 @@ import { ApiError } from "../../api/client";
 import { useServices } from "../../app/services";
 import { useStoresQuery } from "../../app/useStores";
 import { helpStore } from "../../components/help/helpModel";
+import { useSwitchPhase } from "../../lib/switchStore";
 import { localWhen } from "../../lib/time";
 import {
   BackupFailed,
@@ -40,7 +41,6 @@ import {
   sniffEncrypted,
 } from "./backupModel";
 import { B } from "./backupWording";
-import { useSwitchPhase } from "./switchStore";
 
 /** Runs a focus move after the next render, once what it moves to is on the page. */
 function useAfterRender(): (run: () => void) => void {
