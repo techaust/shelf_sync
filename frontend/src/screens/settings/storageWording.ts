@@ -22,7 +22,8 @@ export const ST = {
   endpointError: "Use an address that starts with https://. http:// only works for this PC (127.0.0.1 or localhost).",
   region: "Region",
   regionHint: "Region, for example ap-south-1.",
-  regionError: "Use lowercase letters, digits and hyphens, 2 to 32 characters.",
+  regionError:
+    "Use lowercase letters, digits and hyphens, 2 to 32 characters, not only digits, and not starting or ending with a hyphen.",
   bucket: "Bucket",
   bucketHint: "The S3 bucket ShelfSync uploads to.",
   bucketError:

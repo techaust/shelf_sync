@@ -34,7 +34,9 @@ DEFAULTS: dict[str, Any] = {
     "download_link_template": DEFAULT_LINK_TEMPLATE,
 }
 
-_REGION = re.compile(r"[a-z0-9-]{2,32}")
+# A region is a DNS label botocore accepts (`botocore.utils.validate_region_name`: not all digits, no hyphen at either
+# end), here also lowercase and 2 to 32 characters. One rule for the save and the Storage Test (M2.7 review).
+_REGION = re.compile(r"(?![0-9]+$)(?!-)[a-z0-9-]{2,32}(?<!-)")
 _BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 _IPV4_SHAPE = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}")
 # S3's general purpose bucket naming rules (docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html, read
@@ -82,7 +84,10 @@ def check_s3_endpoint(value: str) -> None:
 
 def check_s3_region(value: str) -> None:
     if value != "" and _REGION.fullmatch(value) is None:
-        raise ValueError("Setting 's3_region' must be empty or 2 to 32 lowercase letters, digits and hyphens.")
+        raise ValueError(
+            "Setting 's3_region' must be empty or 2 to 32 lowercase letters, digits and hyphens, not all digits and "
+            "not starting or ending with a hyphen."
+        )
 
 
 def check_s3_bucket(value: str) -> None:

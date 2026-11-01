@@ -1,6 +1,6 @@
 """SET-02: the storage settings (limits, defaults) and the Settings > Storage API (the settings, the two key pairs).
 
-The S3 Test is not here: it needs boto3 (M2.7). One test pins that no such route exists yet."""
+The Storage Test (M2.7) is in `test_storage_test.py`; here only its route joins the set of storage routes."""
 
 import json
 import sqlite3
@@ -13,7 +13,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from shelfsync.api.storage import S3_RO_PATH, S3_RW_PATH, STORAGE_SETTINGS_PATH, StorageService
+from shelfsync.api.storage import S3_RO_PATH, S3_RW_PATH, STORAGE_SETTINGS_PATH, STORAGE_TEST_PATH, StorageService
 from shelfsync.db.migrate import migrate
 from shelfsync.db.settings import (
     DEFAULT_LINK_TEMPLATE,
@@ -126,7 +126,24 @@ def test_a_region_is_empty_or_lowercase_words(value: str) -> None:
     check_s3_region(value)
 
 
-@pytest.mark.parametrize("value", ["a", "x" * 33, "AP-south-1", "ap_south_1", "ap south", "ap-south-1\n", "région"])
+@pytest.mark.parametrize(
+    "value",
+    # the last five: botocore refuses an all-digit region or one with a hyphen at either end (M2.7 review)
+    [
+        "a",
+        "x" * 33,
+        "AP-south-1",
+        "ap_south_1",
+        "ap south",
+        "ap-south-1\n",
+        "région",
+        "12",
+        "007",
+        "eu-west-",
+        "-eu",
+        "--",
+    ],
+)
 def test_other_regions_are_refused(value: str) -> None:
     with pytest.raises(ValueError, match="s3_region"):
         check_s3_region(value)
@@ -634,7 +651,7 @@ def test_the_secret_store_is_never_written_by_a_get(rig: StorageRig) -> None:
     assert rig.secrets.sets == 0
 
 
-# ---- the guard, and what is not there yet ----------------------------------------------------------------------------
+# ---- the guard, and the set of routes --------------------------------------------------------------------------------
 
 NEW_ROUTES = {
     ("GET", STORAGE_SETTINGS_PATH),
@@ -643,14 +660,15 @@ NEW_ROUTES = {
     ("DELETE", S3_RW_PATH),
     ("PUT", S3_RO_PATH),
     ("DELETE", S3_RO_PATH),
+    ("POST", STORAGE_TEST_PATH),
 }
 
 
-def test_the_six_routes_exist_and_there_is_no_test_route_yet(rig: StorageRig) -> None:
+def test_the_seven_routes_exist_and_no_other_storage_route(rig: StorageRig) -> None:
     routes = set(api_routes(rig.harness.app))
     assert routes >= NEW_ROUTES
     storage_like = {(m, p) for m, p in routes if "storage" in p or "s3" in p}
-    assert storage_like == NEW_ROUTES  # nothing else: no Test route until boto3 is approved (M2.7)
+    assert storage_like == NEW_ROUTES  # nothing else (the Test route came with M2.7)
 
 
 def test_every_new_route_needs_a_session(rig: StorageRig) -> None:

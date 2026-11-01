@@ -187,11 +187,23 @@ def set_log_retention(handler: TimedRotatingFileHandler, retention_days: int) ->
         handler.release()
 
 
+# The levels the HTTP libraries are held at, whatever else sets the level. Nothing in ShelfSync logs a URL.
+QUIET_LOGGERS: dict[str, int] = {
+    # httpx logs every request at INFO with its full URL (a store's address, a signed link's query)
+    "httpx": logging.WARNING,
+    "httpcore": logging.WARNING,
+    # the S3 client (M2.7): at DEBUG botocore logs request headers and URLs (the endpoint, bucket and object key)
+    "botocore": logging.WARNING,
+    "boto3": logging.WARNING,
+    "s3transfer": logging.WARNING,
+    # urllib3's WARNINGs carry the full URL (a header it can't parse, a host name mismatch, a retried connection)
+    "urllib3": logging.ERROR,
+}
+
+
 def _quiet_http_loggers() -> None:
-    """httpx logs every request at INFO with its full URL (a store's address, a signed link's query). Nothing in
-    ShelfSync logs a URL, so both HTTP libraries are held at WARNING whatever else sets the level."""
-    for name in ("httpx", "httpcore"):
-        logging.getLogger(name).setLevel(logging.WARNING)
+    for name, level in QUIET_LOGGERS.items():
+        logging.getLogger(name).setLevel(level)
 
 
 def configure_logging(logs_dir: Path, retention_days: int) -> TimedRotatingFileHandler:

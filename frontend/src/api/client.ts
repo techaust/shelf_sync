@@ -53,6 +53,8 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   export_not_encrypted: true,
   backup_failed: true,
   too_many_stores: true,
+  // Storage Test (M2.7): 409 storage_not_set (and busy, keys_missing, secrets_unavailable above)
+  storage_not_set: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 

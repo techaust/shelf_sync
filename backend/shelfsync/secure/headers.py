@@ -56,6 +56,9 @@ ErrorCode = Literal[
     "export_not_encrypted",
     "backup_failed",
     "too_many_stores",
+    # Storage Test (M2.7): 409 `storage_not_set` (region or bucket empty, or a stored setting invalid); also `busy`,
+    # `keys_missing` (409) and `secrets_unavailable` (503), above
+    "storage_not_set",
 ]
 
 CONTENT_SECURITY_POLICY = (

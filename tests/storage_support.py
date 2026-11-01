@@ -1,5 +1,5 @@
 """Helpers for the storage tests (M2.3): fake S3 key values and an app wired to a storage service with a secret store
-that can be made to fail. No S3 call exists in this code, so there is no fake S3."""
+that can be made to fail. The S3 side of the Storage Test (moto, canned answers, the key guard) is in s3_support.py."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -39,9 +39,10 @@ class StorageRig:
     client: TestClient
 
 
-def make_storage_rig(secrets: FailingSecretStore | None = None) -> StorageRig:
+def make_storage_rig(secrets: FailingSecretStore | None = None, **seams: Any) -> StorageRig:
+    """`seams` go to the service (the Storage Test's client factory, clocks and time limits)."""
     secret_store = secrets if secrets is not None else FailingSecretStore()
-    service = StorageService.development(secret_store)
+    service = StorageService.development(secret_store, **seams)
     install = MemorySecretStore()
     clock = FakeClock()
     app = create_app(47615, InstallToken(install), clock, ui_dir=None, storage=service)

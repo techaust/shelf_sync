@@ -228,6 +228,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Storage */
+        post: operations["test_storage_api_storage_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stores": {
         parameters: {
             query?: never;
@@ -510,7 +527,7 @@ export interface components {
              * Error
              * @enum {string}
              */
-            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty" | "export_not_encrypted" | "backup_failed" | "too_many_stores";
+            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty" | "export_not_encrypted" | "backup_failed" | "too_many_stores" | "storage_not_set";
         };
         /** ExportRequest */
         ExportRequest: {
@@ -671,6 +688,45 @@ export interface components {
             s3_endpoint: string;
             /** S3 Region */
             s3_region: string;
+        };
+        /** StorageTestResponse */
+        StorageTestResponse: {
+            /** Latency Ms */
+            latency_ms: number;
+            /** Left Behind */
+            left_behind: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Steps */
+            steps: components["schemas"]["StorageTestStep"][];
+            /** Tested At */
+            tested_at: string;
+        };
+        /** StorageTestStep */
+        StorageTestStep: {
+            /** Aws Code */
+            aws_code: string | null;
+            /** Http Status */
+            http_status: number | null;
+            /**
+             * Key Pair
+             * @enum {string}
+             */
+            key_pair: "rw" | "ro";
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Reason */
+            reason: ("access_denied" | "key_unknown" | "secret_wrong" | "clock_wrong" | "bucket_missing" | "wrong_region" | "not_found" | "mismatch" | "confirm_forbidden" | "still_there" | "refused" | "server_error" | "unreachable" | "timeout" | "tls_error" | "bad_response") | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "passed" | "failed" | "not_run";
+            /**
+             * Step
+             * @enum {string}
+             */
+            step: "write" | "read" | "delete";
         };
         /**
          * StorageValues
@@ -1453,6 +1509,44 @@ export interface operations {
             };
             /** @description Unprocessable Content */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    test_storage_api_storage_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageTestResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
