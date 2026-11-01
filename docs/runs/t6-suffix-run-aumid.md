@@ -1,6 +1,6 @@
 Status: open
 Tier: B
-Usage: lead claude-opus-5-5/high: 5-h 32 % at the start (2026-11-02)
+Usage: lead claude-opus-5-5/high [none]: 5-h 32 % at the start · builder claude-opus-5-5/high [none; Context7 windows-toasts]: 5-h 35 → 61 % · analyst claude-opus-5-5/high [none]: 5-h 61 → 75 % · reviewer claude-opus-5-5/high [code-review, security-review] (+ its general-purpose helper, Opus 5.5 high): 5-h 75 % → window reset → 16 % · builder (fixes) claude-opus-5-5/high [none]: 5-h 16 → 23 % · reviewer (re-check) claude-opus-5-5/high [code-review, security-review] (+ helper, Opus 5.5 high): 5-h 23 → 30 % (all 2026-11-02, from `node tools/model-audit.mjs 2026-11-01`; its "no skill loaded" flags on the builders and the analyst are expected: no skill in 09 §3 applies to their part, and Context7 is a tool, not a skill)
 
 # T6: a `-Suffix` build uses suffixed names for the Run value and the AUMID
 
@@ -200,8 +200,70 @@ both sides is meant to cover that). PowerShell 7 isn't installed here, so the pr
 The real-symlink test of E3 is skipped on this account (it runs where symlinks can be made, e.g. CI on Linux).
 
 ## 5. Review
+_(reviewer: Opus 5.5 high, `code-review` + `security-review`, 2026-11-02, on 5883279..aab5186)_ **APPROVE**, 8.5/10. No
+critical, high or medium findings. The fail-safe holds (no stamp → real names; invalid or unreadable → None, which
+stops before the Run key is opened and sends toasts with no AUMID); a normal build is unchanged; the tests prove
+suffixed versus normal names on a real copy of the package; the NSIS writes and deletes all use `${RUN_VALUE}` and
+`${AUMID_KEY}`; the PowerShell behaves the same on 5.1 and pwsh. `security-review`: nothing at confidence 8 or above
+(the suffix is checked before it reaches makensis, the registry names or the uninstaller's `--service`; the stamp is
+plain ASCII, never run). Findings, all low:
+1. `-Tag` and `-Suffix` (and `build.py --tag --suffix=`) could be combined into a release-shaped zip carrying a stamp:
+   every real install that updated to it would add a second Run value. → fixed (refused in both).
+2. Library behaviour stated as fact without a 04-A row (argparse and a separate `-rehearsal` value; PowerShell `$`
+   versus `\z`). → fixed (a test pins argparse; the PowerShell comment states intent).
+3. `aumid.AUMID` and `autostart.VALUE_NAME` copy `names.*` at import. → fixed (a comment at each names the copy to
+   patch).
+
+The reviewer agreed with the early check's E2–E4 as low, and noted that E1 (an update drops the suffix) would make a
+rehearsal copy write the **real** Run value after an update, so its guard must land before `release_key.PUBLIC_KEY` is
+set.
+
+**Re-check of the fix diff** _(reviewer: Opus 5.5 high, `code-review` + `security-review`, on aab5186..468b636)_:
+**APPROVE**, 9/10. E2, E3, E4, R1, R2a, R2b and R3 all fixed; no new finding; 149 passed, 3 skipped. Optional lows it
+raised outside the fix diff (follow-ups, not done here): `ShelfSync.nsi` doesn't check the suffix rule itself when
+`makensis /DSUFFIX` is run by hand; `build.py`'s `ignore_patterns("build-suffix.txt")` skips that name at any depth,
+not only in `shelfsync/platform/`; `names.py` also accepts a lone trailing `\r`, wider than its docstring (harmless:
+the rule still applies).
 
 ## 6. Integration notes
+_(lead, 2026-11-02)_ Both builders worked in their own worktrees and fast-forwarded onto this branch; their worktrees
+were removed. `origin/main` (#37 boto3/moto lock, #38 and #39 UI refactors) was merged as 15d7ac6, with no overlap with
+T6's files. The app's sync tool stopped on "Committer identity unknown" on the host, so the lead merged with the
+repo-local identity.
+
+Checked here on 15d7ac6 before the push:
+- `uv run ruff check`, `ruff format --check`, `mypy`, `mypy --platform linux`, `bandit -r backend` and the full
+  `pytest`: results in the PR description (logs `.logs/t6-final-*.log`).
+- **The release build** (`release-build.ps1 … -Suffix -rehearsal`, work folder `%TEMP%\ssrbt6c`) **passed**. The smoke
+  test reports "the Run value and AUMID are ShelfSync-rehearsal and TecHaust.ShelfSync-rehearsal", the installer test's
+  new check "the installed Python uses the Run value ShelfSync-rehearsal and the AUMID TecHaust.ShelfSync-rehearsal" is
+  ok, and all installer checks passed (log `.logs/t6-release-build-final.log`).
+- It was run from a short detached worktree (`%TEMP%\ss6b`) at the same commit. From this worktree's long path,
+  build.py's compileall step failed with FileNotFoundError on a cryptography `.pyc` temp file past Windows'
+  260-character limit: a limit of this worktree's path, not a T6 defect (CLAUDE.md's 60-character rule covers only
+  `-Work`).
+
+**Not verified:**
+- The `-m windows` checks: the owner's, outside the Claude app. No code they cover changed for a given throwaway name.
+  In Windows PowerShell, from the project folder:
+
+      $env:UV_PYTHON_DOWNLOADS = "never"; uv run pytest -m windows --no-cov 2>&1 | Tee-Object .logs\t6-windows.log
+
+- pwsh 7: not installed here. GitHub's release run uses it, with an empty `-Suffix`.
+- The real-symlink E3 test: skipped on this account; it runs on Linux CI.
+- An interactive install of a rehearsal Setup: still silent-only while the brief's out-of-scope items remain.
+
+**Follow-ups** for the orchestrator to record in 10 and 11 (the 2026-10-28 row is now closed for the Run value and the
+AUMID only):
+1. A rehearsal build still uses the real data folder (so its "Remove my data" acts on the real one), the real Credential
+   Manager service at run time, the real single-instance name and the real default `InstallDir`.
+2. An update installed into a rehearsal copy drops the suffix. The update service should refuse to check or install
+   when the build suffix isn't empty. This must land before `release_key.PUBLIC_KEY` is set.
+3. The three optional lows from the re-check above.
+
+**Decision for 11** (Lead (proposed)): an invalid `build-suffix.txt` makes Start with Windows report "failed" (never
+"not_installed"), and toasts go out with no AUMID.
 
 ## 7. Handover
-_(lead, 2026-11-02)_ Brief written; builder next.
+_(lead, 2026-11-02)_ Reviewed and approved (8.5/10, then 9/10 on the fix diff); the full checks and the rehearsal
+release build passed on 15d7ac6. Next: push, open the PR, auto-merge on green.
