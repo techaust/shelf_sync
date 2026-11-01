@@ -60,6 +60,7 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | | Pillow | 13.0.0 | 2026-10-16 | MIT-CMU; security exception to the cutoff (owner, 2026-10-27): 12.3.0 has known vulnerabilities fixed only in 13.0.0 |
 | | keyring | 25.7.0 | 2025-11-16 | MIT; `sys_platform == "win32"`; added for M1a.2 (owner, 2026-10-27) with its Windows-only dependencies jaraco-classes 3.4.0, jaraco-context 6.1.2, jaraco-functools 4.6.0, more-itertools 11.1.0 (MIT) and pywin32-ctypes 0.2.3 (BSD-3-Clause) |
 | | windows-toasts | 1.3.1 | 2025-05-06 | Apache-2.0; `sys_platform == "win32"` marker in ShelfSync's own list, since its metadata has none (V29) |
+| | boto3 | 1.43.112 | 2026-10-12 | Apache-2.0; added for M2.7 (owner, 2026-11-02) with botocore 1.43.112, s3transfer 0.19.2 (Apache-2.0), jmespath 1.1.0 (MIT) and python-dateutil 2.9.0.post0 (Apache-2.0 or BSD-3-Clause) |
 | Python, dev | httpx | 0.28.1 | 2024-12-06 | BSD-3-Clause (FastAPI's test client; run time from M2) |
 | | pytest | 9.1.1 | 2026-06-19 | MIT |
 | | pytest-cov | 7.1.0 | 2026-03-21 | MIT |
@@ -68,6 +69,8 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | | mypy | 2.4.0 | 2026-10-01 | MIT |
 | | bandit | 1.9.4 | 2026-02-25 | Apache-2.0 |
 | | pip-audit | 2.10.1 | 2026-06-10 | Apache-2.0 |
+| | moto[s3] | 5.2.4 | 2026-10-11 | Apache-2.0; added for M2.7 and M2.8 (owner, 2026-11-02). Only the `s3` extra, with responses 0.26.3 (Apache-2.0), xmltodict 1.0.4 (MIT), py-partiql-parser 0.6.3 (MIT) |
+| | flask, flask-cors | 3.1.3, 6.0.5 | 2026-02-19, 2026-06-08 | BSD-3-Clause, MIT; what moto's server needs, listed instead of moto's `server` extra (about 40 more packages for services ShelfSync never calls). With werkzeug 3.1.9, jinja2 3.1.6, markupsafe 3.0.4, itsdangerous 2.2.0 (BSD-3-Clause) and blinker 1.9.0 (MIT) |
 | UI, run time | react, react-dom | 19.3.0 | 2026-09-09 | MIT |
 | | react-router | 8.4.0 | 2026-09-15 | MIT |
 | | @tanstack/react-query | 5.104.2 | 2026-10-11 | MIT |
