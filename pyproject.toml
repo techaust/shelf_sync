@@ -17,6 +17,8 @@ dependencies = [
     # Ed25519 check of the signed update manifest (M1b.2, SYS-06); also the release tools and, from M2, AES-GCM.
     "cryptography==50.0.2",
     "windows-toasts==1.3.1; sys_platform == 'win32'",
+    # S3 client (M2.7, SET-02 Test, ERR-03; owner, 2026-11-02). Pulls botocore, s3transfer, jmespath, python-dateutil.
+    "boto3==1.43.112",
 ]
 
 [dependency-groups]
@@ -28,6 +30,12 @@ dev = [
     "mypy==2.4.0",
     "bandit==1.9.4",
     "pip-audit==2.10.1",
+    # Local S3 for tests and the test stack (M2.7, M2.8; owner, 2026-11-02). moto's "server" extra would add about 40
+    # packages for services ShelfSync never calls (cfn-lint, docker, sympy, ...), so only "s3" plus the two packages
+    # its server needs (flask, flask-cors; both in the "server" extra) are listed.
+    "moto[s3]==5.2.4",
+    "flask==3.1.3",
+    "flask-cors==6.0.5",
 ]
 
 [tool.uv]
