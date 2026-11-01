@@ -1,7 +1,7 @@
 """The app's own Windows names (SYS-04, SYS-05): the Start with Windows Run value and the toast AppUserModelID.
 
 A normal build, a development run and every test use `ShelfSync` and `TecHaust.ShelfSync`, the names the installer
-writes. A build made with a suffix (`packaging/build.py --suffix -rehearsal`, the local rehearsal) writes it into
+writes. A build made with a suffix (`packaging/build.py --suffix=-rehearsal`, the local rehearsal) writes it into
 `build-suffix.txt` next to this file, and its installer (`/DSUFFIX`) suffixes the same two names, so a rehearsal copy
 uses `ShelfSync-rehearsal` and `TecHaust.ShelfSync-rehearsal` and never the real ones. The file is plain text, read
 once at import; it is data, never code.
@@ -11,6 +11,7 @@ A file that is there but can't be read or breaks the suffix rule never falls bac
 with no AUMID (windows-toasts' default).
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -33,12 +34,13 @@ def is_valid_suffix(suffix: str) -> bool:
 def read_build_suffix(path: Path = SUFFIX_FILE) -> str | None:
     """`""` when there is no file (a normal build, a development run); the suffix the file holds when it is a valid,
     non-empty one (one trailing line end is allowed); None for anything else: an empty file, a suffix that breaks the
-    rule, text that isn't ASCII, or a file that can't be read."""
+    rule, text that isn't ASCII, or a file that can't be read (a link whose target is missing included)."""
     try:
         with path.open("rb") as handle:
             data = handle.read(_MAX_FILE_BYTES + 1)
     except FileNotFoundError:
-        return ""
+        # Something is there (a link whose target is missing) but can't be read: never "" (the real names).
+        return None if os.path.lexists(path) else ""
     except OSError:
         return None
     if len(data) > _MAX_FILE_BYTES:

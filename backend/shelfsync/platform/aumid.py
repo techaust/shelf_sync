@@ -13,6 +13,7 @@ import sys
 
 from shelfsync.platform import names
 
+# A copy made at import: callers and tests use this one (patch `aumid.AUMID`, not `names.AUMID`).
 AUMID: str | None = names.AUMID  # "TecHaust.ShelfSync" plus this build's suffix; None: an invalid suffix file
 DISPLAY_NAME = "ShelfSync"
 KEY_ROOT = r"Software\Classes\AppUserModelId"

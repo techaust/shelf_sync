@@ -24,6 +24,7 @@ from shelfsync.platform.autostart import (
     apply_start_with_windows,
     apply_start_with_windows_safely,
 )
+from shelfsync.platform.junction import WindowsJunctions
 from shelfsync.tray import launcher
 
 REPO = Path(__file__).resolve().parents[1]
@@ -113,6 +114,36 @@ def test_a_suffix_file_that_cant_be_read_never_yields_the_real_names(tmp_path: P
     assert names.read_build_suffix(tmp_path / names.SUFFIX_FILE_NAME) is None
 
 
+def test_a_dangling_link_named_like_the_suffix_file_never_yields_the_real_names(tmp_path: Path) -> None:
+    """SYS-04, SYS-05: a link whose target is missing is there but can't be read, so it isn't "no file"."""
+    file = tmp_path / names.SUFFIX_FILE_NAME
+    try:
+        file.symlink_to(tmp_path / "missing.txt")
+    except OSError:
+        pytest.skip("this account can't make symlinks")
+    assert not file.exists()
+    assert names.read_build_suffix(file) is None
+
+
+def test_a_suffix_file_that_is_there_but_not_found_on_open_never_yields_the_real_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SYS-04, SYS-05: the dangling-link case on any account: opening says "not found" but the name is there."""
+    monkeypatch.setattr(names.os.path, "lexists", lambda path: True)
+    assert names.read_build_suffix(tmp_path / names.SUFFIX_FILE_NAME) is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows-only")
+def test_a_dangling_junction_named_like_the_suffix_file_never_yields_the_real_names(tmp_path: Path) -> None:
+    """SYS-04, SYS-05: the same for a junction whose target folder is gone (made as the updater makes `current`)."""
+    target = tmp_path / "target"
+    target.mkdir()
+    file = tmp_path / names.SUFFIX_FILE_NAME
+    WindowsJunctions().create(file, target)
+    target.rmdir()
+    assert names.read_build_suffix(file) is None
+
+
 @pytest.mark.parametrize("suffix", ["rehearsal", "-", "-a b", "-" + "a" * 33, "-\u00e9"])
 def test_the_name_functions_refuse_an_invalid_suffix_too(suffix: str) -> None:
     """SYS-04, SYS-05."""
@@ -180,12 +211,36 @@ def test_the_smoke_probe_reports_the_names_a_build_with_that_suffix_expects(tmp_
     package = tmp_path / "shelfsync"
     shutil.copytree(REPO / "backend" / "shelfsync", package, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     build.write_build_suffix(tmp_path, suffix)
-    probe = f"import sys; sys.path.insert(0, {str(tmp_path)!r}); " + smoke.NAMES_PROBE
+    # `sys.prefix` stands in for the built folder's own Python, whose prefix is the folder itself.
+    probe = f"import sys; sys.prefix = {str(tmp_path)!r}; sys.path.insert(0, {str(tmp_path)!r}); " + smoke.NAMES_PROBE
     done = subprocess.run(
         [sys.executable, "-I", "-B", "-c", probe], capture_output=True, text=True, timeout=120, check=False
     )
     assert done.returncode == 0, done.stderr[-800:]
     assert done.stdout.split() == smoke.expected_names(suffix) == [f"ShelfSync{suffix}", f"TecHaust.ShelfSync{suffix}"]
+
+
+def test_the_smoke_probe_fails_when_shelfsync_isnt_the_folders_own(tmp_path: Path) -> None:
+    """SYS-04, SYS-05: a `shelfsync` found outside `sys.prefix` (not the built or installed folder's) fails the probe
+    and prints no names, so smoke.py and test-installer.ps1 can't pass on another copy's answer."""
+    package = tmp_path / "copy" / "shelfsync"
+    shutil.copytree(REPO / "backend" / "shelfsync", package, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    (tmp_path / "folder").mkdir()
+    probe = (
+        f"import sys; sys.prefix = {str(tmp_path / 'folder')!r}; sys.path.insert(0, {str(tmp_path / 'copy')!r}); "
+        + smoke.NAMES_PROBE
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", probe], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert "shelfsync was imported from outside" in done.stderr and "names.py" in done.stderr
+
+
+def test_the_smoke_probe_can_be_passed_inside_a_double_quoted_powershell_string() -> None:
+    """test-installer.ps1 runs the probe as `-c "..."`: no double quote, `$` or backtick may be in it."""
+    assert not set('"$`') & set(smoke.NAMES_PROBE)
 
 
 # ---- the Run value (autostart.py), the settings API and the launcher --------------------------------------------

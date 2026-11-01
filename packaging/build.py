@@ -14,10 +14,11 @@ Writes `build/ShelfSync-<version>/` (what the installer puts in `versions\\<vers
    04 section 8's honest note);
 5. `backend/shelfsync`, the built UI (`frontend/dist`, as `ui/`), `brand/assets/app/shelfsync.ico` and the six tray
    icons (`brand/assets/tray`, as `tray/`) are copied in;
-6. a build with `--suffix` (the local rehearsal; written `--suffix=-x`, since argparse takes a value that starts with
-   `-` for an option) writes it into `shelfsync/platform/build-suffix.txt`, so the app uses the same suffixed Run value
-   and AUMID as its installer (`platform/names.py`). A normal build writes no such file, and one left in the source
-   tree is never copied;
+6. a build with `--suffix` (the local rehearsal; written `--suffix=-x` in one argument: the separate form
+   `--suffix -x` is refused, as tests/test_packaging_build.py pins) writes it into
+   `shelfsync/platform/build-suffix.txt`, so the app uses the same suffixed Run value and AUMID as its installer
+   (`platform/names.py`). A normal build writes no such file, and one left in the source tree is never copied. A
+   suffixed build can't be a tagged release: `--tag` and `--suffix` together are refused;
 7. everything is precompiled with `--invalidation-mode checked-hash`, so a first start writes nothing into the folder
    (V47).
 
@@ -389,6 +390,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="a rehearsal build's suffix, e.g. --suffix=-rehearsal: the app's Run value and AUMID carry it",
     )
     arguments = parser.parse_args(argv)
+    if arguments.tag is not None and arguments.suffix:
+        parser.error("--tag and --suffix can't be used together: a tagged release carries no suffix")
     try:
         build(arguments.out.resolve(), arguments.tag, arguments.embed_zip, arguments.suffix)
     except (BuildError, subprocess.CalledProcessError, OSError) as error:

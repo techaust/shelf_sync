@@ -21,6 +21,7 @@ from shelfsync.update.layout import installed_root
 _log = logging.getLogger("shelfsync.autostart")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+# A copy made at import: callers and tests use this one (patch `autostart.VALUE_NAME`, not `names.RUN_VALUE_NAME`).
 VALUE_NAME: str | None = names.RUN_VALUE_NAME  # "ShelfSync" plus this build's suffix; None: an invalid suffix file
 
 ApplyOutcome = Literal["set", "removed", "unchanged", "skipped"]

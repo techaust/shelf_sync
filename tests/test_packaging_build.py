@@ -316,6 +316,47 @@ def test_build_py_refuses_an_invalid_suffix_before_anything_is_made(
     assert not (tmp_path / "build").exists()
 
 
+def _no_build(*args: object) -> None:
+    raise AssertionError("build() must not run")
+
+
+def test_build_py_refuses_the_suffix_as_a_separate_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-04, SYS-05: `--suffix -rehearsal` (two arguments) stops at argument parsing with exit 2, so the suffix is
+    always passed as `--suffix=-rehearsal` (release-build.ps1 does)."""
+    monkeypatch.setattr(build, "build", _no_build)
+    with pytest.raises(SystemExit) as stopped:
+        build.main(["--out", str(tmp_path / "build"), "--suffix", "-rehearsal"])
+    assert stopped.value.code == 2
+    assert "--suffix" in capsys.readouterr().err
+
+
+def test_build_py_takes_the_suffix_in_one_argument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYS-04, SYS-05: `--suffix=-rehearsal` reaches build()."""
+    seen: list[object] = []
+    monkeypatch.setattr(build, "build", lambda *args: seen.append(args))
+    assert build.main(["--out", str(tmp_path / "build"), "--suffix=-rehearsal"]) == 0
+    assert seen == [((tmp_path / "build").resolve(), None, None, "-rehearsal")]
+
+
+def test_build_py_refuses_a_tagged_build_with_a_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SYS-01, SYS-04, SYS-05: a release-shaped build (`--tag`) never carries a suffix stamp; nothing is made. A tag
+    alone (CI) still builds."""
+    monkeypatch.setattr(build, "build", _no_build)
+    with pytest.raises(SystemExit) as stopped:
+        build.main(["--out", str(tmp_path / "build"), "--tag", "v0.1.0", "--suffix=-rehearsal"])
+    assert stopped.value.code == 2
+    assert "--tag and --suffix can't be used together" in capsys.readouterr().err
+    assert not (tmp_path / "build").exists()
+    seen: list[object] = []
+    monkeypatch.setattr(build, "build", lambda *args: seen.append(args))
+    assert build.main(["--out", str(tmp_path / "build"), "--tag", "v0.1.0"]) == 0
+    assert seen == [((tmp_path / "build").resolve(), "v0.1.0", None, "")]
+
+
 def test_the_suffix_is_written_only_when_there_is_one(tmp_path: Path) -> None:
     """SYS-04, SYS-05: the suffix alone, read back by `platform/names.py`; an empty one writes no file."""
     from shelfsync.platform import names

@@ -240,10 +240,9 @@ def test_round_6_one_exit_code_list_and_the_cant_check_notice() -> None:
 
 
 def test_a_suffix_is_checked_first_and_reaches_the_build_and_the_smoke_test() -> None:
-    """SYS-04, SYS-05: release-build.ps1 checks -Suffix with `platform/names.py`'s rule (`\\z`, not `$`, which in
-    PowerShell also matches before a final line end) before anything else, then passes it to build.py and smoke.py as
-    one `--suffix=` argument (argparse takes a separate value that starts with `-` for an option). release.yml passes
-    no suffix."""
+    """SYS-04, SYS-05: release-build.ps1 checks -Suffix with `platform/names.py`'s rule (ending in `\\z`, so nothing
+    may follow the suffix) before anything else, then passes it to build.py and smoke.py as one `--suffix=` argument
+    (build.py refuses the separate form: tests/test_packaging_build.py). release.yml passes no suffix."""
     from shelfsync.platform import names
 
     check = f"$Suffix -cnotmatch '^{names.SUFFIX_PATTERN}\\z'"
@@ -254,6 +253,14 @@ def test_a_suffix_is_checked_first_and_reaches_the_build_and_the_smoke_test() ->
     assert "-Suffix" not in RELEASE
 
 
+def test_a_tagged_release_build_with_a_suffix_is_refused_before_anything_is_made() -> None:
+    """SYS-01, SYS-04, SYS-05: -Tag and -Suffix together stop release-build.ps1 at once, so a release-shaped zip never
+    carries a suffix stamp (build.py refuses `--tag` with `--suffix` too)."""
+    refusal = "if ($Tag -and $Suffix) { throw \"-Tag and -Suffix can't be used together"
+    assert refusal in RELEASE_BUILD
+    assert RELEASE_BUILD.index(refusal) < RELEASE_BUILD.index("$repo = ") < RELEASE_BUILD.index("packaging/build.py")
+
+
 def test_the_installed_python_reports_the_names_the_setup_wrote() -> None:
     """SYS-04, SYS-05: test-installer.ps1 asks the installed Python with smoke.py's own probe, and compares (case
     included) with the Run value and AUMID names this Setup writes and its uninstaller removes."""
@@ -262,7 +269,8 @@ def test_the_installed_python_reports_the_names_the_setup_wrote() -> None:
     smoke = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(smoke)
     script = (REPO / "packaging" / "test-installer.ps1").read_text(encoding="utf-8")
-    assert f'-c "{smoke.NAMES_PROBE}"' in script
+    assert f'-c "{smoke.NAMES_PROBE}"' in script  # with its check that shelfsync is the installed folder's own
+    assert "Check (($LASTEXITCODE -eq 0) -and ($names.Count -eq 2)" in script
     assert '$names[0] -ceq "ShelfSync$Suffix"' in script and '$names[1] -ceq "TecHaust.ShelfSync$Suffix"' in script
     assert smoke.expected_names("-x") == ["ShelfSync-x", "TecHaust.ShelfSync-x"]
 

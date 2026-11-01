@@ -7,7 +7,8 @@
 #
 # -Suffix is empty, or "-" followed by 1 to 32 of A-Z a-z 0-9 . _ - (the rule of backend/shelfsync/platform/names.py):
 # the installer's names (/DSUFFIX) and the app's own Run value and AUMID (build.py --suffix writes it into the folder)
-# carry it, and smoke.py and test-installer.ps1 check the built and the installed Python report those names.
+# carry it, and smoke.py and test-installer.ps1 check the built and the installed Python report those names. A suffixed
+# build is never a release: -Tag and -Suffix together are refused.
 #
 # Steps: build.py (folder, zip, files.txt) -> smoke.py -> makensis (the Setup, plus two fast test Setups 0.0.1 and
 # 99.0.0 that are never released) -> test-installer.ps1 (install, upgrade, prune, refusals, sentinels, uninstall with
@@ -31,7 +32,9 @@ function Run([string]$what, [scriptblock]$block) {
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
 }
 
-# Checked first, before anything is made. \z, not $: PowerShell's $ also matches before a final line end.
+# Checked first, before anything is made. A tagged release carries no suffix. The rule ends in \z so that nothing may
+# follow the suffix, not even a line end.
+if ($Tag -and $Suffix) { throw "-Tag and -Suffix can't be used together: a tagged release carries no suffix" }
 if ($Suffix -and ($Suffix -cnotmatch '^-[A-Za-z0-9._-]{1,32}\z')) {
     throw "-Suffix '$Suffix' isn't '-' followed by 1 to 32 of A-Z, a-z, 0-9, '.', '_' or '-'"
 }
@@ -61,7 +64,7 @@ $zip = Join-Path $repo "build\shelfsync-$version-win64.zip"
 $nsi = "packaging\ShelfSync.nsi"
 
 Step "Build the folder, the zip and files.txt"
-# "--suffix=<value>" in one argument: argparse takes a separate value that starts with "-" for an option.
+# "--suffix=<value>" in one argument: build.py refuses the separate form (tests/test_packaging_build.py pins it).
 $buildArgs = @("-I", "packaging/build.py")
 if ($Tag) { $buildArgs += @("--tag", $Tag) }
 if ($Suffix) { $buildArgs += "--suffix=$Suffix" }

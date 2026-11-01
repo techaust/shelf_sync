@@ -87,7 +87,17 @@ SCRYPT_PROBE = (
 )
 
 # The Run value name and the AUMID the app itself uses (`platform/names.py`), as the folder's own Python reports them.
-NAMES_PROBE = "from shelfsync.platform import aumid, autostart; print(autostart.VALUE_NAME); print(aumid.AUMID)"
+# It first requires the modules it read them from to sit under `sys.prefix` (the folder's own Python), so a `shelfsync`
+# found anywhere else fails it. test-installer.ps1 runs the same text inside a double-quoted string (a test keeps them
+# identical): single quotes only, and no `$` or backtick.
+NAMES_PROBE = (
+    "import os, sys; from shelfsync.platform import aumid, autostart, names; "
+    "home = os.path.join(os.path.normcase(os.path.realpath(sys.prefix)), ''); "
+    "outside = [m.__file__ for m in (aumid, autostart, names)"
+    " if not os.path.normcase(os.path.realpath(m.__file__)).startswith(home)]; "
+    "outside and sys.exit('shelfsync was imported from outside ' + sys.prefix + ': ' + ', '.join(outside)); "
+    "print(autostart.VALUE_NAME); print(aumid.AUMID)"
+)
 
 
 def expected_names(suffix: str) -> list[str]:
