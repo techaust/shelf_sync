@@ -18,7 +18,8 @@ export const BUCKET_MAX = 63;
 /** A pasted value may carry spaces around it, so the input allows a little more than the API's 128. */
 export const KEY_INPUT_MAX = 160;
 
-const REGION = /^[a-z0-9-]{2,32}$/;
+/** db/settings.py check_s3_region: botocore also refuses an all-digit name and a leading or trailing hyphen (m2.7). */
+const REGION = /^(?![0-9]+$)(?!-)[a-z0-9-]{2,32}(?<!-)$/;
 const BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const IPV4_SHAPE = /^[0-9]{1,3}(\.[0-9]{1,3}){3}$/;
 const BUCKET_PREFIXES = ["xn--", "sthree-", "amzn-s3-demo-"];

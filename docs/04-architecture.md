@@ -172,6 +172,8 @@ Times are UTC ISO-8601 text. Versions are stored as the original string plus a s
 
 Writes that touch a store or S3 never run inside a request: the request creates or advances a job, and the worker does the work.
 
+**One exception, the Storage Test** (M2.7, `POST /api/storage/test`; [runs/m2.7-s3.md](runs/m2.7-s3.md) L1): it writes, reads and deletes only its own `shelfsync-test/<time>-<nonce>.txt` object inside the request, one Test at a time, bounded at 30 s plus 5 s grace (there is no job worker until M5). A write that may have reached S3 is cleaned up with the same DELETE and HEAD (L13). **Known limit:** a worker that overran the bound isn't stopped: an endpoint that keeps trickling bytes can hold each socket read under the 10 s read timeout, so that worker, and with it the busy flag, can live on, and a new Test answers `busy` until it ends.
+
 ## 6. Job lifecycle
 ```mermaid
 stateDiagram-v2
