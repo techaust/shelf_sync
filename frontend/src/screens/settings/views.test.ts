@@ -15,13 +15,13 @@ import { ServicesProvider } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { SecretField } from "../../components/SecretField";
 import { Switch } from "../../components/Switch";
+import { type DateFormat, describeUpdates, type Phase } from "../../lib/updatesModel";
 import { T, U } from "../../lib/updatesWording";
 import { AppView } from "./AppView";
 import { formFrom } from "./forms";
 import { Restarting, RestartScreen, shellTakesOver } from "./RestartScreen";
 import { SETTINGS_PAGES, Settings } from "./Settings";
 import { RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
-import { type DateFormat, describeUpdates, type Phase } from "./updatesModel";
 import { A, LATER } from "./wording";
 
 const date: DateFormat = (iso) => (iso ? "28 October 2026 at 09:30 India Standard Time" : null);

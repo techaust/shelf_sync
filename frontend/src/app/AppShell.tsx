@@ -11,8 +11,8 @@ import { StatusStrip } from "../components/StatusStrip";
 import { ThemeMenu } from "../components/ThemeMenu";
 import { useCollapsedNav } from "../components/useCollapsedNav";
 import { storeTests } from "../lib/storeTests";
+import { useSwitchPhase } from "../lib/switchStore";
 import { RestartScreen, shellTakesOver } from "../screens/settings/RestartScreen";
-import { useSwitchPhase } from "../screens/settings/switchStore";
 import { useThemeFromServer } from "../theme/useSavedTheme";
 import { useRunStoreTest, useStoresQuery } from "./useStores";
 

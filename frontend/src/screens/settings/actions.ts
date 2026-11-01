@@ -16,10 +16,10 @@ import {
   type Updates,
 } from "../../api/settings";
 import type { SettingsWriter } from "../../api/settingsWriter";
+import { actionLine, type PollAnswers, type SwitchLine } from "../../lib/switchStore";
 import { T, updatesActionError } from "../../lib/updatesWording";
 import type { AppResult } from "./AppView";
 import { savedLine } from "./forms";
-import { actionLine, type PollAnswers, type SwitchLine } from "./switchStore";
 import { A } from "./wording";
 
 /** What the restart poll asks, through the one API client. */

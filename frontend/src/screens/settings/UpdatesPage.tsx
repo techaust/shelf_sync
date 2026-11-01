@@ -5,12 +5,12 @@ import { ApiError } from "../../api/client";
 import { getUpdates, installUpdate, rollBack, UPDATES_QUERY_KEY } from "../../api/settings";
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { type SwitchLine, switchStore } from "../../lib/switchStore";
+import { describeUpdates } from "../../lib/updatesModel";
 import { U } from "../../lib/updatesWording";
 import { checkNow, pollAnswers, removeToken, saveToken } from "./actions";
 import { Restarting } from "./RestartScreen";
-import { type SwitchLine, switchStore } from "./switchStore";
 import { RollBackBody, UpdatesFailed, UpdatesLoading, UpdatesView } from "./UpdatesView";
-import { describeUpdates } from "./updatesModel";
 
 /** While a check or a switch runs, the status is asked for again every two seconds. */
 const BUSY_REFRESH_MS = 2000;
@@ -19,7 +19,7 @@ const BUSY_REFRESH_MS = 2000;
  * Settings › Updates (UI-SET; SYS-06, SYS-07, SET-04): the state of updates from GET /api/updates, Check now,
  * Install (a ConfirmDialog, a "preparing" state while the server checks the files, then the restart panel), Roll back
  * (a ConfirmDialog with 13 §6's files-only or database wording), and the optional GitHub token. The switch and its
- * restart poll live in switchStore, so leaving this page never stops them.
+ * restart poll live in lib/switchStore, so leaving this page never stops them.
  */
 export function UpdatesPage() {
   const { api } = useServices();
