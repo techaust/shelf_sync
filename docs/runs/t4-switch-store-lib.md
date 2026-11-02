@@ -1,10 +1,11 @@
-Status: open (branch `refactor/switch-store-lib` pushed; the orchestrator does the visual check on the PC and opens the PR)
+Status: closed (merged as #38, 2026-11-02)
 Tier: C (screens; a move only, nothing on screen changes)
 Usage (from `node tools/model-audit.mjs 2026-11-01` in the cloud session, 01:11 IST, 2026-11-02). The one 5-h reading, posted by the orchestrator, is 31 % at 00:51 IST, 2026-11-02; there was no newer reading, so the end % isn't known.
 - lead `claude-opus-5-5/high`: skills none per the audit. `frontend-design` isn't in this session's Skill tool, so it was read from `/mnt/skills/public/frontend-design/SKILL.md`, which the audit can't see.
 - designer `claude-opus-5-5/high`: skills none per the audit, **flagged "no skill loaded"**, for the same reason; it also read `frontend-design` from the file. 5-h 31 % → not read.
 - reviewer `claude-opus-5-5/high` [code-review]: 5-h 31 % → not read.
 - general-purpose `claude-opus-5-5/high`: the `code-review` skill's own read-only helper, inside the reviewer. The audit noted it as a built-in agent; it changed no files.
+- the orchestrator on the PC (integration and visual check, 2026-11-02): lead `claude-opus-5-5/high`.
 
 # T4: `switchStore` and the Updates model out of `screens/`
 
@@ -89,3 +90,5 @@ Findings:
 
 ## 7. Handover
 The code is done, and the review and its re-check both approved it. The branch `refactor/switch-store-lib` is pushed, and no PR was opened. Next, for the orchestrator: the visual check on the PC, then the PR, and the record items in §6.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#38](https://github.com/techaust/shelf_sync/pull/38). The PC check found its built CSS byte-identical to `main`'s; rebased and pushed as `refactor/switch-store-lib-int`. The owner closed the cloud session. Task closed.

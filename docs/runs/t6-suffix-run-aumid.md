@@ -1,4 +1,4 @@
-Status: open
+Status: closed (merged as #40, 2026-11-02)
 Tier: B
 Usage: lead claude-opus-5-5/high [none]: 5-h 32 % at the start · builder claude-opus-5-5/high [none; Context7 windows-toasts]: 5-h 35 → 61 % · analyst claude-opus-5-5/high [none]: 5-h 61 → 75 % · reviewer claude-opus-5-5/high [code-review, security-review] (+ its general-purpose helper, Opus 5.5 high): 5-h 75 % → window reset → 16 % · builder (fixes) claude-opus-5-5/high [none]: 5-h 16 → 23 % · reviewer (re-check) claude-opus-5-5/high [code-review, security-review] (+ helper, Opus 5.5 high): 5-h 23 → 30 % (all 2026-11-02, from `node tools/model-audit.mjs 2026-11-01`; its "no skill loaded" flags on the builders and the analyst are expected: no skill in 09 §3 applies to their part, and Context7 is a tool, not a skill)
 
@@ -267,3 +267,5 @@ AUMID only):
 ## 7. Handover
 _(lead, 2026-11-02)_ Reviewed and approved (8.5/10, then 9/10 on the fix diff); the full checks and the rehearsal
 release build passed on 15d7ac6. Next: push, open the PR, auto-merge on green.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#40](https://github.com/techaust/shelf_sync/pull/40). Its PC session is finished and can be archived. Its worktree and branch are removed from git; the folder `.claude/worktrees/fix-suffix-run-aumid-a5fa38` stays on disk (paths too long for `git worktree remove` to delete, and the app blocks a long-path delete), harmless, for the owner to delete in File Explorer. Task closed.

@@ -3,7 +3,7 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-11-02, about 08:05 IST: the end of the orchestrating PC session that started at about 00:45 IST. The owner asked for every pending task to run in parallel under one session and went to sleep at about 01:20 IST; the session ran the rest on its own.
+2026-11-02, 08:25 IST: the end of the day ("end the day"), in the orchestrating PC session that started at about 00:45 IST. The owner asked for every pending task to run in parallel under one session and went to sleep at about 01:20 IST; the session ran the rest on its own, and the owner closed the two cloud sessions in the morning.
 
 ## Done
 All merged on green under the automatic rule.
@@ -18,11 +18,14 @@ All merged on green under the automatic rule.
 | [#42](https://github.com/techaust/shelf_sync/pull/42) | T7 | `tools/release/rehearse.py` runs a current build again: **46 of 46 checks** inside Claude; each copy gated (throwaway names, no real data folder) |
 | [#43](https://github.com/techaust/shelf_sync/pull/43) | T3 / m2.8 (moto part) | `testenv/moto_s3.py`: moto S3 on 127.0.0.1:47630 only, Host allowlist, CORS off; runbook `test-stack.md`; V8 presigned URLs recorded (moto accepts expired and tampered links) |
 | [#44](https://github.com/techaust/shelf_sync/pull/44) | T2 | **Test connection on Settings › Storage**: the three steps, the left-behind warning, the stale-answer note; checked in the pane against a local moto server |
+| [#45](https://github.com/techaust/shelf_sync/pull/45) | Record | The night's record: status, roadmap, CHANGELOG #34–#44, m2.0 handover (brought up to date with `main` after #44, then merged) |
+| (this PR) | End of day | Every run file closed with its PR, `Usage:` and handover; CLAUDE.md and the cloud runbook gain the orchestration and worktree-clean-up rules; one 11 row |
 
 Every task had its run file, the reviews its tier asks for (Tier A/B: the analyst's early check; screens: a visual review in the built-in pane), and a release build before any push that ships code. Details are in each run file (`docs/runs/t1`… are named `m2.7-s3.md`, `t2-…` to `t7-…`).
 
 ## In progress
-- Nothing. No agent runs; the session's local worktrees for the merged tasks may still sit in `.claude\worktrees\` (all committed and merged; safe to remove).
+- Nothing. No agent runs, and both cloud sessions are closed.
+- The five finished worktrees are removed from git and their branches deleted, but their folders are still in `.claude\worktrees\`: the paths inside are too long for git to delete, and the app blocks a long-path delete. They hold nothing that isn't merged.
 
 ## Next
 1. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through the new **Test connection**, and the test stack. Before it: the owner's LocalWP half of m2.8 (below).
@@ -36,7 +39,8 @@ Every task had its run file, the reviews its tier asks for (Tier A/B: the analys
    - the `-m windows` checks (T6 changed the Run value and AUMID code);
    - `testenv/moto_s3.py` stopped with Ctrl+C in a real console ([runbooks/test-stack.md](runbooks/test-stack.md)).
 4. **m2.0-plan §3 Q3** (WooCommerce over HTTPS on LocalWP) and **Q5** (bucket versioning state; with versioning on, each Test leaves a tiny old version and a delete marker).
-5. Still open from before: the Edge check (password prompts, Copy, Export download), the M1b exit test, Auto-fix (now works from the lead: turned on for #37–#44), and the optional "Automatically delete head branches" setting (more merged branches on GitHub now, including the cloud sessions' `refactor/switch-store-lib` and `refactor/dark-tokens`, which were re-pushed under new names after rebasing).
+5. **Tidying, any time:** delete the five folders in `.claude\worktrees\` in File Explorer; archive the finished T6 session on this PC ("T6 · -Suffix build: no real Run value or AUMID", PR #40 merged).
+6. Still open from before: the Edge check (password prompts, Copy, Export download), the M1b exit test, Auto-fix (now works from the lead: turned on for #37–#45), and the optional "Automatically delete head branches" setting (more merged branches on GitHub now, including the cloud sessions' `refactor/switch-store-lib` and `refactor/dark-tokens`, which were re-pushed under new names after rebasing).
 
 ## Not verified
 - **Anything against real AWS or a store** (by design): V52's 403 without `s3:ListBucket`, what other S3-compatible services answer, and whether one rejects the checksum headers. The M2 exit test is the first live check.
@@ -54,6 +58,6 @@ Every task had its run file, the reviews its tier asks for (Tier A/B: the analys
 - **Older, unchanged:** `switchStore` follow-up **closed** by T4; the token task **closed** by T5; `rehearse.py` **closed** by T7. Still open: the cloud toolchain (update `tools/cloud/setup.sh` when versions change).
 
 ## Usage
-- **The 5-hour window:** 31 % at 00:51 IST; it reset at about 02:20 IST and reached **97 %** at about 06:15 IST, when new agents stopped (the 95 % gate) until the reset at about 07:20 IST; about 17 % at the end (08:05 IST).
+- **The 5-hour window:** 31 % at 00:51 IST; it reset at about 02:20 IST and reached **97 %** at about 06:15 IST, when new agents stopped (the 95 % gate) until the reset at about 07:20 IST; about 17 % at 08:05 IST; **0 % at 08:10 IST** (`get_usage`; the window resets at 18:00 IST).
 - **Cloud sessions:** T4 and T5 ran in the cloud from the owner's go. Later tasks couldn't start cloud sessions: the app starts them only on the owner's own words, not from an automated turn, so T1, T2, T3 and T7 ran here with agents, at most two at once. Cloud sessions also can't report back; the lead watched their branches on GitHub.
 - **Model audit** (`node tools/model-audit.mjs 2026-11-02`, this PC): every run Opus 5.5 at high. 2 flagged "no skill loaded": T7's builder and analyst, whose brief named no skill (none fits a rehearsal-script change). The four built-in `general-purpose` runs are the read-only helpers `code-review` starts (the allowed exception, 12 §3). The cloud sessions' runs (T4, T5) are logged on their own machines.

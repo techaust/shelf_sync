@@ -1,6 +1,6 @@
-Status: open
+Status: closed (merged as #42, 2026-11-02)
 Tier: B (a developer tool for the updater; it writes throwaway registry values and Credential Manager entries, so the reviewer also runs `security-review`)
-Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 34 % at the brief
+Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 34 % at the brief; builder `claude-opus-5-5/high` [none] (build and fixes); analyst `claude-opus-5-5/high` [none] (early check); reviewer `claude-opus-5-5/high` [code-review, security-review] (+ its built-in read-only helper, Opus 5.5 high). The audit flags the builder and analyst "no skill loaded": no skill in 09 §3 fits a rehearsal-script change (from `node tools/model-audit.mjs 2026-11-02`; per-agent 5-hour readings weren't kept, the night's readings are in 10's Usage)
 
 # T7: `tools/release/rehearse.py` runs against a current build
 
@@ -191,3 +191,5 @@ _(lead, 2026-11-02)_ Integrated on `fix/rehearse-current-build-int` (the builder
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the builder in its own worktree from `fix/rehearse-current-build`.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#42](https://github.com/techaust/shelf_sync/pull/42). Its worktree and branch are removed from git; the folder `.claude/worktrees/agent-ad98d9172f50fc749` stays on disk (paths too long for `git worktree remove` to delete, and the app blocks a long-path delete), harmless, for the owner to delete in File Explorer. Task closed.
