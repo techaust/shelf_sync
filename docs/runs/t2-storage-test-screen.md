@@ -126,7 +126,40 @@ Keyboard pass: Remove keys → Test connection (visible ring) → S3 access poli
 
 ## 5. Review
 
+**Reviewer verdict (as relayed by the lead):** APPROVE, 8.5/10. The guide button's new place and all seven proposed strings were accepted. Five findings; a re-check of the fix diff follows.
+
+| # | Severity | Finding | Resolution (designer, `daa5d7d`) |
+|---|---|---|---|
+| 1 | medium (reproduced in the pane by the reviewer) | A save made while a test runs leaves the old answer on screen: `forget()` returned early while running. Saving bucket B during a timeout run on bucket A showed, 30 s later, A's left-behind key under B's settings, and a "Passed" from the old bucket would read as the new settings passing. | **Fixed** with the reviewer's recommended option. `StorageTestEntry` has a `stale` flag. `forget()` during a run marks it (once); the answer, or a refusal, lands with the mark; a new run clears it, and a later `forget()` drops the stale answer like any finished one. The view keeps the answer and adds a warning-icon note, inside the result's live region so it is announced with the answer: "This test used the settings from before your last save. Test again to check them." (proposed, added to 13's Storage Test row). A refusal never gets the note: it says nothing about the settings. Tests in `lib/storageTest.test.ts`: forget() during a run marks the answer when it lands, for both a result and a refusal; a second forget() changes nothing; a new run clears the mark. More in `storageTestModel.test.ts` and `storageBackupViews.test.ts`. Pane: the reviewer's case, reproduced and fixed (below). |
+| 2 | low | `docs/runbooks/README.md:32` | Left to the lead, as asked; not touched. |
+| 3 | low | The stores' shared `TestResult` runs its two sentences together in the live region. | **Fixed:** the one-line space in `components/StoreTest.tsx`, with a test in `storesViews.test.ts`. The stores' existing tests pass unchanged. The shared-component refactor stays a follow-up. |
+| 4 | low | No test proves a settings save, a key save and a key removal call `forget()`. | **Fixed:** the page now calls two pure hooks in `storageTestModel.ts`, `afterStorageSaved(run, before, after)` and `afterKeysChanged(run)`. Tests with a fake run show: an endpoint, region or bucket change calls `forget()` once; a files-to-keep, template or no-change save doesn't; a key save or removal always does. The page has no DOM in these tests, so a source-level test (read with Vite's `?raw`, as `chunkBoundary.test.ts` does) checks the wiring: `afterKeysChanged(storageTestRun)` right after `saveS3Keys` and after `removeS3Keys`, `afterStorageSaved(storageTestRun, storage, saved)` after `saveStorage`, and no direct `storageTestRun.forget(` left in the page. |
+| 5 | low | `StorageView.tsx`: a spinner beside the "can't test" reason while a test still runs. | **Fixed:** `spinning = running && !blocked` drives the line's icon and `is-running`, with a test. The button keeps its own busy spinner, because the test is still running. |
+
+**Commands after the fixes** (in `frontend/`, through `bash tools/heavy.sh --log t2-<name>`):
+| Command | Result |
+|---|---|
+| `npm run lint` | `biome ci`: 130 files, no fixes |
+| `npm run typecheck` | pass |
+| `npm test` | **32 files, 1058 tests passed** (10 new) |
+| `npm run build` | built |
+| `npm run schema:check` | `schema.d.ts` is current |
+
+**Pane check of finding 1:** the same harness (real app, in-memory stores, local moto, a silent 127.0.0.1 port; sample values only), restarted, then stopped afterwards.
+- Saved the silent endpoint with `sample-t2-bucket-a` and both sample key pairs, then started the Test.
+- While it ran, saved the bucket as `sample-t2-bucket-b` ("Storage settings saved.").
+- About 30 s later the answer landed and was kept: "Failed at the write step: the storage service took too long to answer.", A's left-behind key, and the steps.
+- Under the answer, inside `role="status"`, the stale note: "This test used the settings from before your last save. Test again to check them."
+- Console: nothing new.
+
+**Shots:**
+- `.logs/shots/t2/10-stale-after-save-light-1024-crop.jpg`
+- `.logs/shots/t2/10-stale-after-save-light-1280-crop.jpg`
+
+**Not verified:** a full-width capture of this case. Midway through the pane check the pane stopped scaling its captures: at any emulated size it now returns a 1:1 crop of the top-left of the page, about 640 × 450 CSS px. The two shots are therefore crops. They show the button, the start of the answer line, the time, the start of the stale note and the steps; the right edge is cut. The full texts above were read from the DOM in the same state. The note's box was 479 px wide and 41 px tall at 1024, so it wraps to two lines inside the result column. The lead may want a full-width shot in its own pane.
+
 ## 6. Integration notes
+
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the designer.
