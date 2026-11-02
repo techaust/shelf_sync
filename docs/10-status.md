@@ -3,69 +3,57 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-10-29, 23:46 IST: the end of the PC session that started at 21:29 IST. The day's cloud session (m2.6) finished and was deleted by the owner; nothing runs anywhere now.
+2026-11-02, about 08:05 IST: the end of the orchestrating PC session that started at about 00:45 IST. The owner asked for every pending task to run in parallel under one session and went to sleep at about 01:20 IST; the session ran the rest on its own.
 
 ## Done
-Merged on green. #30 needed the owner's yes; #31, #32 and #33 merged themselves under the new automatic rule (#33 from the cloud session).
+All merged on green under the automatic rule.
 
-| PR | What |
-|---|---|
-| [#29](https://github.com/techaust/shelf_sync/pull/29) | The earlier end-of-day record |
-| [#30](https://github.com/techaust/shelf_sync/pull/30) | **One model and effort:** every task on Opus 5.5 at high; tiers decide only the checks; 95 % budget gate; agents at once set by the machine ([ADR 0009](adr/0009-opus-high-for-every-task.md)) |
-| [#31](https://github.com/techaust/shelf_sync/pull/31) | **Automatic push and auto-merge on green** (`automerge.yml`); **cloud session setup** (`tools/cloud/setup.sh`, `tools/cloud/session-start.sh`); `heavy.sh` reads Linux memory |
-| [#32](https://github.com/techaust/shelf_sync/pull/32) | The cloud runbook for the Team plan: the `shelf_sync` environment, Limited network with seven allowed sites |
-| [#33](https://github.com/techaust/shelf_sync/pull/33) | **m2.6 M2 docs**, from the cloud session: runbooks match the screens, Settings notes, 04/06/07/04-A for M2 |
+| PR | Task | What |
+|---|---|---|
+| [#37](https://github.com/techaust/shelf_sync/pull/37) | P0 | **boto3 1.43.112 and moto 5.2.4 locked** (owner's yes): `moto[s3]` plus flask and flask-cors instead of the `server` extra (16 packages, not about 44) |
+| [#38](https://github.com/techaust/shelf_sync/pull/38) | T4 | `switchStore` and the Settings › Updates model and wording moved to `lib/`; `lib/layers.test.ts` enforces "nothing in `api/`, `lib/`, `components/` reaches `screens/`" (cloud session) |
+| [#39](https://github.com/techaust/shelf_sync/pull/39) | T5 | Dark values as component tokens, each theme scope written once (cloud session); 48 computed-colour comparisons with `main` identical (04-A V54) |
+| [#40](https://github.com/techaust/shelf_sync/pull/40) | T6 | A `-Suffix` build uses suffixed Run value and AUMID (m1b.3 finding 7) |
+| [#41](https://github.com/techaust/shelf_sync/pull/41) | T1 / m2.7 | **The S3 client and the 3-step Storage Test** (`POST /api/storage/test`, ERR-03): an isolated boto3 client, only its own `shelfsync-test/` object, L1–L13 in 11; 04-A V8, V10, V51–V53 verified |
+| [#42](https://github.com/techaust/shelf_sync/pull/42) | T7 | `tools/release/rehearse.py` runs a current build again: **46 of 46 checks** inside Claude; each copy gated (throwaway names, no real data folder) |
+| [#43](https://github.com/techaust/shelf_sync/pull/43) | T3 / m2.8 (moto part) | `testenv/moto_s3.py`: moto S3 on 127.0.0.1:47630 only, Host allowlist, CORS off; runbook `test-stack.md`; V8 presigned URLs recorded (moto accepts expired and tampered links) |
+| [#44](https://github.com/techaust/shelf_sync/pull/44) | T2 | **Test connection on Settings › Storage**: the three steps, the left-behind warning, the stale-answer note; checked in the pane against a local moto server |
 
-- **GitHub:** the repo's "Allow auto-merge" setting is on (owner's yes). #31 and #32 proved the workflow: each merged itself once its checks passed.
-- **Cloud:** the owner installed the Claude GitHub App on `shelf_sync`, turned on the GitHub connector, and made the `shelf_sync` environment on the Team plan's Cloud environments page. The first cloud session started clean: Python 3.14.8, Node 24.19.0 and uv 0.12.19, with no PROBLEM lines (its own report).
-- **Record:** CLAUDE.md (rules 3, 10 and 11, How work is split, Git workflow), [12](12-models-and-usage.md), [09](09-tooling.md), [11](11-decisions.md), ADR 0008 and 0009, the session skills, [runbooks/cloud-sessions.md](runbooks/cloud-sessions.md), the memory notes.
+Every task had its run file, the reviews its tier asks for (Tier A/B: the analyst's early check; screens: a visual review in the built-in pane), and a release build before any push that ships code. Details are in each run file (`docs/runs/t1`… are named `m2.7-s3.md`, `t2-…` to `t7-…`).
 
 ## In progress
-- Nothing. **m2.6** merged as #33 from the cloud session and is closed: the owner deleted that session before its end of day, so its [run file](runs/m2.6-docs.md) and [08](08-roadmap.md) were closed from the PC session. #29–#33 are in the CHANGELOG.
-- **#35** (start the day on the PC catches up with GitHub and the packages first) merges itself on green.
-- No agent runs on this PC. There are no local worktrees.
+- Nothing. No agent runs; the session's local worktrees for the merged tasks may still sit in `.claude\worktrees\` (all committed and merged; safe to remove).
 
 ## Next
-1. **m2.7 S3 and m2.8 test stack** once boto3 and moto have the owner's yes; then the **m2.9 exit test**, which is the owner's.
+1. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through the new **Test connection**, and the test stack. Before it: the owner's LocalWP half of m2.8 (below).
+2. **m2.8, the LocalWP half** (Tier B, with the analyst's early check): LocalWP + WooCommerce + the owner's Amazon S3 Storage extension pointed at `testenv/moto_s3.py` (V6), after the owner's answer to [runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q3.
 
 ## Waits on the owner
-1. **Packages for S3 (m2.7) and the test stack (m2.8):** boto3 (run time) and moto with `s3` and `server` (dev). Nothing S3 is built until you say yes ([runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q1).
-2. **One check in real Edge**, outside Claude, on the source app (`PYTHONPATH=backend uv run pythonw -m shelfsync.launcher`):
-   - after you save a store's keys, an S3 key pair or the export passphrase, does Edge offer "Save password?" If it does, the secret fields change ([11](11-decisions.md) 2026-10-29);
-   - does Copy in the S3 guide work?
-   - does Export save a `.ssbak` file in Downloads?
-3. **The M1b exit test** ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)), outside the Claude app, including the Windows checks.
-4. **The other M2 questions** in [runs/m2.0-plan.md](runs/m2.0-plan.md) §3.
-5. **Review** the "Lead (proposed)" rows in [11](11-decisions.md), dated 2026-10-27 to 2026-10-29. Today's: how the one-model plan is enforced, usage read before every new agent, the cloud details, and the seven allowed sites.
-6. **Model menu:** every session on **Opus 5.5, high**, on this PC and in the cloud.
-7. **Usage in a cloud session:** it has no usage tool, so post the 5-hour % there each day, and again when a reading is over 2 hours old. A PC session can read it for you.
-8. **Auto-fix:** the app refused to let the lead turn on Auto-fix for #31 (no reason given). Turn it on in the PR bar yourself, or allow `mcp__ccd_pr__set_monitor` in the app's permissions. Until then, a failed check is seen only when the lead looks.
-9. **Optional:** GitHub's "Automatically delete head branches" setting would remove merged branches. 15 old branches are still on GitHub (not counting the cloud session's live one). A settings change, so it's yours.
+1. **Review the night's "Lead (proposed)" rows** in [11](11-decisions.md), dated 2026-11-02: the moto package set, m2.7's L1–L13 and the region rule, T2's layout and strings, T3's server defaults, T4 and T5's structure. One row records a lead mistake: T3 ran as Tier C, though 12 §2 puts the test stack in Tier B.
+2. **13's new proposed strings:** the Storage Test row (m2.7 and T2) and the region error.
+3. **Runs outside the Claude app** (Windows PowerShell):
+   - T7's rehearsal outside Claude (steps in [runs/t7-rehearse-current-build.md](runs/t7-rehearse-current-build.md) §2);
+   - the `-m windows` checks (T6 changed the Run value and AUMID code);
+   - `testenv/moto_s3.py` stopped with Ctrl+C in a real console ([runbooks/test-stack.md](runbooks/test-stack.md)).
+4. **m2.0-plan §3 Q3** (WooCommerce over HTTPS on LocalWP) and **Q5** (bucket versioning state; with versioning on, each Test leaves a tiny old version and a delete marker).
+5. Still open from before: the Edge check (password prompts, Copy, Export download), the M1b exit test, Auto-fix (now works from the lead: turned on for #37–#44), and the optional "Automatically delete head branches" setting (more merged branches on GitHub now, including the cloud sessions' `refactor/switch-store-lib` and `refactor/dark-tokens`, which were re-pushed under new names after rebasing).
 
 ## Not verified
-- **The pre-push guard in a cloud session refusing a push** (to `main`, or a force-push): normal pushes went through, but the refusal path hasn't been seen there.
-- **The one-model settings:** whether `availableModels: ["claude-opus-5-5"]` and the `sonnet`/`haiku` aliases pointed at Opus behave as [12 §6](12-models-and-usage.md) says. Nothing has asked for another model since. The `model-guard` hook was tested with sample inputs.
-- **The M2.5 screens against the real server.** They were checked against a mock that sends the backend's real CSP, in the built-in pane. Also not checked:
-  - a real Edge download, the Windows file picker, the clipboard and password prompts;
-  - Windows High Contrast;
-  - Playwright with axe (CI only).
-- **A route-level error in the shell** (`RouteError`): checked by a unit render only. It can't be triggered in the pane.
-- **The store Test connection against the live stores:** never run (no live reads without your yes).
-- **Store and S3 entries in Credential Manager outside Claude:** the `-m windows` checks haven't run outside Claude since M2.1.
-- **A daily backup at a real 02:00, and across a real DST change:** only fake clocks.
-- **Unchanged from before:**
-  - a second Windows user for V33;
-  - IPv6 listeners;
-  - the cross-port parts of V32 in a browser;
-  - 2× full-page shots of the real app.
+- **Anything against real AWS or a store** (by design): V52's 403 without `s3:ListBucket`, what other S3-compatible services answer, and whether one rejects the checksum headers. The M2 exit test is the first live check.
+- **V6:** whether the S3 extension works against `testenv/moto_s3.py` (with CORS off and the Host allowlist).
+- **Screens:** Playwright with axe (CI only), Windows High Contrast, a screen reader; T2's stale note in dark; the brief loading skeletons and forced colours after T5 (unit-tested only). The built-in pane's captures were cropped late in the night, so some T2 shots are partial (their text was read from the page).
+- **T7 outside Claude**, a killed rehearsal run, and the real mutex shared by rehearsal copies (a T6 follow-up).
+- **T6:** an update installed into a rehearsal copy drops the suffix (follow-up below).
+- **Unchanged from before:** a second Windows user for V33; IPv6 listeners; the cross-port parts of V32 in a browser; 2× full-page shots of the real app; a daily backup at a real 02:00 and across DST; the store Test connection against the live stores.
 
 ## Open follow-ups
-- **`switchStore`** stays in `screens/settings/` until Settings › Updates' model and wording move out of `screens/` (11, 2026-10-29).
-- **A `-Suffix` build still writes the real `ShelfSync` Run value and AUMID** if it's installed and started interactively (m1b.3 finding 7).
-- **`tools/release/rehearse.py`** doesn't run against a current build (m2.1 review L3).
-- **Token task:** move the duplicated dark rules in `app.css` into component tokens.
-- **Cloud toolchain:** when `.python-version`, CI's Node or uv version changes, update `tools/cloud/setup.sh` (URL and SHA-256) and reload it into the `shelf_sync` environment.
+- **The updater in a suffixed (rehearsal) build** must refuse to check or install, or an update drops the suffix; this must land before `release_key.PUBLIC_KEY` is set (T6). A rehearsal copy also still uses the real data folder, Credential Manager service at run time, single-instance name and default `InstallDir`.
+- **T7 review lows 1, 3, 4, 5:** block (not only prove) the real Credential Manager service in copies; guard each credential delete; per-store leftovers; refuse a `--work` inside a real folder. Then one more real rehearsal run.
+- **m2.7:** L1's known limit (an overran Storage Test held by a trickling endpoint keeps the busy flag); review N2 (the hold-past-the-limit tests need the clients built within 2 s; watch for flakes); one isolated Session per Test (M5 client cache).
+- **T2:** share the store and storage Test button and result parts (`components/StoreTest.tsx` gains `id`, `describedBy`, `blocked`).
+- **Older, unchanged:** `switchStore` follow-up **closed** by T4; the token task **closed** by T5; `rehearse.py` **closed** by T7. Still open: the cloud toolchain (update `tools/cloud/setup.sh` when versions change).
 
 ## Usage
-- **The 5-hour window:** at 50 % now; it resets at 00:10 IST.
-- **Model audit for 2026-10-29** on this PC (`node tools/model-audit.mjs 2026-10-29`): 1 run, this lead, Opus 5.5 at high, `end-session` loaded; nothing flagged. The 12 earlier runs the 13:25 IST record listed are no longer in this PC's log folder (why wasn't checked). The cloud session's runs are logged on its own machine, and it audits them at its end of day.
+- **The 5-hour window:** 31 % at 00:51 IST; it reset at about 02:20 IST and reached **97 %** at about 06:15 IST, when new agents stopped (the 95 % gate) until the reset at about 07:20 IST; about 17 % at the end (08:05 IST).
+- **Cloud sessions:** T4 and T5 ran in the cloud from the owner's go. Later tasks couldn't start cloud sessions: the app starts them only on the owner's own words, not from an automated turn, so T1, T2, T3 and T7 ran here with agents, at most two at once. Cloud sessions also can't report back; the lead watched their branches on GitHub.
+- **Model audit** (`node tools/model-audit.mjs 2026-11-02`, this PC): every run Opus 5.5 at high. 2 flagged "no skill loaded": T7's builder and analyst, whose brief named no skill (none fits a rehearsal-script change). The four built-in `general-purpose` runs are the read-only helpers `code-review` starts (the allowed exception, 12 §3). The cloud sessions' runs (T4, T5) are logged on their own machines.

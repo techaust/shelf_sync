@@ -2,6 +2,17 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-02 [#44](https://github.com/techaust/shelf_sync/pull/44) feat(ui): Test connection on Settings › Storage, the three steps and the stale-answer note [SET-02, ERR-03]
+- 2026-11-02 [#43](https://github.com/techaust/shelf_sync/pull/43) feat(testenv): moto S3 server for the test stack, 127.0.0.1 only; V8 presigned URLs recorded
+- 2026-11-02 [#42](https://github.com/techaust/shelf_sync/pull/42) fix(release): rehearse.py runs a current build, gates each copy, proves the real names unreachable [SYS-06, SYS-07]
+- 2026-11-02 [#41](https://github.com/techaust/shelf_sync/pull/41) feat(s3): isolated S3 client and the 3-step Storage Test, POST /api/storage/test [SET-02, ERR-03]
+- 2026-11-02 [#40](https://github.com/techaust/shelf_sync/pull/40) fix(packaging): suffixed Run value and AUMID for rehearsal builds [SYS-04, SYS-05]
+- 2026-11-02 [#39](https://github.com/techaust/shelf_sync/pull/39) refactor(ui): dark values as component tokens, each theme scope written once [UI-SHELL, SET-06, NFR-2]
+- 2026-11-02 [#38](https://github.com/techaust/shelf_sync/pull/38) refactor(ui): move switchStore and the Settings › Updates model and wording to lib/ [UI-SET]
+- 2026-11-02 [#37](https://github.com/techaust/shelf_sync/pull/37) chore(deps): lock boto3 and moto[s3] for S3 and the test stack [SET-02, ERR-03]
+- 2026-10-29 [#36](https://github.com/techaust/shelf_sync/pull/36) docs: close m2.6 (merged as #33)
+- 2026-10-29 [#35](https://github.com/techaust/shelf_sync/pull/35) chore(skills): start the day catches up with GitHub and the packages first
+- 2026-10-29 [#34](https://github.com/techaust/shelf_sync/pull/34) docs: end of day 2026-10-29 (PC session)
 - 2026-10-29 [#33](https://github.com/techaust/shelf_sync/pull/33) docs: M2.6 runbooks match the screens, Settings notes, 04/06/07/04-A for M2 [SET-01, SET-02, SET-05, BAK-01]
 - 2026-10-29 [#32](https://github.com/techaust/shelf_sync/pull/32) docs(runbook): cloud setup on the Team plan
 - 2026-10-29 [#31](https://github.com/techaust/shelf_sync/pull/31) chore: automatic push and auto-merge on green; cloud session setup
