@@ -66,7 +66,14 @@ What the session does by itself:
 - `tools/cloud/session-start.sh` puts the pinned tools first, sets the commit identity and the pre-push guard, and installs the locked packages. It prints one line per tool and a **PROBLEM** line for anything wrong.
 - When a task is done, it pushes its branch and opens the PR, and GitHub merges it once the required checks pass (CLAUDE.md, Git workflow).
 
+**Started from a PC session** (a PC lead running several tasks at once):
+- The PC session can start a cloud session only in a turn you wrote, with the app window on screen. Once you're away, later tasks run on the PC as agents instead.
+- A cloud session can't report back to the PC session. The PC lead watches its branch on GitHub.
+- A screen task pushes its branch without a PR, so the PC lead does the visual check in the built-in pane first and then opens the PR.
+- When its work has merged, close the cloud session yourself at **claude.ai/code** (**⋯** → **Archive**): the PC session can't see it.
+
 ## 4. What's been checked
 - **2026-10-29, the first cloud session:** the setup script and the start-up script ran clean: Python 3.14.8, Node 24.19.0 and uv 0.12.19 first on PATH, `uv sync --locked` and `npm ci` passed, no PROBLEM lines. The Limited network with the seven sites was enough.
 - **2026-10-29, the first cloud PR:** m2.6's PR (#33) was pushed from the cloud session and merged itself on green.
+- **2026-11-02, two cloud sessions started from a PC lead:** T4 and T5 ran in the cloud at once, pushed their branches without a PR, and the PC lead checked them in the pane and merged them (#38, #39). The owner closed both sessions afterwards.
 - **Not yet:** the pre-push guard refusing a push in a cloud session.

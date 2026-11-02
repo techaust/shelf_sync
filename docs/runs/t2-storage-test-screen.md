@@ -1,6 +1,6 @@
-Status: open
+Status: closed (merged as #44, 2026-11-02)
 Tier: C (a screen from existing parts; the designer at high effort)
-Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 78 % at the brief
+Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 78 % at the brief; designer `claude-opus-5-5/high` [frontend-design] (build and fixes); reviewer `claude-opus-5-5/high` [code-review, frontend-design] (+ its built-in read-only helper, Opus 5.5 high), review with the visual check in the pane, and re-check (from `node tools/model-audit.mjs 2026-11-02`; per-agent 5-hour readings weren't kept, the night's readings are in 10's Usage)
 
 # T2: the Test button on Settings › Storage
 
@@ -169,3 +169,5 @@ _(lead, 2026-11-02)_ Integrated on `feat/t2-storage-test-screen-int` (the design
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the designer.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#44](https://github.com/techaust/shelf_sync/pull/44). Its worktree and branch are removed from git; the folder `.claude/worktrees/agent-a551b2f254eb64748` stays on disk (paths too long for `git worktree remove` to delete, and the app blocks a long-path delete), harmless, for the owner to delete in File Explorer. Task closed.

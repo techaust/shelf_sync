@@ -1,4 +1,4 @@
-Status: open
+Status: closed (merged as #39, 2026-11-02)
 Tier: C ([12 §2](../12-models-and-usage.md)): screen styles only, no new parts
 Usage: lead `claude-opus-5-5/high` (cloud session; model and effort from `get_session` and the model-guard hook, not from `model-audit`, whose log isn't on this machine); designer `claude-opus-5-5/high` (its agent file; `frontend-design` and Context7 not available here), two runs; reviewer `claude-opus-5-5/high` (its agent file) [`code-review`], review and re-check. 5-hour reading posted by the orchestrator: **31 % at 00:51 IST, 2026-11-02** (resets about 02:20 IST); every agent started under 2 hours after it (the last at 01:17 IST), so the gate was open; no later reading (this session can't read usage).
 
@@ -184,3 +184,5 @@ _(lead, 2026-11-02)_ Code done, reviewed and pushed; the task waits on the orche
 3. **`11-decisions.md`, "Lead (proposed)" row:** component tokens live in a hand-written `frontend/src/styles/component-tokens.css`, not `brand/tokens.json` (TecHaust's file, copied unchanged) or `sync-tokens.mjs` (no brand data in them). Dark-only tokens are read with the light value as the fallback, and `.store-dot` uses theme switches (reasons in §1).
 4. Then open the PR, close the follow-up in `10`, and add the CHANGELOG line.
 5. **Clean up:** the designer's worktree `.claude/worktrees/agent-a47ec4f3c09046274` (branch `worktree-agent-a47ec4f3c09046274`) is local to this cloud VM and was never pushed. It's integrated; this session removes it.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#39](https://github.com/techaust/shelf_sync/pull/39). The PC check matched `main` on all 48 page-and-theme comparisons (04-A V54, the 11 row and the header pointer added); rebased and pushed as `refactor/dark-tokens-int`. The owner closed the cloud session. Task closed.

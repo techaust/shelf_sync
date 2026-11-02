@@ -1,6 +1,6 @@
-Status: open
+Status: closed (merged as #43, 2026-11-02)
 Tier: B (12 §2: the test stack); the analyst's early check was skipped by the lead's error, recorded in 11
-Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 78 % at the brief
+Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 78 % at the brief; builder `claude-opus-5-5/high` [aws-sdk-python-usage]; reviewer `claude-opus-5-5/high` [code-review] (+ its built-in read-only helper, Opus 5.5 high), review and re-check; no analyst early check (the Tier C mistake, §6) (from `node tools/model-audit.mjs 2026-11-02`; per-agent 5-hour readings weren't kept, the night's readings are in 10's Usage)
 
 # T3: the moto S3 server for the test stack (m2.8, the moto part)
 
@@ -136,3 +136,5 @@ _(lead, 2026-11-02)_ Integrated on `feat/t3-moto-test-server-int` (the builder's
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the builder.
+
+_(lead, 2026-11-02, 08:20 IST)_ Merged on green as [#43](https://github.com/techaust/shelf_sync/pull/43). Its worktree and branch are removed from git; the folder `.claude/worktrees/agent-a61cf7b116d52998a` stays on disk (paths too long for `git worktree remove` to delete, and the app blocks a long-path delete), harmless, for the owner to delete in File Explorer. Task closed.

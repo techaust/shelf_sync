@@ -2,6 +2,7 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-02 [#45](https://github.com/techaust/shelf_sync/pull/45) docs: record the 2026-11-02 parallel run (status, roadmap, CHANGELOG #34-#44, m2.0 handover)
 - 2026-11-02 [#44](https://github.com/techaust/shelf_sync/pull/44) feat(ui): Test connection on Settings › Storage, the three steps and the stale-answer note [SET-02, ERR-03]
 - 2026-11-02 [#43](https://github.com/techaust/shelf_sync/pull/43) feat(testenv): moto S3 server for the test stack, 127.0.0.1 only; V8 presigned URLs recorded
 - 2026-11-02 [#42](https://github.com/techaust/shelf_sync/pull/42) fix(release): rehearse.py runs a current build, gates each copy, proves the real names unreachable [SYS-06, SYS-07]
