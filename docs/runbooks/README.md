@@ -30,7 +30,7 @@ Wording as on screen ([13](../13-content.md)). Every key is kept in Windows Cred
 **Settings › Storage.** The S3 bucket ShelfSync uploads to.
 - **Add storage**, then **Endpoint** (empty for Amazon S3), **Region**, **Bucket**, **Previous files to keep** (1 to 5 per slot, kept for rollback) and **Download link template** (`{key}` becomes the file name); **Save storage**.
 - **Access keys:** a **Read and write** pair (uploads and deletes) and a **Read only** pair (reads files back to check them). **Replace keys**, then **Save keys**; **Remove keys** deletes a pair ([keys-and-policies.md](keys-and-policies.md) B).
-- **S3 access policy guide** gives both IAM policies with your bucket filled in. Testing the bucket arrives with the S3 update (m2.7); until then settings and keys are saved without a test.
+- **S3 access policy guide** gives both IAM policies with your bucket filled in. **Test connection** writes a tiny file under `shelfsync-test/` with the read and write key, reads it back with the read-only key and deletes it (about 4 small requests); it tests the saved settings, and a failure names the step and the key ([test-stack.md](test-stack.md) runs it against a local server).
 
 **Settings › Backup.**
 - **What's kept:** the last and next daily database backup (02:00 local time) and how many are kept now. **Database backups to keep** (1 to 30) and **Keep snapshots for** (1 to 365 days, used from a later version); **Save backup settings**.

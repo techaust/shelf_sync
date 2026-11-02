@@ -4,7 +4,9 @@
 import { createRef, createElement as h, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { StorageSettings } from "../../api/storage";
+import { ApiError } from "../../api/client";
+import type { StorageSettings, StorageTest, StorageTestStep } from "../../api/storage";
+import { STORAGE_TEST_IDLE, type StorageTestEntry } from "../../lib/storageTest";
 import { DailyCard, ExportSection, FileText, ImportSection } from "./BackupView";
 import { importedLine } from "./backupModel";
 import { B } from "./backupWording";
@@ -15,9 +17,10 @@ import {
   StorageFailed,
   StorageLoading,
   StorageSettingsCard,
-  StorageTestNote,
+  StorageTestCard,
 } from "./StorageView";
-import { pairState, storageFormFrom, testLines } from "./storageModel";
+import { pairState, storageFormFrom } from "./storageModel";
+import { planStorageTest, storageTestView } from "./storageTestModel";
 import { ST } from "./storageWording";
 
 const decode = (html: string) =>
@@ -167,16 +170,174 @@ describe("Settings › Storage", () => {
     expect(pair(SAVED, "rw", { done: ST.keysSaved })).toContain("Keys saved.");
     expect(pair(EMPTY, "rw", { done: ST.keysRemoved })).toContain("Keys removed.");
   });
+});
 
-  it("no Test button: the line in its place, with 13's line while region or bucket is empty", () => {
-    const saved = markup(h(StorageTestNote, { lines: testLines(SAVED), onGuide: vi.fn() }));
-    expect(saved).toContain(ST.testLater);
-    expect(saved).not.toContain(ST.testNeeds);
-    expect(saved).toContain(">S3 access policy guide</button>");
-    expect(saved).not.toContain("Test connection");
-    expect(markup(h(StorageTestNote, { lines: testLines(EMPTY), onGuide: vi.fn() }))).toContain(
-      "Region and bucket must be filled in before the bucket can be tested.",
+describe("Settings › Storage: the Test card (SET-02, ERR-03)", () => {
+  const WHEN = () => "2 November 2026 at 15:30 India Standard Time";
+  const step = (
+    name: StorageTestStep["step"],
+    state: StorageTestStep["state"],
+    over: Partial<StorageTestStep> = {},
+  ): StorageTestStep => ({
+    step: name,
+    key_pair: name === "read" ? "ro" : "rw",
+    state,
+    latency_ms: state === "not_run" ? null : 120,
+    reason: null,
+    aws_code: null,
+    http_status: null,
+    ...over,
+  });
+  const PASSED: StorageTest = {
+    ok: true,
+    tested_at: "2026-11-02T10:00:00Z",
+    latency_ms: 412,
+    steps: [step("write", "passed"), step("read", "passed"), step("delete", "passed")],
+    left_behind: null,
+  };
+  const testCard = (
+    entry: Partial<StorageTestEntry> = {},
+    { saved = SAVED, dirty = false }: { saved?: StorageSettings; dirty?: boolean } = {},
+  ) => {
+    const full = { ...STORAGE_TEST_IDLE, region: saved.s3_region, ...entry };
+    return markup(
+      h(StorageTestCard, {
+        plan: planStorageTest(saved, dirty),
+        running: full.running,
+        view: storageTestView(full, WHEN),
+        onTest: vi.fn(),
+        onGuide: vi.fn(),
+      }),
     );
+  };
+
+  it("never tested: the button, 13's 'Not tested yet.', the guide and the cost hint, no steps", () => {
+    const html = testCard();
+    expect(html).toContain('id="storage-test-button"');
+    expect(html).toContain(">Test connection</button>");
+    expect(html).not.toMatch(/id="storage-test-button"[^>]*aria-disabled/);
+    expect(html).toContain("Not tested yet.");
+    expect(html).toContain(">S3 access policy guide</button>");
+    expect(html).toContain('ShelfSync writes a tiny test file under <span class="mono">shelfsync-test/</span>');
+    expect(html).toContain("about 4 small S3 requests, a tiny AWS charge.");
+    expect(html).not.toContain('class="test-steps"');
+    expect(html).not.toContain("arrives with the S3 update");
+  });
+
+  it("passed: the line with tabular milliseconds and when, and three passed steps with their keys", () => {
+    const html = testCard({ result: { ...PASSED, latency_ms: 1412 } });
+    expect(html).toContain("Passed in 1,412 ms.");
+    expect(html).toContain("Tested 2 November 2026 at 15:30 India Standard Time.");
+    expect(html).toContain('<ol class="test-steps" aria-label="Test steps">');
+    expect(html).toContain('Write a test file <span class="muted">with the read and write key</span>');
+    expect(html).toContain('Read it back <span class="muted">with the read-only key</span>');
+    expect(html).toContain('Delete it <span class="muted">with the read and write key</span>');
+    expect(html.match(/class="is-ok"/g)).toHaveLength(3);
+    expect(html.match(/>Passed<\/strong>/g)).toHaveLength(3);
+  });
+
+  it("failed at write (ERR-03, no such bucket): the reason line, the failed step's code, the rest not run", () => {
+    const html = testCard({
+      result: {
+        ...PASSED,
+        ok: false,
+        steps: [
+          step("write", "failed", { reason: "bucket_missing", aws_code: "NoSuchBucket", http_status: 404 }),
+          step("read", "not_run"),
+          step("delete", "not_run"),
+        ],
+      },
+    });
+    expect(html).toContain('class="test-result is-danger"');
+    expect(html).toContain(
+      "Failed at the write step: the bucket doesn't exist (NoSuchBucket). Check its name and region.",
+    );
+    expect(html).toContain('class="is-bad"');
+    expect(html).toContain(">Failed: NoSuchBucket</strong>");
+    expect(html.match(/>Not run<\/strong>/g)).toHaveLength(2);
+    expect(html.match(/class="is-skip"/g)).toHaveLength(2);
+  });
+
+  it("left behind: the warning with the key in IBM Plex Mono", () => {
+    const key = "shelfsync-test/20261102T100000Z-0123456789abcdef0123456789abcdef.txt";
+    const html = testCard({
+      result: {
+        ...PASSED,
+        ok: false,
+        steps: [
+          step("write", "passed"),
+          step("read", "passed"),
+          step("delete", "failed", { reason: "still_there", http_status: 200 }),
+        ],
+        left_behind: key,
+      },
+    });
+    expect(html).toContain(
+      `The test file <span class="mono file-name">${key}</span> may still be in the bucket. You can delete it in the S3 console.`,
+    );
+    expect(html).toContain('class="alert is-warning"');
+    expect(html).toContain(">Failed: HTTP 200</strong>");
+  });
+
+  it("can't test: aria-disabled with the reason tied to it; 13's storage_not_set, then keys_missing", () => {
+    const noBucket = testCard({}, { saved: { ...SAVED, s3_bucket: "" } });
+    expect(noBucket).toMatch(
+      /id="storage-test-button"[^>]*aria-disabled="true"[^>]*aria-describedby="storage-test-line"/,
+    );
+    expect(noBucket).toContain('id="storage-test-line"><svg');
+    expect(noBucket).toContain("Region and bucket must be filled in and saved before the bucket can be tested.");
+    const noKeys = testCard({}, { saved: { ...SAVED, ro: { access_key_id: null, secret_access_key: null } } });
+    expect(noKeys).toContain("Save both key pairs, read and write and read-only, before testing.");
+    expect(noKeys).toMatch(/id="storage-test-button"[^>]*aria-disabled="true"/);
+  });
+
+  it("unsaved changes: it can test, and says it tests what is saved", () => {
+    const html = testCard({}, { dirty: true });
+    expect(html).not.toMatch(/id="storage-test-button"[^>]*aria-disabled/);
+    expect(html).toMatch(/id="storage-test-button"[^>]*aria-describedby="storage-test-note"/);
+    expect(html).toContain("The test uses the saved settings. Save your changes to test them.");
+  });
+
+  it("running: the button busy, the progress line, no steps", () => {
+    const html = testCard({ running: true });
+    expect(html).toMatch(/id="storage-test-button"[^>]*aria-disabled="true"[^>]*aria-busy="true"/);
+    expect(html).toContain("is-spinning");
+    expect(html).toContain("Testing the bucket. This can take up to a minute.");
+    expect(html).not.toContain('class="test-steps"');
+  });
+
+  it("a save landed while it ran (T2 review 1): the answer stays, with the note inside the live region", () => {
+    const html = testCard({ result: PASSED, stale: true });
+    expect(html).toContain("Passed in 412 ms.");
+    expect(html).toMatch(
+      /role="status">[\s\S]*class="storage-test__note is-stale"[\s\S]*This test used the settings from before your last save\. Test again to check them\.[\s\S]*<\/div>/,
+    );
+    expect(testCard({ result: PASSED })).not.toContain("is-stale");
+  });
+
+  it("the reason it can't test wins over a test still running: no spinner beside it (T2 review 5)", () => {
+    const html = testCard(
+      { running: true },
+      { saved: { ...SAVED, ro: { access_key_id: null, secret_access_key: null } } },
+    );
+    expect(html).toContain('class="test-result is-neutral" id="storage-test-line"');
+    expect(html).not.toMatch(/id="storage-test-line"><svg[^>]*is-spinning/);
+    expect(html).toContain("Save both key pairs, read and write and read-only, before testing.");
+  });
+
+  it("the announced line and its time are two sentences (a space between them)", () => {
+    expect(testCard({ result: PASSED })).toContain(
+      'Passed in 412 ms.</span> <span class="test-result__when num">Tested 2 November 2026',
+    );
+  });
+
+  it("refused: busy is information, the others are failures, in 13's words", () => {
+    const busy = testCard({ failure: new ApiError("POST", "/api/storage/test", 409, "busy") });
+    expect(busy).toContain('class="test-result is-info"');
+    expect(busy).toContain("A test of the bucket is already running.");
+    const locked = testCard({ failure: new ApiError("POST", "/api/storage/test", 503, "secrets_unavailable") });
+    expect(locked).toContain('class="test-result is-danger"');
+    expect(locked).toContain("Windows Credential Manager couldn't be used. Check the keys and try again.");
   });
 });
 

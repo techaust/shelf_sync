@@ -28,7 +28,13 @@ export function TestResult({ line, at, running }: { line: ResultLine; at: string
       <Icon className="icon" aria-hidden="true" />
       <span>
         <span className="num">{line.text}</span>
-        {at ? <span className="test-result__when num">{S.testedAt(at)}</span> : null}
+        {/* the space keeps the announced text two sentences; the time shows on its own line anyway */}
+        {at ? (
+          <>
+            {" "}
+            <span className="test-result__when num">{S.testedAt(at)}</span>
+          </>
+        ) : null}
       </span>
     </p>
   );
