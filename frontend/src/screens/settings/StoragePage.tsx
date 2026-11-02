@@ -10,11 +10,14 @@ import {
   type StorageSettings,
   saveS3Keys,
   saveStorage,
+  testStorage,
 } from "../../api/storage";
 import { useServices } from "../../app/services";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { helpStore } from "../../components/help/helpModel";
+import { storageTestRun, useStorageTest } from "../../lib/storageTest";
 import { useSwitchPhase } from "../../lib/switchStore";
+import { localWhen } from "../../lib/time";
 import {
   KeyPairPanel,
   KeysCard,
@@ -24,7 +27,7 @@ import {
   StorageFailed,
   StorageLoading,
   StorageSettingsCard,
-  StorageTestNote,
+  StorageTestCard,
 } from "./StorageView";
 import {
   checkKeyPair,
@@ -38,11 +41,27 @@ import {
   storageEmpty,
   storageError,
   storageFormFrom,
-  testLines,
 } from "./storageModel";
+import { afterKeysChanged, afterStorageSaved, planStorageTest, storageTestView } from "./storageTestModel";
 import { ST } from "./storageWording";
 
 const openGuide = () => helpStore.open("s3-policy");
+
+/** The Test card: what the saved settings and keys allow, the tab's run (it survives leaving the page), and the
+ *  send. It tests what is saved, never the form being typed (the server reads its own copy). */
+function StorageTest({ storage, formDirty }: { storage: StorageSettings; formDirty: boolean }) {
+  const { api } = useServices();
+  const entry = useStorageTest();
+  return (
+    <StorageTestCard
+      plan={planStorageTest(storage, formDirty)}
+      running={entry.running}
+      view={storageTestView(entry, localWhen)}
+      onTest={() => void storageTestRun.run(storage.s3_region, () => testStorage(api))}
+      onGuide={openGuide}
+    />
+  );
+}
 
 /** Runs a focus move after the next render, once what it moves to is on the page (an effect, not a frame callback:
  *  a tab that isn't painting never runs those). */
@@ -109,6 +128,7 @@ function KeyPair({
     try {
       await saveS3Keys(api, slot, checked.pair.accessKeyId, checked.pair.secretAccessKey);
       clear();
+      afterKeysChanged(storageTestRun); // the last test was of the old keys
       // the masks come only from a fresh read
       await queryClient.invalidateQueries({ queryKey: STORAGE_QUERY_KEY });
       setOpen(false);
@@ -195,6 +215,7 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
       const saved = await saveStorage(api, checked.values);
       queryClient.setQueryData<StorageSettings>(STORAGE_QUERY_KEY, (old) => (old ? { ...old, ...saved } : old));
       setForm(storageFormFrom(saved));
+      afterStorageSaved(storageTestRun, storage, saved); // the last test was of the old bucket
       setResult({ tone: "success", text: ST.saved });
     } catch (failure) {
       setResult({ tone: "danger", text: storageError(failure, "settings") });
@@ -209,6 +230,7 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
     setRemoveError(null);
     try {
       await removeS3Keys(api, removeSlot);
+      afterKeysChanged(storageTestRun);
       await queryClient.invalidateQueries({ queryKey: STORAGE_QUERY_KEY });
       setRemoveOpen(false);
       setDone(removeSlot, ST.keysRemoved);
@@ -261,7 +283,7 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
           />
         ))}
       </KeysCard>
-      <StorageTestNote lines={testLines(storage)} onGuide={openGuide} />
+      <StorageTest storage={storage} formDirty={storageDirty(form, storage)} />
       <ConfirmDialog
         open={removeOpen}
         title={ST.removeTitle[removeSlot]}
@@ -282,8 +304,8 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
   );
 }
 
-/** Settings › Storage (UI-SET; SET-02): the bucket's five settings and the two S3 key pairs, with no Test button
- *  until the S3 update (m2.7). */
+/** Settings › Storage (UI-SET; SET-02, ERR-03): the bucket's five settings, the two S3 key pairs, and the Test of
+ *  what is saved. */
 export function StoragePage() {
   const { api } = useServices();
   const restarting = useSwitchPhase().kind === "restarting";

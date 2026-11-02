@@ -16,7 +16,6 @@ import {
   storageError,
   storageFormFrom,
   templateOk,
-  testLines,
 } from "./storageModel";
 import { ST } from "./storageWording";
 
@@ -233,13 +232,6 @@ describe("the page's states", () => {
     expect(storageEmpty({ ...EMPTY, s3_endpoint: "http://127.0.0.1:9000" })).toBe(false);
     expect(storageEmpty({ ...EMPTY, ro: { access_key_id: "AKIA••••4QRS", secret_access_key: "••••" } })).toBe(false);
     expect(storageEmpty({ ...EMPTY, keys_readable: false })).toBe(false);
-  });
-
-  it("where the Test will be: 13's line only while region or bucket is empty", () => {
-    expect(testLines(SAVED)).toEqual([ST.testLater]);
-    expect(testLines(EMPTY)).toEqual([ST.testLater, ST.testNeeds]);
-    expect(testLines({ ...SAVED, s3_region: "" })).toEqual([ST.testLater, ST.testNeeds]);
-    expect(ST.testNeeds).toBe("Region and bucket must be filled in before the bucket can be tested.");
   });
 
   it("refusals and silence: 13's lines", () => {

@@ -199,11 +199,6 @@ export function storageEmpty(storage: StorageSettings): boolean {
   );
 }
 
-/** The lines where the Test button will be: 13's "before the test" line only while region or bucket is empty. */
-export function testLines(stored: StorageValues): string[] {
-  return stored.s3_region === "" || stored.s3_bucket === "" ? [ST.testLater, ST.testNeeds] : [ST.testLater];
-}
-
 /** The line for a refused or unanswered write. */
 export function storageError(failure: unknown, kind: "settings" | "keys" | "remove"): string {
   if (failure instanceof ApiError) {
