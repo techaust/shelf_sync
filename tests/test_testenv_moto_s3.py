@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import IO
 
 import pytest
-from testenv import moto_s3
 
 from shelfsync.api.storage import STORAGE_TEST_PATH
 from shelfsync.secure.credentials import S3Credentials
+from testenv import moto_s3
 from tests.s3_support import (
     RO_PAIR,
     RW_PAIR,
@@ -171,11 +171,21 @@ def test_the_request_and_error_logs_never_show_a_query_string(running: moto_s3.M
     assert not any("AKIDSECRET" in line or "\x1b" in line for line in lines), lines
 
 
-@pytest.mark.parametrize("host", ["evil.example", f"evil.example:{moto_s3.DEFAULT_PORT}", "127.0.0.1", ""])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "evil.example",
+        f"evil.example:{moto_s3.DEFAULT_PORT}",
+        "127.0.0.1",
+        "",
+        "127.0.0.1:{port}.evil",
+        "localhost.:{port}",
+    ],
+)
 def test_a_request_for_another_host_gets_403(running: moto_s3.MotoS3, host: str) -> None:
     """DNS rebinding: a page's request reaches 127.0.0.1 but names its own host. Only 127.0.0.1:<port> and
     localhost:<port> are answered (and a request with no Host, or without the port, is refused too)."""
-    header = f"Host: {host}\r\n" if host else ""
+    header = f"Host: {host.format(port=running.port)}\r\n" if host else ""
     answer = raw(running.port, f"GET /{running.bucket} HTTP/1.1\r\n{header}Connection: close\r\n\r\n")
     assert answer.startswith(b"HTTP/1.1 403 "), answer[:80]
     assert b"127.0.0.1 and localhost only" in answer

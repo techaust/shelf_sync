@@ -102,6 +102,8 @@ A probe from another process (made-up keys `made-up-id`/`made-up-secret`): `head
 2. The runbook names the button "Test connection" from T2's brief; if T2 lands with other wording, `docs/runbooks/test-stack.md` §2 step 6 needs that one line changed.
 
 ## 5. Review
+_(reviewer `claude-opus-5-5/high`, `code-review` (applied by hand to the worktree diff) and `security-review`'s method by hand, 2026-11-02, on `a8a2d11..7c3a08f`)_ **APPROVE**, 8/10, with medium findings 1–4 and lows 5–10 below; its run: 18 passed. **Re-check of the fix diff** (`7c3a08f..d723485`): **APPROVE**, 9/10; the Host check holds against near-miss hosts, trailing dots, case, IPv6 and a missing Host (an absolute-form request line can set the host, but only a local process sends one, and a local process can already do anything); its run: 24 passed, mypy and `mypy --platform linux` clean on 77 files. Three new lows: the ruff `src` entry for `testenv` had no effect, two near-miss hosts weren't pinned by a test, and the CORS switch is process-wide (harmless).
+
 _(reviewer, via the lead, 2026-11-02)_ **APPROVE 8/10**, medium findings to fix before merge. A re-check of the fix diff follows.
 
 | # | Sev. | Finding | Resolution (builder, 2026-11-02) |
@@ -127,6 +129,10 @@ _(reviewer, via the lead, 2026-11-02)_ **APPROVE 8/10**, medium findings to fix 
 **Not verified by the fixes:** the script wasn't run for real again on this PC after them (the subprocess test runs the real command with `--port 0` and passed, including the Host check, since botocore sends `Host: 127.0.0.1:<port>`). Whether the S3 extension's requests send a matching `Host` (they should, for an endpoint of `http://127.0.0.1:47630`) is part of V6.
 
 ## 6. Integration notes
+_(lead, 2026-11-02)_ Integrated on `feat/t3-moto-test-server-int` (the builder's four commits plus the lead's):
+- The re-check's lows 1 and 2, fixed by the lead: `pyproject.toml` drops `testenv` from ruff's `src` and names it in `[tool.ruff.lint.isort] known-first-party` (so `from testenv import moto_s3` sorts first-party); the Host test gains `127.0.0.1:<port>.evil` and `localhost.:<port>`, filled with the server's real port (6 passed).
+- **Tier:** this task should have been Tier B (12 §2 names the test stack), with the analyst's early check; the lead set it to C by mistake. Recorded in 11; the two reviews (8/10, then 9/10) found what an early check would have.
+- **Open, the owner's:** V6 (whether the S3 extension works against this server, with CORS off and the Host allowlist), Ctrl+C in a real console, and the LocalWP half of m2.8 (m2.0-plan §3 Q3).
 
 ## 7. Handover
 _(lead, 2026-11-02)_ Brief written. Next: the builder.
