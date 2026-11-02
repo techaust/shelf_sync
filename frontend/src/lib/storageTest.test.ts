@@ -30,10 +30,10 @@ describe("the tab's Storage Test", () => {
     expect(run.get()).toBe(STORAGE_TEST_IDLE);
     const sent = deferred<StorageTest>();
     const done = run.run("ap-south-1", () => sent.promise);
-    expect(run.get()).toEqual({ running: true, result: null, region: "ap-south-1", failure: null });
+    expect(run.get()).toEqual({ running: true, result: null, region: "ap-south-1", failure: null, stale: false });
     sent.resolve(PASSED);
     await done;
-    expect(run.get()).toEqual({ running: false, result: PASSED, region: "ap-south-1", failure: null });
+    expect(run.get()).toEqual({ running: false, result: PASSED, region: "ap-south-1", failure: null, stale: false });
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
@@ -54,25 +54,49 @@ describe("the tab's Storage Test", () => {
     const run = createStorageTestRun();
     const refusal = new Error("409");
     await run.run("ap-south-1", () => Promise.reject(refusal));
-    expect(run.get()).toEqual({ running: false, result: null, region: "ap-south-1", failure: refusal });
+    expect(run.get()).toEqual({ running: false, result: null, region: "ap-south-1", failure: refusal, stale: false });
     await run.run("eu-west-1", () => Promise.resolve(PASSED));
-    expect(run.get()).toEqual({ running: false, result: PASSED, region: "eu-west-1", failure: null });
+    expect(run.get()).toEqual({ running: false, result: PASSED, region: "eu-west-1", failure: null, stale: false });
   });
 
-  it("forget() drops a finished answer, never a running test, and is quiet when there is nothing to drop", async () => {
+  it("forget() drops a finished answer and is quiet when there is nothing to drop", async () => {
     const run = createStorageTestRun();
     const listener = vi.fn();
     run.subscribe(listener);
     run.forget();
     expect(listener).not.toHaveBeenCalled();
+    await run.run("ap-south-1", () => Promise.resolve(PASSED));
+    expect(run.get().stale).toBe(false);
+    run.forget();
+    expect(run.get()).toBe(STORAGE_TEST_IDLE);
+  });
+
+  it("forget() during a run (a save landed) marks the answer stale when it lands, never drops the run", async () => {
+    const run = createStorageTestRun();
     const sent = deferred<StorageTest>();
     const done = run.run("ap-south-1", () => sent.promise);
     run.forget();
-    expect(run.get().running).toBe(true);
+    run.forget(); // a second save while it runs changes nothing more
+    expect(run.get()).toEqual({ running: true, result: null, region: "ap-south-1", failure: null, stale: true });
     sent.resolve(PASSED);
     await done;
+    expect(run.get()).toEqual({ running: false, result: PASSED, region: "ap-south-1", failure: null, stale: true });
+    // the stale answer is a finished answer: the next save drops it, and the next run starts fresh
     run.forget();
     expect(run.get()).toBe(STORAGE_TEST_IDLE);
+  });
+
+  it("a stale refusal keeps the mark too, and a new run clears it", async () => {
+    const run = createStorageTestRun();
+    const sent = deferred<StorageTest>();
+    const done = run.run("ap-south-1", () => sent.promise);
+    run.forget();
+    const refusal = new Error("no answer");
+    sent.reject(refusal);
+    await done;
+    expect(run.get()).toMatchObject({ failure: refusal, stale: true });
+    await run.run("ap-south-1", () => Promise.resolve(PASSED));
+    expect(run.get()).toMatchObject({ result: PASSED, stale: false });
   });
 
   it("unsubscribe stops the calls", async () => {

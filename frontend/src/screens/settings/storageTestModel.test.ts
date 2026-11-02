@@ -1,11 +1,13 @@
 // SET-02, ERR-03: the Storage Test without React. Whether the saved settings and keys can be tested and why not, every
 // reason of docs/13-content.md's row "Storage Test (M2.7)" with its key word and region (and the forms for a null
 // `aws_code` and a null `http_status`), the step words, the left-behind key, and the refused and unanswered tests.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError, ApiUnreachableError } from "../../api/client";
 import type { StorageSettings, StorageTest, StorageTestStep } from "../../api/storage";
 import { STORAGE_TEST_IDLE } from "../../lib/storageTest";
 import {
+  afterKeysChanged,
+  afterStorageSaved,
   planStorageTest,
   storageTestView,
   testAnswerView,
@@ -284,6 +286,7 @@ describe("storageTestView: what the Test row shows for the tab's test", () => {
       when: null,
       steps: [],
       leftBehind: null,
+      stale: null,
     });
     expect(storageTestView({ ...STORAGE_TEST_IDLE, running: true }, WHEN).line).toEqual({
       tone: "neutral",
@@ -300,6 +303,67 @@ describe("storageTestView: what the Test row shows for the tab's test", () => {
       when: null,
       steps: [],
       leftBehind: null,
+      stale: null,
     });
+  });
+
+  it("an answer that landed after a save (T2 review 1): kept, with the note; a refusal never gets it", () => {
+    const key = "shelfsync-test/20261102T100000Z-0123456789abcdef0123456789abcdef.txt";
+    const old = answer([step("write", "failed", { reason: "timeout" })], { left_behind: key });
+    const view = storageTestView({ ...STORAGE_TEST_IDLE, result: old, stale: true }, WHEN);
+    expect(view.stale).toBe("This test used the settings from before your last save. Test again to check them.");
+    expect(view.leftBehind).toBe(key);
+    expect(view.line.text).toBe("Failed at the write step: the storage service took too long to answer.");
+    expect(storageTestView({ ...STORAGE_TEST_IDLE, result: old }, WHEN).stale).toBeNull();
+    const refused = {
+      ...STORAGE_TEST_IDLE,
+      failure: new ApiUnreachableError("POST", "/api/storage/test"),
+      stale: true,
+    };
+    expect(storageTestView(refused, WHEN).stale).toBeNull();
+  });
+});
+
+describe("after a save (T2 review 4): what the page tells the tab's test", () => {
+  const fakeRun = () => ({ forget: vi.fn() });
+
+  it("a settings save forgets only when the endpoint, region or bucket changed", () => {
+    for (const changed of [
+      { s3_endpoint: "http://127.0.0.1:9000" },
+      { s3_region: "eu-west-1" },
+      { s3_bucket: "other-bucket" },
+    ]) {
+      const run = fakeRun();
+      afterStorageSaved(run, SAVED, { ...SAVED, ...changed });
+      expect(run.forget).toHaveBeenCalledTimes(1);
+    }
+    for (const kept of [{ keep_previous_files: 4 }, { download_link_template: "{key}" }, {}]) {
+      const run = fakeRun();
+      afterStorageSaved(run, SAVED, { ...SAVED, ...kept });
+      expect(run.forget).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a key save or removal always forgets", () => {
+    const run = fakeRun();
+    afterKeysChanged(run);
+    expect(run.forget).toHaveBeenCalledTimes(1);
+  });
+
+  it("the page calls them where it saves the settings, saves a key pair and removes one", () => {
+    // read as text (as chunkBoundary.test.ts reads the components): the page's wiring has no DOM to test it in
+    const page = Object.values(
+      import.meta.glob("./StoragePage.tsx", { query: "?raw", import: "default", eager: true }) as Record<
+        string,
+        string
+      >,
+    )[0];
+    expect(page).toBeDefined();
+    const source = page ?? "";
+    expect(source.match(/afterKeysChanged\(storageTestRun\)/g)).toHaveLength(2);
+    expect(source).toMatch(/await saveS3Keys\([^)]*\);\s*clear\(\);\s*afterKeysChanged\(storageTestRun\)/);
+    expect(source).toMatch(/await removeS3Keys\(api, removeSlot\);\s*afterKeysChanged\(storageTestRun\)/);
+    expect(source).toMatch(/await saveStorage\([\s\S]{0,300}afterStorageSaved\(storageTestRun, storage, saved\)/);
+    expect(source).not.toMatch(/storageTestRun\.forget\(/);
   });
 });

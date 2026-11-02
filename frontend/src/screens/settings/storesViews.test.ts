@@ -9,6 +9,7 @@ import type { Store } from "../../api/stores";
 import { ConfirmDialog, confirmFallback, type QueryRoot } from "../../components/ConfirmDialog";
 import { type DialogElement, dialogBehaviour, type Focusable } from "../../components/dialog";
 import { HealthArea } from "../../components/HealthArea";
+import { TestResult } from "../../components/StoreTest";
 import { TipProvider } from "../../components/Tip";
 import { S } from "../../lib/storesWording";
 import type { TestEntry } from "../../lib/storeTests";
@@ -109,6 +110,18 @@ function card(store: Store, over: Partial<Parameters<typeof StoreCardView>[0]> =
     }),
   );
 }
+
+describe("the shared test result line (components/StoreTest.tsx)", () => {
+  it("the announced line and its time are two sentences (a space between them; T2 review 3)", () => {
+    const html = markup(
+      h(TestResult, { line: { tone: "success", text: "Connected in 120 ms." }, at: "today at 09:30", running: false }),
+    );
+    expect(html).toContain('Connected in 120 ms.</span> <span class="test-result__when num">Tested today at 09:30.');
+    expect(markup(h(TestResult, { line: { tone: "neutral", text: S.notTested }, at: null, running: false }))).toContain(
+      `<span class="num">${S.notTested}</span></span>`,
+    );
+  });
+});
 
 describe("the page's states", () => {
   it("loading: two quiet cards, marked busy", () => {

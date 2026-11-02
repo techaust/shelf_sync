@@ -91,8 +91,17 @@
   /* the line sits on the buttons' centre line while it is one line long, and grows down from there */
   .storage-test .test-row__result {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-1);
     min-height: var(--target-min);
+  }
+  /* a save landed while the test ran: the answer stays, under a warning that it is about what was saved before */
+  .storage-test__note.is-stale {
+    flex-basis: auto; /* in the result's column, where the main axis is vertical */
+  }
+  .storage-test__note.is-stale .icon {
+    color: var(--color-warning);
   }
   .test-result.is-info .icon {
     color: var(--color-info);

@@ -14,16 +14,27 @@ export interface StorageTestEntry {
   region: string;
   /** A refused or unanswered test (ApiError, ApiUnreachableError, …), turned into words by the screen. */
   failure: unknown;
+  /** The settings or keys changed while this test ran: its answer is about what was saved before (T2 review 1). */
+  stale: boolean;
 }
 
-export const STORAGE_TEST_IDLE: StorageTestEntry = { running: false, result: null, region: "", failure: null };
+export const STORAGE_TEST_IDLE: StorageTestEntry = {
+  running: false,
+  result: null,
+  region: "",
+  failure: null,
+  stale: false,
+};
 
 export interface StorageTestRun {
   subscribe(listener: () => void): () => void;
   get(): StorageTestEntry;
   /** Runs `send` unless a test is already running; `region` is the saved region it tests. */
   run(region: string, send: () => Promise<StorageTest>): Promise<void>;
-  /** Forgets the last answer (the settings or keys changed, so it no longer says anything); never while running. */
+  /**
+   * The settings or keys changed, so the last answer no longer says anything about them. A finished answer is dropped;
+   * a running test is marked stale, so its answer lands with a note instead of passing for the new settings.
+   */
   forget(): void;
 }
 
@@ -42,15 +53,20 @@ export function createStorageTestRun(): StorageTestRun {
     get: () => entry,
     async run(region, send) {
       if (entry.running) return;
-      set({ running: true, result: null, region, failure: null });
+      set({ running: true, result: null, region, failure: null, stale: false });
       try {
-        set({ running: false, result: await send(), region, failure: null });
+        const result = await send();
+        set({ running: false, result, region, failure: null, stale: entry.stale });
       } catch (failure) {
-        set({ running: false, result: null, region, failure });
+        set({ running: false, result: null, region, failure, stale: entry.stale });
       }
     },
     forget() {
-      if (entry.running || (entry.result === null && entry.failure === null)) return;
+      if (entry.running) {
+        if (!entry.stale) set({ ...entry, stale: true });
+        return;
+      }
+      if (entry.result === null && entry.failure === null) return;
       set(STORAGE_TEST_IDLE);
     },
   };

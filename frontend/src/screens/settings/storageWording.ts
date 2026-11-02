@@ -156,6 +156,8 @@ export const ST = {
   keysMissing: "Save both key pairs, read and write and read-only, before testing.", // 13 Test
   testBusy: "A test of the bucket is already running.", // 13 Test
   unsaved: "The test uses the saved settings. Save your changes to test them.", // proposed (T2)
+  /** proposed (T2 review 1): a save (settings or keys) landed while this test ran, so its answer is about before. */
+  staleAnswer: "This test used the settings from before your last save. Test again to check them.",
   testRefused: (status: number) => `ShelfSync refused the test (HTTP ${status}).`, // 13 M2.5a pattern (stores)
   testNoAnswer: "ShelfSync didn't answer, so the test may not have finished. Test again to check.", // proposed (T2)
   /** 13 section 6: "shelfsync-test/" is shown in IBM Plex Mono, so the hint is in three parts. */

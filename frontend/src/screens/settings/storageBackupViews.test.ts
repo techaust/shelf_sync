@@ -306,6 +306,31 @@ describe("Settings › Storage: the Test card (SET-02, ERR-03)", () => {
     expect(html).not.toContain('class="test-steps"');
   });
 
+  it("a save landed while it ran (T2 review 1): the answer stays, with the note inside the live region", () => {
+    const html = testCard({ result: PASSED, stale: true });
+    expect(html).toContain("Passed in 412 ms.");
+    expect(html).toMatch(
+      /role="status">[\s\S]*class="storage-test__note is-stale"[\s\S]*This test used the settings from before your last save\. Test again to check them\.[\s\S]*<\/div>/,
+    );
+    expect(testCard({ result: PASSED })).not.toContain("is-stale");
+  });
+
+  it("the reason it can't test wins over a test still running: no spinner beside it (T2 review 5)", () => {
+    const html = testCard(
+      { running: true },
+      { saved: { ...SAVED, ro: { access_key_id: null, secret_access_key: null } } },
+    );
+    expect(html).toContain('class="test-result is-neutral" id="storage-test-line"');
+    expect(html).not.toMatch(/id="storage-test-line"><svg[^>]*is-spinning/);
+    expect(html).toContain("Save both key pairs, read and write and read-only, before testing.");
+  });
+
+  it("the announced line and its time are two sentences (a space between them)", () => {
+    expect(testCard({ result: PASSED })).toContain(
+      'Passed in 412 ms.</span> <span class="test-result__when num">Tested 2 November 2026',
+    );
+  });
+
   it("refused: busy is information, the others are failures, in 13's words", () => {
     const busy = testCard({ failure: new ApiError("POST", "/api/storage/test", 409, "busy") });
     expect(busy).toContain('class="test-result is-info"');

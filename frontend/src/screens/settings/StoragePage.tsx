@@ -42,7 +42,7 @@ import {
   storageError,
   storageFormFrom,
 } from "./storageModel";
-import { planStorageTest, storageTestView, testedValuesChanged } from "./storageTestModel";
+import { afterKeysChanged, afterStorageSaved, planStorageTest, storageTestView } from "./storageTestModel";
 import { ST } from "./storageWording";
 
 const openGuide = () => helpStore.open("s3-policy");
@@ -128,7 +128,7 @@ function KeyPair({
     try {
       await saveS3Keys(api, slot, checked.pair.accessKeyId, checked.pair.secretAccessKey);
       clear();
-      storageTestRun.forget(); // the last test was of the old keys
+      afterKeysChanged(storageTestRun); // the last test was of the old keys
       // the masks come only from a fresh read
       await queryClient.invalidateQueries({ queryKey: STORAGE_QUERY_KEY });
       setOpen(false);
@@ -215,7 +215,7 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
       const saved = await saveStorage(api, checked.values);
       queryClient.setQueryData<StorageSettings>(STORAGE_QUERY_KEY, (old) => (old ? { ...old, ...saved } : old));
       setForm(storageFormFrom(saved));
-      if (testedValuesChanged(storage, saved)) storageTestRun.forget(); // the last test was of the old bucket
+      afterStorageSaved(storageTestRun, storage, saved); // the last test was of the old bucket
       setResult({ tone: "success", text: ST.saved });
     } catch (failure) {
       setResult({ tone: "danger", text: storageError(failure, "settings") });
@@ -230,7 +230,7 @@ function StorageForms({ storage, stale }: { storage: StorageSettings; stale: boo
     setRemoveError(null);
     try {
       await removeS3Keys(api, removeSlot);
-      storageTestRun.forget();
+      afterKeysChanged(storageTestRun);
       await queryClient.invalidateQueries({ queryKey: STORAGE_QUERY_KEY });
       setRemoveOpen(false);
       setDone(removeSlot, ST.keysRemoved);

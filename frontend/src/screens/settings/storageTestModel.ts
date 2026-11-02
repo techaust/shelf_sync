@@ -5,7 +5,7 @@
 
 import { ApiError } from "../../api/client";
 import type { StorageSettings, StorageTest, StorageTestStep, StorageValues } from "../../api/storage";
-import type { StorageTestEntry } from "../../lib/storageTest";
+import type { StorageTestEntry, StorageTestRun } from "../../lib/storageTest";
 import { n } from "../../lib/storesWording";
 import type { WhenFormat } from "../../lib/time";
 import { pairState } from "./storageModel";
@@ -44,6 +44,21 @@ export function testedValuesChanged(before: StorageValues, after: StorageValues)
   );
 }
 
+/** What the page does after a settings save: the last answer (or the running test's, marked stale) no longer
+ *  applies when the endpoint, region or bucket changed. */
+export function afterStorageSaved(
+  run: Pick<StorageTestRun, "forget">,
+  before: StorageValues,
+  after: StorageValues,
+): void {
+  if (testedValuesChanged(before, after)) run.forget();
+}
+
+/** What the page does after a key pair was saved or removed: the last answer was about the old keys. */
+export function afterKeysChanged(run: Pick<StorageTestRun, "forget">): void {
+  run.forget();
+}
+
 // ---------- the answer ----------
 
 export type TestTone = "success" | "danger" | "info" | "neutral";
@@ -68,6 +83,8 @@ export interface StorageTestView {
   steps: TestStepLine[];
   /** The test file's key when it may still be in the bucket (shown in IBM Plex Mono). */
   leftBehind: string | null;
+  /** The answer is about the settings or keys from before a save made while it ran (T2 review 1). */
+  stale: string | null;
 }
 
 const STEP_ORDER: readonly StorageTestStep["step"][] = ["write", "read", "delete"];
@@ -114,6 +131,7 @@ export function testAnswerView(result: StorageTest, region: string, when: WhenFo
     when: tested ? ST.testedAt(tested) : null,
     steps: steps.map(stepLine),
     leftBehind: result.left_behind,
+    stale: null,
   };
 }
 
@@ -136,11 +154,14 @@ export function testFailureLine(failure: unknown): StorageTestView["line"] {
   return { tone: "danger", text: ST.testNoAnswer };
 }
 
-/** What the Test row shows for the tab's test: running, an answer, a refusal, or not tested yet. */
+/** What the Test row shows for the tab's test: running, an answer (with a note when a save came while it ran), a
+ *  refusal, or not tested yet. A refusal says nothing about the settings, so it never gets the note. */
 export function storageTestView(entry: StorageTestEntry, when: WhenFormat): StorageTestView {
-  const nothing = { when: null, steps: [], leftBehind: null };
+  const nothing = { when: null, steps: [], leftBehind: null, stale: null };
   if (entry.running) return { line: { tone: "neutral", text: ST.testing }, ...nothing };
-  if (entry.result) return testAnswerView(entry.result, entry.region, when);
+  if (entry.result) {
+    return { ...testAnswerView(entry.result, entry.region, when), stale: entry.stale ? ST.staleAnswer : null };
+  }
   if (entry.failure !== null) return { line: testFailureLine(entry.failure), ...nothing };
   return { line: { tone: "neutral", text: ST.notTested }, ...nothing };
 }

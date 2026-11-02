@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  CircleAlert,
   CircleCheck,
   CircleDashed,
   CircleDot,
@@ -482,7 +483,9 @@ export function StorageTestCard({
   const blocked = !plan.can;
   const line = plan.can ? view.line : { tone: "neutral" as const, text: plan.why };
   const note = plan.can ? plan.note : null;
-  const Icon = running ? LoaderCircle : LINE_ICON[line.tone];
+  // the reason a test can't run wins over a test still running (keys removed mid-run): no spinner beside it
+  const spinning = running && !blocked;
+  const Icon = spinning ? LoaderCircle : LINE_ICON[line.tone];
   const described = [blocked ? `${TEST_ID}-line` : "", note ? `${TEST_ID}-note` : ""].filter(Boolean).join(" ");
   const [before, folder, after] = ST.testHint;
   const [lead, tail] = ST.leftBehind;
@@ -508,8 +511,8 @@ export function StorageTestCard({
           {ST.test}
         </button>
         <div className="test-row__result" role="status">
-          <p className={`test-result is-${running ? "running" : line.tone}`} id={`${TEST_ID}-line`}>
-            <Icon className={`icon${running ? " is-spinning" : ""}`} aria-hidden="true" />
+          <p className={`test-result is-${spinning ? "running" : line.tone}`} id={`${TEST_ID}-line`}>
+            <Icon className={`icon${spinning ? " is-spinning" : ""}`} aria-hidden="true" />
             <span>
               <span className="num">{line.text}</span>
               {/* the space keeps the announced text two sentences; the time shows on its own line anyway */}
@@ -521,6 +524,13 @@ export function StorageTestCard({
               ) : null}
             </span>
           </p>
+          {/* inside the live region, so it is announced with the answer it qualifies */}
+          {!blocked && view.stale ? (
+            <p className="storage-test__note is-stale" id={`${TEST_ID}-stale`}>
+              <CircleAlert className="icon" aria-hidden="true" />
+              <span>{view.stale}</span>
+            </p>
+          ) : null}
         </div>
         {note ? (
           <p className="storage-test__note" id={`${TEST_ID}-note`}>
