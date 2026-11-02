@@ -11,14 +11,16 @@ Starts moto's S3 server on 127.0.0.1 only, creates the test bucket and keeps run
   is no `--data` folder: stopping the server removes the bucket and every file in it, and nothing is written to disk.
 - **Any key pair works:** this server checks no keys or signatures (moto without its IAM checks; 04-A V8). Use
   made-up keys here, never real AWS ones.
-- The request log shows each request's method, path and status, never its query string (a presigned URL's query
-  holds the key ID).
+- **This PC's programs only:** a request whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` gets 403 (a
+  DNS-rebinding page can't reach it), and moto's global CORS (on for every origin by default) is turned off, so a web
+  page open in the browser can't read, write or reset it. The S3 extension's download links are navigations, which
+  need no CORS (04-A V6, still to confirm on the test stack).
+- The request and error logs never show a query string (a presigned URL's holds the key ID).
 
 Developer tooling for the test stack: never shipped with the app, and it never reaches anything outside this PC.
 """
 
 import argparse
-import os
 import re
 import socket
 import sys
@@ -26,9 +28,11 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any
+from wsgiref.types import StartResponse, WSGIApplication, WSGIEnvironment
 
-from moto.moto_server.werkzeug_app import DomainDispatcherApplication, create_backend_app
+import moto.moto_server.werkzeug_app as moto_app
 from werkzeug.serving import ThreadedWSGIServer, WSGIRequestHandler
 
 HOST = "127.0.0.1"
@@ -42,20 +46,48 @@ SETUP_KEY_ID = "shelfsync-test-stack"
 SETUP_SECRET = "any-secret-works-here"  # a made-up value: this server checks no keys
 
 _REGION = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])")
-_LOG_PATH_MAX = 200
+_QUERY = re.compile(r"\?[^\s'\"]*")
+_LOG_MAX = 300
+_BACKEND = Path(__file__).resolve().parent.parent / "backend"
 
 
 class PortUnavailable(Exception):
     """The port on 127.0.0.1 can't be used (another program has it, or Windows keeps it reserved)."""
 
 
+def scrub(text: str) -> str:
+    """A log line without any query string (`?...`) or unprintable character, at most 300 characters."""
+    return "".join(c if c.isprintable() else "?" for c in _QUERY.sub("?...", text))[:_LOG_MAX]
+
+
 class _Handler(WSGIRequestHandler):
-    """werkzeug's handler, but its request log line drops the query string and any unprintable character."""
+    """werkzeug's handler, but its request and error lines drop query strings and unprintable characters."""
 
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
-        path = str(getattr(self, "path", "-")).split("?", 1)[0][:_LOG_PATH_MAX]
-        shown = "".join(c if c.isprintable() else "?" for c in path)
-        self.log("info", '"%s %s" %s', getattr(self, "command", "-"), shown, code)
+        path = str(getattr(self, "path", "-")).split("?", 1)[0]
+        self.log("info", "%s", scrub(f'"{getattr(self, "command", "-")} {path}" {code}'))
+
+    def log_error(self, format: str, *args: Any) -> None:  # "Bad request syntax ('GET /k?X-Amz-...')", say
+        self.log("error", "%s", scrub(format % args))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        self.log("info", "%s", scrub(format % args))
+
+
+class _LoopbackHostOnly:
+    """403 for any request whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding)."""
+
+    def __init__(self, app: WSGIApplication) -> None:
+        self.app = app
+        self.port = 0  # set once the socket is bound
+
+    def __call__(self, environ: WSGIEnvironment, start_response: StartResponse) -> Any:
+        host = str(environ.get("HTTP_HOST", "")).lower()
+        if host not in (f"127.0.0.1:{self.port}", f"localhost:{self.port}"):
+            body = b"This test server answers requests for 127.0.0.1 and localhost only.\n"
+            start_response("403 Forbidden", [("Content-Type", "text/plain"), ("Content-Length", str(len(body)))])
+            return [body]
+        return self.app(environ, start_response)
 
 
 class _Server(ThreadedWSGIServer):
@@ -97,36 +129,16 @@ class MotoS3:
 
 
 def s3_client(endpoint: str, region: str, key_id: str = SETUP_KEY_ID, secret: str = SETUP_SECRET) -> Any:
-    """A botocore S3 client for this server only: path-style, no proxy, and nothing read from this PC's `~/.aws`
-    files, `AWS_*` variables or proxy settings."""
-    import botocore.session
-    from botocore.config import Config
+    """ShelfSync's own isolated S3 client (`shelfsync.apply.s3.make_client`): path-style for this endpoint, every
+    setting explicit, and nothing taken from this PC's `~/.aws` files, `AWS_*` variables, proxy settings or extra
+    botocore models. The caller closes it."""
+    if str(_BACKEND) not in sys.path:  # run as `python testenv/moto_s3.py`: backend/ isn't on the path yet
+        sys.path.insert(0, str(_BACKEND))
+    from shelfsync.apply.s3 import S3Target, make_client
+    from shelfsync.secure.credentials import S3Pair
 
-    nowhere = os.devnull
-    session = botocore.session.Session(
-        session_vars={
-            "profile": (None, None, None, None),
-            "config_file": (None, None, nowhere, None),
-            "credentials_file": (None, None, nowhere, None),
-        }
-    )
-    return session.create_client(
-        "s3",
-        region_name=region,
-        endpoint_url=endpoint,
-        aws_access_key_id=key_id,
-        aws_secret_access_key=secret,
-        aws_session_token=None,
-        config=Config(
-            proxies={},  # not None: None makes botocore read HTTPS_PROXY and the Windows proxy settings
-            ignore_configured_endpoint_urls=True,
-            signature_version="s3v4",
-            s3={"addressing_style": "path"},
-            retries={"mode": "standard", "total_max_attempts": 1},
-            connect_timeout=5,
-            read_timeout=10,
-        ),
-    )
+    client: Any = make_client(S3Target(endpoint, region, ""), S3Pair(key_id, secret))
+    return client
 
 
 def create_bucket(endpoint: str, bucket: str, region: str) -> None:
@@ -143,8 +155,12 @@ def create_bucket(endpoint: str, bucket: str, region: str) -> None:
 def start(port: int = DEFAULT_PORT, bucket: str = DEFAULT_BUCKET, region: str = DEFAULT_REGION) -> MotoS3:
     """Start moto's S3 server on 127.0.0.1:`port` (0: any free port) and create `bucket` in `region`.
     PortUnavailable if the port can't be used; a botocore error if the bucket can't be made (the server is stopped)."""
-    app = DomainDispatcherApplication(create_backend_app)
+    # moto turns on CORS for every origin unless this is set; it's read when moto makes its S3 app (first request).
+    # It's copied there from moto.settings at import (so setting moto.settings does nothing) and not re-exported.
+    moto_app.DISABLE_GLOBAL_CORS = True  # type: ignore[attr-defined]
+    app = _LoopbackHostOnly(moto_app.DomainDispatcherApplication(moto_app.create_backend_app))
     server = _Server(HOST, port, app, handler=_Handler)
+    app.port = int(server.server_address[1])
     thread = threading.Thread(target=server.serve_forever, name="moto-s3", daemon=True)
     thread.start()
     running = MotoS3(server, thread, bucket, region)

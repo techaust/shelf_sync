@@ -50,7 +50,7 @@ exclude-newer-package = { certifi = "2026-10-21T00:00:00Z", filelock = "2026-10-
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-src = ["backend", "tests"]
+src = ["backend", "tests", "testenv"]
 # Only backend/ and tests/ are ShelfSync app code. The research and doc-build scripts are not linted here.
 extend-exclude = ["docs", "tools", "brand", ".claude"]
 
@@ -67,7 +67,7 @@ ignore = ["RUF001"]
 python_version = "3.14"
 strict = true
 mypy_path = "backend"
-packages = ["shelfsync"]
+packages = ["shelfsync", "testenv"]
 
 # pystray ships no type hints; windows-toasts is Windows only (not installed on Linux CI), so its imports are not found there.
 [[tool.mypy.overrides]]

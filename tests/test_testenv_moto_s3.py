@@ -139,12 +139,22 @@ def test_bad_arguments_are_refused(argv: list[str], message: str, capsys: pytest
     assert message in capsys.readouterr().err
 
 
-def test_a_bucket_moto_refuses_is_reported_and_the_server_stopped(capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_bucket_name_botocore_refuses_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
     assert moto_s3.main(["--port", "0", "--bucket", "not a bucket"]) == 1
     assert "The test bucket 'not a bucket' couldn't be created" in capsys.readouterr().err
 
 
-def test_the_request_log_never_shows_a_query_string(running: moto_s3.MotoS3) -> None:
+def raw(port: int, request: str) -> bytes:
+    """Send one raw HTTP request to 127.0.0.1:`port` and return the whole answer."""
+    answer = b""
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
+        conn.sendall(request.encode("latin-1"))
+        while chunk := conn.recv(65536):
+            answer += chunk
+    return answer
+
+
+def test_the_request_and_error_logs_never_show_a_query_string(running: moto_s3.MotoS3) -> None:
     lines: list[str] = []
 
     class Recorder(moto_s3._Handler):
@@ -152,17 +162,68 @@ def test_the_request_log_never_shows_a_query_string(running: moto_s3.MotoS3) -> 
             lines.append(message % args)
 
     running.server.RequestHandlerClass = Recorder
-    with socket.create_connection(("127.0.0.1", running.port), timeout=5) as conn:
-        conn.sendall(
-            f"GET /{running.bucket}/k\x1b[31m.txt?X-Amz-Credential=AKIDSECRETISH%2F HTTP/1.1\r\n"
-            "Host: 127.0.0.1\r\nConnection: close\r\n\r\n".encode("latin-1")
-        )
-        while conn.recv(65536):
-            pass
+    host = f"Host: 127.0.0.1:{running.port}\r\nConnection: close\r\n\r\n"
+    raw(running.port, f"GET /{running.bucket}/k\x1b[31m.txt?X-Amz-Credential=AKIDSECRETISH%2F HTTP/1.1\r\n{host}")
+    raw(running.port, f"GET /{running.bucket}/k.txt?X-Amz-Credential=AKIDSECRETTWO HTTP/1.1 extra\r\n{host}")
     requests = [line for line in lines if line.startswith('"GET ')]
-    assert len(requests) == 1, lines
-    assert requests[0].startswith(f'"GET /{running.bucket}/k?[31m.txt" ')
-    assert not any("AKIDSECRETISH" in line or "\x1b" in line for line in lines), lines
+    assert requests[0].startswith(f'"GET /{running.bucket}/k?[31m.txt" '), lines
+    assert any("Bad request" in line for line in lines), lines  # the second one: werkzeug's error line
+    assert not any("AKIDSECRET" in line or "\x1b" in line for line in lines), lines
+
+
+@pytest.mark.parametrize("host", ["evil.example", f"evil.example:{moto_s3.DEFAULT_PORT}", "127.0.0.1", ""])
+def test_a_request_for_another_host_gets_403(running: moto_s3.MotoS3, host: str) -> None:
+    """DNS rebinding: a page's request reaches 127.0.0.1 but names its own host. Only 127.0.0.1:<port> and
+    localhost:<port> are answered (and a request with no Host, or without the port, is refused too)."""
+    header = f"Host: {host}\r\n" if host else ""
+    answer = raw(running.port, f"GET /{running.bucket} HTTP/1.1\r\n{header}Connection: close\r\n\r\n")
+    assert answer.startswith(b"HTTP/1.1 403 "), answer[:80]
+    assert b"127.0.0.1 and localhost only" in answer
+    reset = raw(
+        running.port, f"POST /moto-api/reset HTTP/1.1\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    assert reset.startswith(b"HTTP/1.1 403 ")
+    assert bucket_region(running.endpoint, running.bucket, running.region) == running.region  # not reset
+
+
+def cors_answers(port: int, bucket: str) -> list[bytes]:
+    origin = "Origin: https://some-page.example\r\n"
+    host = f"Host: 127.0.0.1:{port}\r\nConnection: close\r\n"
+    return [
+        raw(port, f"GET /{bucket} HTTP/1.1\r\n{host}{origin}\r\n"),
+        raw(
+            port,
+            f"OPTIONS /{bucket} HTTP/1.1\r\n{host}{origin}Access-Control-Request-Method: PUT\r\n\r\n",
+        ),
+    ]
+
+
+def test_moto_s_global_cors_is_off(running: moto_s3.MotoS3) -> None:
+    for answer in cors_answers(running.port, running.bucket):
+        assert b"access-control-allow-origin" not in answer.lower(), answer[:400]
+
+
+def test_recorded_moto_turns_cors_on_for_every_origin_unless_told_not_to(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Why the script sets `DISABLE_GLOBAL_CORS` in `moto.moto_server.werkzeug_app` (read when moto makes its S3 app;
+    `moto.settings` is copied there at import, so setting it there does nothing): moto 5.2.4's default answers any
+    origin. If moto changes that, this test says so."""
+    import moto.moto_server.werkzeug_app as moto_app
+    from moto.server import ThreadedMotoServer
+
+    request.getfixturevalue("aws_setup_env")
+    monkeypatch.setattr(moto_app, "DISABLE_GLOBAL_CORS", False)
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    try:
+        port = server.get_host_and_port()[1]
+        bucket = unique_bucket()
+        moto_s3.create_bucket(f"http://127.0.0.1:{port}", bucket, "us-east-1")
+        get, _ = cors_answers(port, bucket)
+        assert b"access-control-allow-origin:" in get.lower(), get[:400]
+    finally:
+        server.stop()
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])

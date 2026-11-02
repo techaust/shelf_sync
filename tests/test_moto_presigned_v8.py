@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import botocore.auth
 import httpx
@@ -43,9 +44,12 @@ def moto_endpoint(request: pytest.FixtureRequest) -> Iterator[str]:
         create_bucket(endpoint, BUCKET)
         yield endpoint
         client = setup_client("s3", endpoint)
-        for item in client.list_objects_v2(Bucket=BUCKET).get("Contents", []):
-            client.delete_object(Bucket=BUCKET, Key=item["Key"])
-        client.delete_bucket(Bucket=BUCKET)
+        try:
+            for item in client.list_objects_v2(Bucket=BUCKET).get("Contents", []):
+                client.delete_object(Bucket=BUCKET, Key=item["Key"])
+            client.delete_bucket(Bucket=BUCKET)
+        finally:
+            client.close()
     finally:
         server.stop()
 
@@ -83,7 +87,10 @@ def signed_two_hours_ago(client: Any, key: str, monkeypatch: pytest.MonkeyPatch)
     real_now = botocore.auth.get_current_datetime
     with monkeypatch.context() as patch:
         patch.setattr(botocore.auth, "get_current_datetime", lambda: real_now() - timedelta(hours=2))
-        return presigned_get(client, key)
+        url = presigned_get(client, key)
+    signed_at = datetime.strptime(parse_qs(urlsplit(url).query)["X-Amz-Date"][0], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    assert datetime.now(UTC) - signed_at >= timedelta(hours=1), url  # the premise: long past its 60 s
+    return url
 
 
 def with_changed_signature(url: str) -> str:
@@ -148,16 +155,19 @@ def test_v8_recorded_with_moto_iam_checks_on_every_presigned_get_fails(
     key, body = put_test_object(moto_endpoint)
     iam = setup_client("iam", moto_endpoint)
     user = f"v8-presigner-{uuid.uuid4().hex[:8]}"
-    iam.create_user(UserName=user)
-    iam.put_user_policy(
-        UserName=user,
-        PolicyName="v8-read",
-        PolicyDocument=(
-            '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject",'
-            f'"Resource":"arn:aws:s3:::{BUCKET}/*"}}]}}'
-        ),
-    )
-    access = iam.create_access_key(UserName=user)["AccessKey"]
+    try:
+        iam.create_user(UserName=user)
+        iam.put_user_policy(
+            UserName=user,
+            PolicyName="v8-read",
+            PolicyDocument=(
+                '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject",'
+                f'"Resource":"arn:aws:s3:::{BUCKET}/*"}}]}}'
+            ),
+        )
+        access = iam.create_access_key(UserName=user)["AccessKey"]
+    finally:
+        iam.close()
     client = presigning_client(moto_endpoint, access["AccessKeyId"], access["SecretAccessKey"])
     # Set and put back by hand, not with monkeypatch: the fixture's teardown (which empties the bucket with the setup
     # keys) runs before monkeypatch's, and must run with the checks off again.

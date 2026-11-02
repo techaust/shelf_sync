@@ -6,16 +6,22 @@ Nothing here touches your real bucket, AWS account or stores.
 
 ## 1. Start the S3 server
 
-**Run this in Windows PowerShell**, in the `shelf_sync` folder. One command:
+**Run these in Windows PowerShell**, one block at a time, in the same window. Go to the `shelf_sync` folder:
 
 ```powershell
 cd "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"
 ```
 
-Then start it:
+Tell uv never to download a Python (this window only):
 
 ```powershell
-$env:UV_PYTHON_DOWNLOADS='never'; uv run python testenv/moto_s3.py
+$env:UV_PYTHON_DOWNLOADS='never'
+```
+
+Start the server:
+
+```powershell
+uv run python testenv/moto_s3.py
 ```
 
 After a few seconds it prints:
@@ -36,6 +42,7 @@ Leave that window open while you test. Each request it answers adds one line suc
 
 What the server is:
 - **Only on this PC** (`127.0.0.1`): no other computer can reach it, and no other program can take over its port while it runs.
+- **Not reachable from web pages:** it answers only requests addressed to `127.0.0.1:<port>` or `localhost:<port>` (anything else gets "403 Forbidden"), and moto's "any website may call me" setting (CORS) is off, so a page open in your browser can't read, change or empty it. The S3 extension's download links are plain links (the browser goes to them), which don't need CORS; that it works this way is checked when the extension is set up (04-A V6, section 3).
 - **In memory only:** nothing is written to disk. Stopping it removes the bucket and every file in it; the next start begins empty with a new bucket.
 - **Any key pair works:** it checks no keys or signatures. Use made-up keys (below), **never your real AWS keys**.
 - **Not a full copy of Amazon S3** ([04-A V8](../04-architecture-appendix/A-stack-verification.md)): it doesn't refuse a wrong `Content-MD5`, an expired download link or a changed one. Those are proven in other tests and in the live canary (M6), not here.
@@ -50,7 +57,10 @@ Click in its window and press **Ctrl+C**. It prints "Stopped. The bucket and its
 
 ## 2. Point ShelfSync at it and run the Storage Test
 
-**Do this before your real bucket is set in ShelfSync, or write your real settings down first:** saving the test stack's endpoint and keys replaces them (there is one storage setting). When you're done, put your real settings back and use **Replace keys** for your real key pairs ([keys-and-policies.md](keys-and-policies.md) B).
+**Only do this while ShelfSync has no real AWS keys saved.** Saving the test stack's endpoint, region, bucket and keys replaces the real ones (there is one storage setting), and **secret keys can't be put back**: ShelfSync never shows a saved secret, and AWS shows a secret only once, when the key is made.
+- The endpoint, region and bucket can be noted down and typed back afterwards.
+- **Never write a secret key down** to put it back later.
+- If your real keys are already saved in ShelfSync, skip this section; or, if you go ahead, plan to make new real keys afterwards with [key-rotation.md](key-rotation.md) and save those.
 
 1. Start the S3 server (section 1) and leave it running.
 2. Open ShelfSync › **Settings › Storage** (**Add storage** if nothing is set yet).

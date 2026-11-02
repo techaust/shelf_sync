@@ -1,5 +1,5 @@
 Status: open
-Tier: C (test tooling: nothing shipped, no live system; builder → reviewer)
+Tier: B (12 §2: the test stack); the analyst's early check was skipped by the lead's error, recorded in 11
 Usage: lead `claude-opus-5-5/high` (PC, orchestrator): 5-h 78 % at the brief
 
 # T3: the moto S3 server for the test stack (m2.8, the moto part)
@@ -45,7 +45,7 @@ _(builder, `claude-opus-5-5/high`, 2026-11-02; branch `t3/moto-test-server-build
 - Not used: `aws-iam` (no IAM policy written; the test's one inline policy only makes moto's IAM path run), `security-review` / `code-review` / `simplify` (the reviewer's), `run` (no app change), the browser pane (the designer has it; nothing visual here), `frontend-design` (no screen).
 
 ### Files
-- `testenv/__init__.py`, **`testenv/moto_s3.py`** (new): `start(port, bucket, region) -> MotoS3`, `main(argv, wait)`, `s3_client(...)`, `banner(...)`. moto's own WSGI app (`DomainDispatcherApplication(create_backend_app)`, what `ThreadedMotoServer` runs) in a werkzeug `ThreadedWSGIServer` subclass bound to **127.0.0.1**, with `SO_EXCLUSIVEADDRUSE` on Windows (`SO_REUSEADDR` there would let a second socket bind the same port; `ThreadedMotoServer` would also hang forever on a busy port, as its ready event is never set). A busy port raises `PortUnavailable` (main: message, exit 1) instead of werkzeug's `sys.exit`. Its request log drops the query string (a presigned URL's holds the key ID) and unprintable characters. The bucket is made with a botocore client that reads no `~/.aws` file, `AWS_*` variable or proxy. Output goes through `sys.stdout.write` (ruff's T20 applies outside `tests/`).
+- `testenv/__init__.py`, **`testenv/moto_s3.py`** (new): `start(port, bucket, region) -> MotoS3`, `main(argv, wait)`, `s3_client(...)`, `banner(...)`. moto's own WSGI app (`DomainDispatcherApplication(create_backend_app)`, what `ThreadedMotoServer` runs) in a werkzeug `ThreadedWSGIServer` subclass bound to **127.0.0.1**, with `SO_EXCLUSIVEADDRUSE` on Windows (`SO_REUSEADDR` there would let a second socket bind the same port; `ThreadedMotoServer` would also hang forever on a busy port, as its ready event is never set). A busy port raises `PortUnavailable` (main: message, exit 1) instead of werkzeug's `sys.exit`. Its request log drops the query string (a presigned URL's holds the key ID) and unprintable characters. The bucket is made with a botocore client that ~~reads no `~/.aws` file, `AWS_*` variable or proxy~~ (only partly true, review finding 2: since the fix it's ShelfSync's own `make_client`, §5). Output goes through `sys.stdout.write` (ruff's T20 applies outside `tests/`).
   - **Default port 47630:** outside ShelfSync's 47615-47624 (SET-06), below Windows' ephemeral range 49152-65535 (no outgoing connection ever holds it), not moto's/Flask's 5000, and outside this PC's only excluded TCP range (50000-50059, `netsh interface ipv4 show excludedportrange protocol=tcp`). Not checked against LocalWP's own site ports (LocalWP isn't installed yet).
   - **Defaults:** bucket `shelfsync-test-stack`, region `us-east-1` (no `LocationConstraint`; any other region gets one). `--port 0` takes any free port (the tests use it).
   - **No `--data`:** moto 5.2.4 has no state file (its recorder replays requests; it isn't a store), so in memory only, and the script and runbook say so.
@@ -102,6 +102,29 @@ A probe from another process (made-up keys `made-up-id`/`made-up-secret`): `head
 2. The runbook names the button "Test connection" from T2's brief; if T2 lands with other wording, `docs/runbooks/test-stack.md` §2 step 6 needs that one line changed.
 
 ## 5. Review
+_(reviewer, via the lead, 2026-11-02)_ **APPROVE 8/10**, medium findings to fix before merge. A re-check of the fix diff follows.
+
+| # | Sev. | Finding | Resolution (builder, 2026-11-02) |
+|---|---|---|---|
+| 1 | medium | moto's `create_backend_app` turns CORS on for every origin unless disabled, and the dispatcher sends any Host to S3: any web page (or a DNS-rebinding page) could read, write or `/moto-api/reset` the server | **Fixed.** `start()` sets `moto.moto_server.werkzeug_app.DISABLE_GLOBAL_CORS = True` (verified for 5.2.4: that module copies `moto.settings.DISABLE_GLOBAL_CORS` at import, so setting `moto.settings` afterwards does nothing; the copy is read in `create_backend_app` when the S3 app is made at the first request). The app is wrapped in `_LoopbackHostOnly`: 403 unless `Host` is `127.0.0.1:<port>` or `localhost:<port>`. Tests: `Host: evil.example`, `evil.example:47630`, `127.0.0.1` without the port and no Host all get 403, `/moto-api/reset` too (the bucket survives); a GET and an OPTIONS preflight with an `Origin` get no `Access-Control-Allow-Origin`; a recorded test shows plain moto 5.2.4 does send it. Runbook §1 and 04-A V6 note the extension's links must be navigations (V6 to confirm, the owner's) |
+| 2 | medium | `s3_client` only partly isolated (`AWS_USE_FIPS_ENDPOINT`/`AWS_USE_DUALSTACK_ENDPOINT` and other `AWS_*` read) | **Fixed.** `s3_client` now puts `backend/` on `sys.path` (when run as a script) and returns ShelfSync's own `shelfsync.apply.s3.make_client` client (session-variables table, `use_fips_endpoint=False`, `use_dualstack_endpoint=False`, built-in Loader only). Docstring and the §3 claim corrected |
+| 3 | medium | Runbook: "write your real settings down … Replace keys" can strand the real keys (ShelfSync never shows a saved secret; AWS shows it once) | **Fixed.** §2 now says: only while no real AWS keys are saved; endpoint, region and bucket can be noted; secret keys can't be put back; never write a secret down; if real keys are saved, skip the section or plan new keys afterwards with `key-rotation.md` |
+| 4 | process (lead) | Tier should have been B (12 §2 names the test stack) | Tier line changed as the lead asked; the lead adds the 11 row |
+| 5 | low | Expired-URL premise not asserted | **Fixed.** `signed_two_hours_ago` asserts the URL's `X-Amz-Date` is at least 1 h before now |
+| 6 | low | `log_error` not overridden ("Bad request syntax" line keeps `?…`) | **Fixed.** `log_error` and `log_message` go through `scrub()` (query strings become `?...`, unprintables `?`, 300 characters max); the log test sends a malformed request line with a query and checks no line holds it |
+| 7 | low | Runbook: two commands in one block | **Fixed.** `$env:UV_PYTHON_DOWNLOADS='never'` and `uv run python testenv/moto_s3.py` are separate blocks |
+| 8 | low | Test name says moto refuses the bucket and the server stopped; botocore refuses it and the stop isn't checked | **Fixed** by renaming it `test_a_bucket_name_botocore_refuses_is_reported` |
+| 9 | low | Cleanup `setup_client("s3")` and the `iam` client not closed | **Fixed.** Both closed in `finally` |
+| 10 | ruling | Add `testenv` to ruff `src` and mypy `packages` | **Done.** `pyproject.toml`: `src = ["backend", "tests", "testenv"]`, `packages = ["shelfsync", "testenv"]` |
+
+**Commands after the fixes:**
+- `uv run pytest` on the two new test files while working: 24 passed.
+- `bash tools/heavy.sh --log t3-pytest-fix uv run pytest`: **2617 passed, 18 skipped, 52 deselected**, exit 0 (6 more than before: the 4 Host cases and the 2 CORS tests).
+- `bash tools/heavy.sh --log t3-mypy-fix uv run mypy`: no issues in **77** files (testenv now included).
+- `bash tools/heavy.sh --log t3-mypy-linux-fix uv run mypy --platform linux`: no issues in 77 files.
+- `bash tools/heavy.sh --log t3-lint-fix uv run ruff check`: all passed. `uv run ruff format --check`: 176 files formatted.
+
+**Not verified by the fixes:** the script wasn't run for real again on this PC after them (the subprocess test runs the real command with `--port 0` and passed, including the Host check, since botocore sends `Host: 127.0.0.1:<port>`). Whether the S3 extension's requests send a matching `Host` (they should, for an endpoint of `http://127.0.0.1:47630`) is part of V6.
 
 ## 6. Integration notes
 
