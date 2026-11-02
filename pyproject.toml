@@ -59,6 +59,10 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "T20"]
 # The en dash in the ERR-06 text is the owner-approved wording (docs/13), not a typo.
 ignore = ["RUF001"]
 
+[tool.ruff.lint.isort]
+# testenv/ sits at the repository root (not inside a `src` folder), so it is named here to sort as first-party (T3).
+known-first-party = ["testenv"]
+
 [tool.ruff.lint.per-file-ignores]
 # T20 (no print) is for the app in backend/. Tests may print.
 "tests/**" = ["T20"]
@@ -67,7 +71,7 @@ ignore = ["RUF001"]
 python_version = "3.14"
 strict = true
 mypy_path = "backend"
-packages = ["shelfsync"]
+packages = ["shelfsync", "testenv"]
 
 # pystray ships no type hints; windows-toasts is Windows only (not installed on Linux CI), so its imports are not found there.
 [[tool.mypy.overrides]]

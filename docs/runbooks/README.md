@@ -16,6 +16,7 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [key-rotation.md](key-rotation.md) | Replace a WooCommerce key, an AWS key, the GitHub token, the install token; what to do if the signing key is seen or lost |
 | [cloud-sessions.md](cloud-sessions.md) | Set up the ShelfSync cloud environment once; start a cloud session; what may and may not run there |
 | [restore-database.md](restore-database.md) | Restore the database from a daily, pre-migration or pre-rollback backup with the restore command |
+| [test-stack.md](test-stack.md) | Start and stop the test stack's moto S3 server, point ShelfSync's Settings › Storage at it and run the Storage Test; LocalWP and the S3 extension join it in m2.8 |
 
 ## What the Settings pages do (M2)
 Wording as on screen ([13](../13-content.md)). Every key is kept in Windows Credential Manager and is never shown again or sent to the page.
@@ -41,7 +42,6 @@ Added when their milestone is built ([08](../08-roadmap.md)):
 
 | Runbook | Milestone | What it covers |
 |---|---|---|
-| `test-stack.md` | M2 | Starting and resetting the LocalWP + moto test stack |
 | `calibration.md` | M4 | Running the calibration and reading its report |
 | `canary.md` | M6 | The live canary, test download and rollback, step by step |
 | `backup-and-new-pc.md` | M7 | Export, import, and moving to a new PC |
