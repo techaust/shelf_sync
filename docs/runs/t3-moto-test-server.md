@@ -37,6 +37,69 @@ The full `uv run pytest`, `ruff check`, `ruff format --check`, `mypy`, `mypy --p
 LocalWP, WooCommerce, the S3 extension and V6 (the owner's); the one-script LocalWP setup with sample products (later in m2.8, after the owner's LocalWP choice).
 
 ## 3. Builder report
+_(builder, `claude-opus-5-5/high`, 2026-11-02; branch `t3/moto-test-server-build` from `feat/t3-moto-test-server` @ `a8a2d11`; commits `f88957e` code and tests, `f5454a5` docs, this report)_
+
+### Skills and tools loaded
+- **`aws-sdk-python-usage`** (09 §3, S3 code and the moto endpoint): loaded; its S3 reference set the presign call (`generate_presigned_url("get_object", Params=..., ExpiresIn=...)`), closing every `StreamingBody`, and the `main()`/exit-code shape of the script (no `sys.exit` outside `__main__`).
+- **Context7** (`/getmoto/moto`, server mode): `ThreadedMotoServer(ip_address, port=0)`, `get_host_and_port()`, moto's `0.0.0.0` warning, the reset API; it says nothing on persistence or presigned checks, so those were read from moto 5.2.4's source in the locked venv (`moto/s3/responses.py` `_key_response`, `moto/iam/access_control.py`, `moto/core/authorization.py`, `moto/settings.py`) and then measured (below).
+- Not used: `aws-iam` (no IAM policy written; the test's one inline policy only makes moto's IAM path run), `security-review` / `code-review` / `simplify` (the reviewer's), `run` (no app change), the browser pane (the designer has it; nothing visual here), `frontend-design` (no screen).
+
+### Files
+- `testenv/__init__.py`, **`testenv/moto_s3.py`** (new): `start(port, bucket, region) -> MotoS3`, `main(argv, wait)`, `s3_client(...)`, `banner(...)`. moto's own WSGI app (`DomainDispatcherApplication(create_backend_app)`, what `ThreadedMotoServer` runs) in a werkzeug `ThreadedWSGIServer` subclass bound to **127.0.0.1**, with `SO_EXCLUSIVEADDRUSE` on Windows (`SO_REUSEADDR` there would let a second socket bind the same port; `ThreadedMotoServer` would also hang forever on a busy port, as its ready event is never set). A busy port raises `PortUnavailable` (main: message, exit 1) instead of werkzeug's `sys.exit`. Its request log drops the query string (a presigned URL's holds the key ID) and unprintable characters. The bucket is made with a botocore client that reads no `~/.aws` file, `AWS_*` variable or proxy. Output goes through `sys.stdout.write` (ruff's T20 applies outside `tests/`).
+  - **Default port 47630:** outside ShelfSync's 47615-47624 (SET-06), below Windows' ephemeral range 49152-65535 (no outgoing connection ever holds it), not moto's/Flask's 5000, and outside this PC's only excluded TCP range (50000-50059, `netsh interface ipv4 show excludedportrange protocol=tcp`). Not checked against LocalWP's own site ports (LocalWP isn't installed yet).
+  - **Defaults:** bucket `shelfsync-test-stack`, region `us-east-1` (no `LocationConstraint`; any other region gets one). `--port 0` takes any free port (the tests use it).
+  - **No `--data`:** moto 5.2.4 has no state file (its recorder replays requests; it isn't a store), so in memory only, and the script and runbook say so.
+- **`tests/test_testenv_moto_s3.py`** (new, 14 tests): binds 127.0.0.1/AF_INET only and makes the bucket (region checked with a random made-up key pair: any pair works); default region; on Windows a `SO_REUSEADDR` socket can't share the port; a busy port is reported (both `start` and `main`, exit 1), not hung; `main` prints endpoint/region/bucket/keys/127.0.0.1/in-memory lines and stops on Ctrl+C (KeyboardInterrupt), port closed after; bad `--port`/`--region` refused; a bucket name botocore refuses is reported (exit 1); the request log has no query string or control character; **ShelfSync's own Storage Test passes against the script's server** (127.0.0.1 and localhost, through `make_storage_rig`, the real API and `make_client`; nothing left in the bucket); **the real command** in its own process (`python -I testenv/moto_s3.py --port 0`): banner read from stdout, bucket checked, then ended (`terminate` on Windows; off Windows SIGINT and "Stopped." with exit 0).
+- **`tests/test_moto_presigned_v8.py`** (new, 4 tests): `ThreadedMotoServer(ip_address="127.0.0.1", port=0)`; plain boto3 presigning client in the test only.
+- `docs/runbooks/test-stack.md` (new): start, what it prints (the real output), stop; Settings › Storage values and made-up key pairs that pass ShelfSync's key shape check; the Storage Test and the four requests it shows (`PUT` 200, `GET` 200, `DELETE` 204, `HEAD` 404, seen in a test's log); a warning that saving the test endpoint and keys replaces the real ones; the LocalWP/S3 extension placeholder naming m2.0-plan §3 Q3 without deciding it.
+- `docs/runbooks/README.md`: the `test-stack.md` row moved from "Added when their milestone is built" into the main list (one row out, one in).
+- `docs/04-architecture-appendix/A-stack-verification.md`: V8 row, presigned URLs closed with the date, tests and differences.
+- Not touched: `backend/**`, `frontend/**`, `packaging/**`, `uv.lock`, `pyproject.toml`, `docs/10-status.md`, `CHANGELOG.md`.
+
+### V8, presigned URLs: what moto 5.2.4 does (measured, then pinned in tests)
+| Case | Real S3 | moto 5.2.4 server (no IAM checks, the default) |
+|---|---|---|
+| Good presigned GET | 200 + bytes | **200 + bytes** |
+| Signed 2 h ago, `ExpiresIn=60` (botocore's signing clock moved back) | 403 | **200 + bytes** (expiry not checked) |
+| One character of `X-Amz-Signature` changed | 403 | **200 + bytes** (signature not checked) |
+| Same query, path pointed at another key | 403 | **200 + the other file** |
+| Any presigned GET with IAM checks on (`INITIAL_NO_AUTH_ACTION_COUNT=0`) | as above | **500** (KeyError on `Authorization`; a signed SDK GET still works) |
+
+So the test stack can show a store's download link works (V6 can be tried) but can't prove expiry or tamper refusal; recorded in V8 for M5/M6, as m2.7 recorded `Content-MD5`.
+
+### Commands and results
+- `UV_PYTHON_DOWNLOADS=never uv sync --locked` (new worktree venv): OK, no lock change.
+- While working: `uv run pytest tests/test_testenv_moto_s3.py tests/test_moto_presigned_v8.py tests/test_s3_moto_v8.py --no-cov`: **22 passed** (60 s; the `localhost` Storage Test case takes about 8.6 s against 0.8 s for `127.0.0.1`, so the runbook says to use `127.0.0.1`; the cause, presumably `::1` tried first, isn't verified).
+- `bash tools/heavy.sh --log t3-pytest uv run pytest`: **2611 passed, 18 skipped, 52 deselected** in 325 s, exit 0; coverage TOTAL 93 % (coverage measures `backend/shelfsync` only, so `testenv/` isn't in it).
+- `bash tools/heavy.sh --log t3-mypy uv run mypy`: no issues in 75 files. `... --log t3-mypy-linux uv run mypy --platform linux`: no issues in 75 files.
+- `uv run mypy testenv` and `uv run mypy --platform linux testenv` (strict, from `pyproject.toml`): no issues in 2 files. `uv run mypy --platform linux --follow-imports=silent` on the two new test files: no issues.
+- Final lint, once: `bash tools/heavy.sh --log t3-lint uv run ruff check`: all passed; `uv run ruff format --check`: 176 files formatted.
+- **`pyproject.toml` coverage of `testenv/`:** ruff **does** lint and format it (`ruff check --show-files` lists `testenv/__init__.py` and `testenv/moto_s3.py`; it's not in `extend-exclude`, and `src` only affects import sorting: `testenv` sorts as third-party in tests). **mypy does not** (`packages = ["shelfsync"]`), so it was run by hand as above. No `pyproject.toml` change; adding `testenv` to mypy's `packages` (one line) would make CI check it: the lead's call.
+
+### The script, run for real on this PC (once)
+`UV_PYTHON_DOWNLOADS=never uv run python testenv/moto_s3.py` (defaults), stdout:
+```text
+ShelfSync test stack: moto S3 server (moto 5.2.4)
+  Endpoint  http://127.0.0.1:47630
+  Region    us-east-1
+  Bucket    shelfsync-test-stack
+  Keys      any made-up access key ID and secret work: this server checks no keys.
+            Never type real AWS keys here.
+Listening on 127.0.0.1 only: nothing outside this PC can reach it.
+Everything is kept in memory only: stopping the server removes the bucket and every file in it.
+Press Ctrl+C to stop.
+```
+A probe from another process (made-up keys `made-up-id`/`made-up-secret`): `head_bucket` 200, region `us-east-1`; put/get/delete of `probe.txt` worked, 0 keys after. `netstat -ano -p TCP`: `TCP 127.0.0.1:47630 0.0.0.0:0 LISTENING` (the only listener on that port: nothing on `0.0.0.0`). stderr, the request log: `"PUT /shelfsync-test-stack" 200`, `"HEAD /shelfsync-test-stack" 200`, `"PUT .../probe.txt" 200`, `"GET .../probe.txt" 200`, `"DELETE .../probe.txt" 204`, `"GET /shelfsync-test-stack" 200`. Then the process was ended with `Stop-Process` (not Ctrl+C).
+
+### Not verified
+- **Ctrl+C in a real console.** Covered in-process (`main` with a wait that raises `KeyboardInterrupt`) and, off Windows only, by SIGINT to the real process in `test_the_script_run_as_a_command` (CI). On Windows a test can't send Ctrl+C to one child process, and the real run above was ended with `Stop-Process`. The owner's first run of the runbook checks it.
+- **The Storage Test from the running app's screen** (Test connection): T2 is building it; proven through the API and ShelfSync's own client in tests only.
+- **V6** (the S3 extension against moto) and everything LocalWP: the owner's, m2.8.
+- Whether LocalWP's own ports ever use 47630.
+
+### Open questions (for the lead)
+1. Add `testenv` to mypy's `packages` in `pyproject.toml` so CI type-checks it? (I didn't; the brief allows only a ruff `src`/`extend-exclude` line.)
+2. The runbook names the button "Test connection" from T2's brief; if T2 lands with other wording, `docs/runbooks/test-stack.md` §2 step 6 needs that one line changed.
 
 ## 5. Review
 
