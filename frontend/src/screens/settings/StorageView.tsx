@@ -460,9 +460,11 @@ function TestSteps({ steps }: { steps: TestStepLine[] }) {
 }
 
 /**
- * The Test card (UI-SET Storage; the mockup's test-row): Test connection, its one line (or why it can't test yet),
- * the S3 access policy guide, then the three steps, the left-behind warning and the cost hint. The button stays in
- * the tab order when it can't test (aria-disabled, with the reason tied to it), so the keyboard finds out why.
+ * The Test card (UI-SET Storage; the mockup's test-row): Test connection and its one line (or why it can't test yet),
+ * then the three steps, the left-behind warning, and the cost hint with the S3 access policy guide. The guide sits
+ * beside the hint rather than in the button's row (the mockup's place), so a long failure line keeps the card's
+ * width. The button stays in the tab order when it can't test (aria-disabled, with the reason tied to it), so the
+ * keyboard finds out why.
  */
 export function StorageTestCard({
   plan,
@@ -510,14 +512,16 @@ export function StorageTestCard({
             <Icon className={`icon${running ? " is-spinning" : ""}`} aria-hidden="true" />
             <span>
               <span className="num">{line.text}</span>
-              {!blocked && view.when ? <span className="test-result__when num">{view.when}</span> : null}
+              {/* the space keeps the announced text two sentences; the time shows on its own line anyway */}
+              {!blocked && view.when ? (
+                <>
+                  {" "}
+                  <span className="test-result__when num">{view.when}</span>
+                </>
+              ) : null}
             </span>
           </p>
         </div>
-        <button type="button" className="btn is-ghost" onClick={onGuide}>
-          <BookOpen className="icon" aria-hidden="true" />
-          {ST.guide}
-        </button>
         {note ? (
           <p className="storage-test__note" id={`${TEST_ID}-note`}>
             <Info className="icon" aria-hidden="true" />
@@ -539,11 +543,17 @@ export function StorageTestCard({
             />
           </div>
         ) : null}
-        <p className="field__hint test-row__hint">
-          {before}
-          <span className="mono">{folder}</span>
-          {after}
-        </p>
+        <div className="storage-test__foot">
+          <p className="field__hint test-row__hint">
+            {before}
+            <span className="mono">{folder}</span>
+            {after}
+          </p>
+          <button type="button" className="btn is-ghost" onClick={onGuide}>
+            <BookOpen className="icon" aria-hidden="true" />
+            {ST.guide}
+          </button>
+        </div>
       </div>
     </section>
   );

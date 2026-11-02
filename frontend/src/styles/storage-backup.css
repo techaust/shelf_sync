@@ -63,8 +63,36 @@
 
   /* ---------- the Test (SET-02, ERR-03): the stores' test row (stores.css) as a card of its own, since it tests
      both cards above it; then the mockup's three steps (app-b.css .test-steps) and its cost hint ---------- */
+  /* a grid, not the stores' wrapping row: the button, then its line, which wraps in its own column beside it; the
+     note, the steps, the left-behind warning and the foot (the cost hint and the guide) each take the full width */
   .storage-test .test-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
     border-top: 0;
+  }
+  .storage-test .test-row > * {
+    grid-column: 1 / -1;
+  }
+  .storage-test .test-row > .btn,
+  .storage-test .test-row > .test-row__result {
+    grid-column: auto;
+  }
+  .storage-test__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+  }
+  .storage-test__foot .test-row__hint {
+    flex: 1 1 24rem;
+  }
+  /* the line sits on the buttons' centre line while it is one line long, and grows down from there */
+  .storage-test .test-row__result {
+    display: flex;
+    align-items: center;
+    min-height: var(--target-min);
   }
   .test-result.is-info .icon {
     color: var(--color-info);

@@ -48,6 +48,81 @@ Run the real app with in-memory stores and a local moto server as the endpoint, 
 - The wizard's Test row (UI-WIZ, M3). A shell S3 health chip and "uploads are held" (M5).
 
 ## 4. Designer report
+_(designer, `claude-opus-5-5/high`, 2026-11-02; branch `design/t2-storage-test-screen` cut from `feat/t2-storage-test-screen` at `ac7fef6`, own worktree, nothing pushed)_
+
+**Skills and tools:** `frontend-design` was loaded first, before any file was read. It changed three things: (1) a plan before code, with one bold element only: the three steps as an ordered list with a rail between the marks that turns dashed below a step that didn't pass; (2) a self-critique pass on screenshots, which moved the S3 guide button (below); (3) restraint: no per-step milliseconds, no new card heading. `dataviz` wasn't loaded: there is no chart, KPI tile or report here. Context7 wasn't needed (the TanStack Query and React APIs used are the ones the page already uses). Browser: the built-in pane only.
+
+**What was built**
+- **The Test card** (`StorageTestCard`) replaces m2.5b's dashed "Testing the bucket arrives…" note, as a card of its own under the keys, because the Test checks both cards above it. It holds: Test connection (plug icon) and its line; under them, the unsaved-changes note, the three steps, the left-behind warning, then the 13 §6 cost hint beside the S3 access policy guide (which opens the Help panel's `s3-policy` guide).
+- **Can't test:** the button stays focusable with `aria-disabled` and `aria-describedby` pointing at the reason, shown where the result goes: 13's `storage_not_set` line while the saved region or bucket is empty, else 13's `keys_missing` line while either saved pair is "Not set". "Couldn't be read" keys are left to the server (`secrets_unavailable` or `keys_missing`).
+- **Unsaved edits:** the Test tests what is saved, and says so under the button while the settings form is dirty (proposed string below).
+- **Running:** spinner on the button, `aria-busy`, the progress line; nothing else is blocked. The run is kept per tab in `lib/storageTest.ts` (like `storeTests`), so leaving the page and coming back keeps it, and a second click sends nothing.
+- **Result:** "Passed in <n> ms." (thousands separators, tabular numbers) or "Failed at the <step> step: <reason>" for the first failed step, plus 13's "Tested <date> at <time> <zone>." Each step: "Write a test file / Read it back / Delete it" + "with the <read and write / read-only> key" (mockup) + "Passed" / "Failed: <aws_code>" / "Not run". Reasons use the failed step's own key word and the region the test ran against; null `aws_code` and null `http_status` each have a form.
+- **Left behind:** the warning alert with the key in IBM Plex Mono (it wraps anywhere).
+- **Errors:** 409 `busy` (info tone), `storage_not_set`, `keys_missing`, 503 `secrets_unavailable` (the shared line), any other refusal, and no answer.
+- **Stale answers:** a save that changes the endpoint, region or bucket, and any key save or removal, forget the last answer. Changing only the files to keep or the template doesn't.
+- **Pure and tested:** `planStorageTest(saved, formDirty)`, `testedValuesChanged`, `testAnswerView`, `testFailureLine`, `storageTestView` in `screens/settings/storageTestModel.ts`; no logic in the components.
+- **Deviation from the mockup (for the reviewer):** the guide sits beside the cost hint, not in the button's row. In the first pass it shared the row, and the ERR-03 line was squeezed into a column about 270 px wide over four lines (seen in the pane). With the guide in the foot, the line gets the card's width. Tab order is still Test, then guide.
+
+**Files**
+- New: `frontend/src/lib/storageTest.ts`, `frontend/src/lib/storageTest.test.ts`, `frontend/src/screens/settings/storageTestModel.ts`, `frontend/src/screens/settings/storageTestModel.test.ts`.
+- Edited: `frontend/src/api/storage.ts` (`testStorage`, `StorageTest` types), `frontend/src/screens/settings/StoragePage.tsx`, `StorageView.tsx` (the note is gone, `StorageTestCard` added), `storageModel.ts` (`testLines` removed), `storageWording.ts` (`testLater` and `testNeeds` removed; the Test's strings, each tagged with its source), `storageModel.test.ts`, `storageBackupViews.test.ts`, `frontend/src/styles/storage-backup.css` (`.storage-note` replaced by the Test card's rules, tokens only), `docs/13-content.md` (Storage rows only), this file.
+- Not touched: `backend/`, `packaging/`, `testenv/`, `tools/`, `tests/`, `pyproject.toml`, `uv.lock`, `10-status.md`, `CHANGELOG.md`.
+
+**Commands** (in `frontend/`; heavy ones through `bash tools/heavy.sh --log t2-<name>`)
+| Command | Result |
+|---|---|
+| `npm ci` (the worktree had no `node_modules`) | 146 packages, from the lock |
+| `UV_PYTHON_DOWNLOADS=never uv sync --locked` (for the harness) | the locked set; no package added |
+| `npm run lint` (`t2-lint`) | `biome ci`: 130 files, no fixes |
+| `npm run typecheck` (`t2-typecheck`) | pass |
+| `npm test` (`t2-test`) | **32 files, 1048 tests passed** |
+| `npm run build` (`t2-build`) | built |
+| `npm run schema:check` (`t2-schema`) | `schema.d.ts` is current |
+
+**Checked in the pane:** the real app (`create_app`, in-memory stores) and a local `ThreadedMotoServer` on 127.0.0.1 with bucket `sample-t2-bucket`, plus a 127.0.0.1 port that accepts and never answers. The harness is `.logs/t2/harness.py`, git-ignored. All values are made-up sample values; nothing pointed at AWS or a store. Every Test shown is a real Test against these local endpoints:
+- passed (52 ms, moto);
+- failed at write, `bucket_missing` (`sample-t2-missing-bucket`, ERR-03);
+- the silent port gave `timeout` at the write step **with a real `left_behind`**;
+- a reload during that run, then a second Test, gave a real **409 `busy`**;
+- disabled with the bucket saved empty, and with the read-only pair removed;
+- the unsaved-changes note.
+
+Keyboard pass: Remove keys → Test connection (visible ring) → S3 access policy guide; Enter opens the Help panel on the S3 guide, and Escape returns the focus to the guide button. Console: no CSP or script errors. The only entries are a 404 from my own mistyped non-hash URL and the two deliberate 409 `busy` answers. Fixed after the pass: a space so the live region reads "…answer. Tested …" instead of running the two sentences together.
+
+**Shots** (`.logs/shots/t2/`, not committed; the pane's own captures, about 800 px wide; 1280 × 900 unless the name says 1024 × 768; transitions settled and the pointer off the controls, except `03-running-light`, where it rests on the busy button):
+- `01-disabled-keys-missing-{light,dark}-1280.jpg`: the read-only pair removed; 13's `keys_missing` line (it wins over the unsaved note).
+- `02-never-tested-{light,dark}-1280.jpg`: "Not tested yet.".
+- `03-running-{light,dark}-1280.jpg`: busy button and progress line.
+- `04-passed-{light,dark}-1280.jpg`: Passed in 52 ms, three passed steps.
+- `05-unsaved-note-{light,dark}-1280.jpg`: the note under the button, last result kept.
+- `06-failed-write-bucket-missing-{light,dark}-1280.jpg`: ERR-03, "Failed: NoSuchBucket", two "Not run".
+- `07-busy-409-{light,dark}-1280.jpg`: "A test of the bucket is already running.".
+- `08-timeout-left-behind-{light,dark}-{1280,1024}.jpg`: timeout at write, the step word "Failed" (no code, no status), the left-behind key in Plex Mono.
+- `09-disabled-bucket-empty-{light,dark}-1280.jpg`: 13's `storage_not_set` line; the old answer forgotten.
+
+**New strings (proposed, in 13's Storage Test row and in `storageWording.ts` as "proposed (T2)")**
+1. Running: "Testing the bucket. This can take up to a minute." (after the stores' line; the Test's limit is 30 s plus 5 s grace).
+2. Unsaved edits: "The test uses the saved settings. Save your changes to test them."
+3. A failed step with no code: "Failed: HTTP <status>"; with no status either: "Failed". 13's "Failed: <aws_code or reason>" would otherwise show a code like `timeout`, and the line above already gives the reason in words.
+4. A failed step with no reason: "Failed at the <step> step.".
+5. `refused` without a status: "the storage service refused it (<code>)." / "the storage service refused it."; `server_error` without a status: "the storage service had an error. Try again in a few minutes."
+6. No answer: "ShelfSync didn't answer, so the test may not have finished. Test again to check." The stores' "Reload this page to check" doesn't fit: nothing about a storage test is kept to reload.
+7. Reused from 13 M2.5a (stores): "Not tested yet.", "Tested <date> at <time> <zone>.", "The test failed.", "ShelfSync refused the test (HTTP <status>)."
+
+**13 edits:** removed m2.5b's "Test row (until m2.7)" line. The M2.3 "Before the Test" line now points to the Storage Test row's `storage_not_set`, which replaced it. The on-screen strings above are appended to the Storage Test row.
+
+**Not verified**
+- Playwright plus axe: they run in CI only.
+- Windows High Contrast.
+- A screen reader's actual announcement: I read the DOM and the attributes only.
+- Real AWS: by design.
+- `secrets_unavailable` and the "Couldn't be read" keys in the pane: the in-memory store can't fail. Both are covered by unit tests.
+- `wrong_region`, `access_denied` and the other reasons in the pane: moto without IAM doesn't produce them. They are covered by the model tests, all 16 reasons plus the null forms.
+- A save made while a test is running doesn't forget that test's answer (`forget()` never acts mid-run). That answer then describes the old settings. It's a rare edge, left as is; flagged here for the reviewer.
+- The rail is 1 px and short (about 8 px at this type size); in dark it's faint by design (`--color-border-control`).
+
+**Open questions:** none blocking. The guide's new place (above) and the proposed strings are for the lead to accept or change.
 
 ## 5. Review
 
