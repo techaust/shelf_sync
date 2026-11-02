@@ -159,6 +159,12 @@ Keyboard pass: Remove keys → Test connection (visible ring) → S3 access poli
 **Not verified:** a full-width capture of this case. Midway through the pane check the pane stopped scaling its captures: at any emulated size it now returns a 1:1 crop of the top-left of the page, about 640 × 450 CSS px. The two shots are therefore crops. They show the button, the start of the answer line, the time, the start of the stale note and the steps; the right edge is cut. The full texts above were read from the DOM in the same state. The note's box was 479 px wide and 41 px tall at 1024, so it wraps to two lines inside the result column. The lead may want a full-width shot in its own pane.
 
 ## 6. Integration notes
+_(lead, 2026-11-02)_ Integrated on `feat/t2-storage-test-screen-int` (the designer's commits plus the lead's):
+- **Re-check of the fix diff** (the same reviewer, `e6bf55a..526af13`): **APPROVE**, 9/10. Findings 1, 3, 4 and 5 fixed; the stale note confirmed in the pane (save during a run → the old answer with the note; a files-to-keep-only save → no note). No new defect. The pane's captures were cropped this session, so the stale case's shots are partial; its full text was read from the page.
+- **Finding 2, fixed by the lead:** `docs/runbooks/README.md`'s Storage line now describes Test connection.
+- **Accepted (Lead (proposed), 11):** the S3 guide button beside the cost hint (not in the button's row), and the designer's eight proposed strings in 13's Storage Test row.
+- **Follow-up:** share the store and storage Test button and result parts (`components/StoreTest.tsx` gains `id`, `describedBy` and `blocked`).
+- **Not verified:** the stale note in dark (light only), Playwright with axe (CI), Windows High Contrast, a screen reader.
 
 
 ## 7. Handover
