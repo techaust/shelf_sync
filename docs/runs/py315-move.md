@@ -40,6 +40,42 @@ _(lead, 2026-11-04)_ The owner moved the project from Python 3.14.8 to **3.15.2*
 
 ## 2. Early check
 
+### Builder: stopped at step 2, PyYAML won't build (2026-11-04)
+_(builder)_ **Blocked.** The brief says to stop if PyYAML won't build, so the go/no-go (step 3) **was not run** and nothing else was edited.
+
+**Skills:** none loaded. 09 §3 has no builder row for this task (the brief says the same), and Context7 isn't signed in on this PC (the session reported it needs authorising).
+
+**Step 1, pins and lock (done, commit `c77f510`):** `.python-version` `3.15.2`. In `pyproject.toml`: `requires-python = "==3.15.*"`, ruff `py315`, mypy `3.15`, the five winrt `override-dependencies` (each `; sys_platform == 'win32'`), and the six winrt `exclude-newer-package` entries at `2026-11-01T00:00:00Z`. `exclude-newer` stays `2026-10-13T00:00:00Z`. `UV_PYTHON_DOWNLOADS=never uv lock --python <3.15.2 python.exe>` ran through `heavy.sh` (`.logs/uv-lock-py315.log`, exit 0) and resolved 99 packages. A package-by-package comparison of the old and new `uv.lock` (tomllib script):
+- **Versions:** only the five winrt packages changed (3.2.1 → 4.1.0 / `4!10.0.28000.2957`), plus `winrt-windows-storage-streams 4!10.0.28000.2957`, which is new. Every other package keeps its version, and none was removed.
+- **Hashes:** no existing wheel or sdist hash changed.
+- **Wheel lists:** these changed only because `requires-python` changed. The cp314/cp314t wheels were dropped and the cp315/cp315t wheels of the same versions were added (cffi, charset-normalizer, coverage, librt, markupsafe, msgpack, mypy, pillow, pydantic-core, pyobjc-*, tomli, ast-serialize). PyYAML gained no wheel, so it has no cp315 wheel, as the brief says.
+- **anyio** no longer lists `typing-extensions` as a dependency. That's a marker evaluated on 3.15, not a version change; `typing-extensions` 4.16.0 is still locked.
+
+**Step 2, `uv sync --locked` (looked fine, then failed):**
+- The first sync passed (`.logs/uv-sync-py315.log`, exit 0, all 99 installed). But PyYAML wasn't built: the log shows `Registry requirement already cached: pyyaml==6.0.3`. The cached wheel is `py3-none-any` (pure Python, no `_yaml` C extension), generator `setuptools (84.2.1)`, made at 02:21 today, before this task, in the Claude app's private uv cache. Probably by the lead's throwaway re-lock (not verified).
+- `--refresh-package pyyaml --reinstall-package pyyaml` reused that same built wheel (`.logs/uv-sync-py315-pyyaml.log`).
+- **A clean build fails:** `uv sync --locked --no-cache --reinstall-package pyyaml` (`.logs/uv-sync-py315-pyyaml-nocache.log`, exit 1). The build deps uv chose under the 14-day cutoff were setuptools 84.0.0 and Cython 3.3.0. PyYAML tries to compile `yaml._yaml`, and the build stops with:
+  `error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/`
+  (`error: Failed to build pyyaml==6.0.3`; `Call to _pyyaml_pep517.build_wheel failed (exit code: 1)`). The log also shows `No pyyaml_build_config setting found.`
+- **Today's `.venv` works only because of that earlier cached wheel.** On a fresh PC, a new worktree with an empty cache, or `--no-cache`, `uv sync --locked` fails on Windows. Linux CI and cloud sessions have a C compiler, so the sdist would probably build there (not verified).
+
+**Not verified (no more tries, per the brief):**
+- Why the 02:21 build passed. The setuptools version differs (84.2.1 there, 84.0.0 under the project's cutoff), but I don't know whether that's the cause.
+- Whether a PyYAML build setting (the `pyyaml_build_config` config setting or an environment variable) gives a pure-Python build.
+
+**For the owner or lead to decide (I took no action):**
+- Install a compiler (free; the brief rules it out).
+- A pure-Python PyYAML build through a build setting.
+- A build constraint on setuptools.
+- Wait for PyYAML cp315 wheels.
+- Stay on 3.14.8 for now.
+
+Each of these, except waiting or staying on 3.14.8, changes the approved list or the build.
+
+**Also noticed:** 11 has no row yet for the owner's 2026-11-04 move to 3.15.2, which the brief and my `pyproject.toml` comments cite.
+
+**Commits:** `c77f510` (pins and lock). This report is in the next commit. Nothing pushed.
+
 ## 3. Builder report
 
 ## 5. Review
