@@ -8,7 +8,7 @@ metadata:
   modified: 2026-11-03T13:15:26.373Z
 ---
 
-On 2026-11-03, planning to format the PC, the owner said: "I will not keep anything myself. You can save them on the project github somewhere so i don't need to do anything. i am doing a fresh start." They let OmniSync go (it was never on GitHub) rather than make a private repo for it.
+On 2026-11-03, planning to format the PC, the owner said: "I will not keep anything myself. You can save them on the project github somewhere so i don't need to do anything. i am doing a fresh start." They let OmniSync go (it was never on GitHub) rather than make a private repo for it; after the format (2026-11-04) they put its folder back anyway, under a new folder layout, without its venv or keys.
 
 **Why:** the owner wants to be able to wipe the PC at any time and carry on from GitHub alone, with no USB drives or copies to look after.
 

@@ -7,7 +7,7 @@
 | **Evidence** | [A: store data checks](01-audit-appendix/A-store-data-checks.md) · [B: OmniSync code and log, with file:line](01-audit-appendix/B-omnisync-evidence.md) |
 | **Feeds** | [02 plan](02-plan.md), [03 PRD](03-prd.md) |
 
-> OmniSync (`D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync`) stays as it is and keeps running until ShelfSync passes M7 ([08](08-roadmap.md)). It is reference only: ShelfSync never modifies it or runs its pipeline, and ships none of its code.
+> OmniSync (`D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync`) stays as it is and keeps running until ShelfSync passes M7 ([08](08-roadmap.md)). It is reference only: ShelfSync never modifies it or runs its pipeline, and ships none of its code.
 
 ## 1. What OmniSync does today
 OmniSync takes vendor ZIPs (WordPress themes and plugins), works out which product each belongs to, uploads one file to S3, and points the download on each WooCommerce store (GPLFamily and PluginWay) at it. Unclear cases are settled by editing two JSON files by hand: `data/product-slug-overrides.json` (28 entries) and `data/slug-aliases.json` (14 entries).

@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 export const TECHAUST_MODULES =
-  "D:/BUSINESS/1. PARENT PROJECT/TECHAUST TECHNOLOGIES/WEBSITE/techaust_platform/node_modules/.pnpm/";
+  "D:/Business/1. Parent Project/TecHaust Technologies/Application/techaust_platform/node_modules/.pnpm/";
 const P = TECHAUST_MODULES;
 const hb = await import(pathToFileURL(P + "harfbuzzjs@1.6.2/node_modules/harfbuzzjs/dist/index.mjs").href);
 const require = createRequire(P + "fontverter@2.0.0/node_modules/fontverter/index.js");

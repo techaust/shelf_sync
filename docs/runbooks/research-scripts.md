@@ -5,7 +5,7 @@ Four small scripts in `tools/research/`, used for the audit ([01-A](../01-audit-
 - **They borrow OmniSync's store settings** by importing `omnisync.config` read-only, so they run with OmniSync's own Python (its `venv` folder), which has `requests` and the keys configured.
 - **`-B` stops Python from writing cache files** into OmniSync's folder. Nothing in OmniSync is changed: the config module only reads its settings and the Windows keyring when imported (checked 2026-10-25).
 
-**They need the OmniSync folder**, which was never on GitHub; the owner let it go at the 2026-11-03 fresh start ([11](../11-decisions.md), [fresh-start.md](fresh-start.md)). Where it's missing, these scripts can't run.
+**They need the OmniSync folder with its `venv` and its keys**. OmniSync was never on GitHub; the owner let it go at the 2026-11-03 fresh start, then put the folder back at `D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync` on 2026-11-04 ([11](../11-decisions.md), [fresh-start.md](fresh-start.md)), but without its `venv` folder or its keys in Windows Credential Manager (both lost in the format). Making a venv there would change OmniSync (CLAUDE.md rule 4), so these scripts can't run until the owner decides otherwise.
 
 Run them only when the owner asks for a fresh count. The numbers will differ a little from 01-A as the stores change; the newest run wins.
 
@@ -16,7 +16,7 @@ Click **Start**, type **PowerShell**, and click **Windows PowerShell**.
 Paste this one command and press **Enter**:
 
 ```powershell
-& "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync\venv\Scripts\python.exe" -B "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync\tools\research\slug_overlap.py" "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync"
+& "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync\venv\Scripts\python.exe" -B "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\tools\research\slug_overlap.py" "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync"
 ```
 
 **Takes** about a minute (about 25 pages per store, spaced 0.15 s apart). **Prints:**
@@ -28,20 +28,20 @@ Paste this one command and press **Enter**:
 Replace `jupiterx-website-builder-for-wordpress-woocommerce` with the slug you want:
 
 ```powershell
-& "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync\venv\Scripts\python.exe" -B "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync\tools\research\lookup_slug.py" "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync" jupiterx-website-builder-for-wordpress-woocommerce
+& "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync\venv\Scripts\python.exe" -B "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\tools\research\lookup_slug.py" "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync" jupiterx-website-builder-for-wordpress-woocommerce
 ```
 
 It prints, for each store, the HTTP status and each matching product's ID, status, name and link. (This is the product's **URL slug**; ShelfSync's canonical slug starts the same and can be shortened, e.g. `jupiterx`.)
 
 ## 3a. Variations and link forms
 ```powershell
-& "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync\venv\Scripts\python.exe" -B "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync\tools\research\downloads_check.py" "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync"
+& "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync\venv\Scripts\python.exe" -B "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\tools\research\downloads_check.py" "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync"
 ```
 Prints, per store, products by type, the forms download links take (never the links themselves), and any downloadable variations. Takes about a minute.
 
 ## 3b. WooCommerce version
 ```powershell
-& "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync\venv\Scripts\python.exe" -B "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync\tools\research\wc_version.py" "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync"
+& "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync\venv\Scripts\python.exe" -B "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\tools\research\wc_version.py" "D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync"
 ```
 One GET per store; prints only the WooCommerce and WordPress versions.
 

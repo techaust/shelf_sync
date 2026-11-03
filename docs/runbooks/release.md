@@ -8,7 +8,7 @@ A release is built by GitHub (`release.yml`) and **signed by you on this PC with
 1. Pick where the key lives: a folder **outside** `shelf_sync` that only you use (your own credentials folder), plus an offline copy (a USB drive). Losing it means a new key and a new install for every PC (runbook `key-rotation.md`, M2).
 2. Go to the repo:
    ```powershell
-   cd "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"
+   cd "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync"
    ```
 3. Make the key. Replace `<your folder>` with the folder from step 1 (keep the quotes):
    ```powershell

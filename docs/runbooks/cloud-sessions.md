@@ -44,7 +44,7 @@ On the Team plan the owner makes it as an Owner, on the **Cloud environments** a
    Pushes, pull requests and `gh` go through Anthropic's GitHub proxy, which this list doesn't affect. If a session fails because a site is blocked, its error names the site: add that line, nothing broader.
 4. **Environment variables:** leave empty. The repo's `.claude/settings.json` already sets what's needed. Never put a key or password here: every member of the organization can read them.
 5. **Setup script:** **Choose file**, and pick
-   `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync\tools\cloud\setup.sh`
+   `D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\tools\cloud\setup.sh`
    (or paste its whole text if there's only a text box).
 6. Save it.
 

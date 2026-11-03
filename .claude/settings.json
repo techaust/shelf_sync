@@ -10,7 +10,9 @@
   "effortLevel": "high",
   "permissions": {
     "deny": [
-      "Read(//d/BUSINESS/3. CHILD PROJECTS/1. GPL PROJECTS/OTHER ASSETS/SOFTWARE/OmniSync/config.env)",
+      "Read(//d/Business/2. GPL Projects/3. Other Assets/Applications/Omni_Sync/config.env)",
+      "Read(**/Omni_Sync/config.env)",
+      "Read(**/Omni_Sync/**/config.env)",
       "Read(**/OmniSync/config.env)",
       "Read(**/CREDENTIALS/**)",
       "Read(//**/CREDENTIALS/**)",

@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-const P = "D:/BUSINESS/1. PARENT PROJECT/TECHAUST TECHNOLOGIES/WEBSITE/techaust_platform/node_modules/.pnpm/";
+const P = "D:/Business/1. Parent Project/TecHaust Technologies/Application/techaust_platform/node_modules/.pnpm/";
 const hb = await import(pathToFileURL(P + "harfbuzzjs@1.6.2/node_modules/harfbuzzjs/dist/index.mjs").href);
 const require = createRequire(P + "fontverter@2.0.0/node_modules/fontverter/index.js");
 const fontverter = require(P + "fontverter@2.0.0/node_modules/fontverter/index.js");
