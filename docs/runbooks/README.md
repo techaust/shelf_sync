@@ -14,6 +14,7 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [troubleshooting.md](troubleshooting.md) | "ShelfSync won't open", port in use, the tray icon missing, reading the logs (grows) |
 | [keys-and-policies.md](keys-and-policies.md) | Make the Shop Manager key for each store and the two AWS keys with their policies; record the bucket's versioning and encryption |
 | [key-rotation.md](key-rotation.md) | Replace a WooCommerce key, an AWS key, the GitHub token, the install token; what to do if the signing key is seen or lost |
+| [fresh-start.md](fresh-start.md) | Carry on after formatting the PC: what you do (about 10 minutes), what Claude sets up, and what doesn't come back |
 | [cloud-sessions.md](cloud-sessions.md) | Set up the ShelfSync cloud environment once; start a cloud session; what may and may not run there |
 | [restore-database.md](restore-database.md) | Restore the database from a daily, pre-migration or pre-rollback backup with the restore command |
 | [test-stack.md](test-stack.md) | Start and stop the test stack's moto S3 server, point ShelfSync's Settings › Storage at it and run the Storage Test; LocalWP and the S3 extension join it in m2.8 |

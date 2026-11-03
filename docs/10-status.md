@@ -32,6 +32,7 @@ Every task had its run file, the reviews its tier asks for (Tier A/B: the analys
 2. **m2.8, the LocalWP half** (Tier B, with the analyst's early check): LocalWP + WooCommerce + the owner's Amazon S3 Storage extension pointed at `testenv/moto_s3.py` (V6), after the owner's answer to [runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q3.
 
 ## Waits on the owner
+0. **Formatting the PC (2026-11-03):** ready, with nothing for the owner to back up. The memory notes are now in `docs/memory/`, OmniSync is let go ([11](11-decisions.md)), and the steps afterwards are in [runbooks/fresh-start.md](runbooks/fresh-start.md). Before the release signing key is made, the owner decides where it lives, since they keep no backups (release.md A assumes an offline copy).
 1. **Review the night's "Lead (proposed)" rows** in [11](11-decisions.md), dated 2026-11-02: the moto package set, m2.7's L1–L13 and the region rule, T2's layout and strings, T3's server defaults, T4 and T5's structure. One row records a lead mistake: T3 ran as Tier C, though 12 §2 puts the test stack in Tier B.
 2. **13's new proposed strings:** the Storage Test row (m2.7 and T2) and the region error.
 3. **Runs outside the Claude app** (Windows PowerShell):

@@ -9,7 +9,7 @@ description: Close the working day on ShelfSync and leave the record current. Us
 4. **Models:** run `node tools/model-audit.mjs` (today's runs). Copy each agent run's model, effort and skills into its run file's `Usage:` line. Anything flagged (any run not on Opus 5.5 at high) goes into the summary.
 5. **`CHANGELOG.md`** (from M1a): one line per PR merged since the last entry, newest first, as `- YYYY-MM-DD [#N](https://github.com/techaust/shelf_sync/pull/N) title`, from `gh pr list --state merged --limit 20`.
 6. **Docs and links:** update any doc whose subject changed today, and check every relative link in the docs you changed.
-7. **Memory:** update the memory notes if a preference or project fact changed.
+7. **Memory:** update the memory notes if a preference or project fact changed, then run `bash tools/memory-sync.sh save` so `docs/memory/` (public: no secrets or store addresses) holds the same notes and goes into the commit.
 8. **Commit (from M1a):** commit the docs on a `docs/…` branch, push it and open the PR without asking; it merges itself once the required checks pass (CLAUDE.md, Git workflow).
 9. **Agents:** list any agent still running. Stop none without the owner's word.
 10. **Tell the owner,** in a few plain lines: what was done; what was verified, and how; what wasn't verified; what waits on them; the next step; the usage now.

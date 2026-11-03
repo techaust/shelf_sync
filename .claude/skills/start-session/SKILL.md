@@ -7,7 +7,8 @@ description: Start or resume work on ShelfSync. Use when the owner says "start t
    - `git fetch origin`, then `git status -sb` and `git branch --show-current`.
    - On a branch whose PR has merged (or whose commits are all in `origin/main`), with nothing uncommitted: `git switch main`, then delete that local branch. On `main`: `git pull --ff-only`. With uncommitted work, or on a branch with unmerged commits: pull nothing and say so in one line.
    - **Installed packages:** `UV_PYTHON_DOWNLOADS=never uv sync --locked` (it changes nothing when the packages already match `uv.lock`). Then, for each of `frontend/` and `brand/`: if `node_modules/.shelfsync-npm-ci.sha256` is missing or `sha256sum --check --status` fails against it, run `bash tools/heavy.sh --log npm-ci-<folder> npm ci --no-audit --no-fund` in that folder, and after it passes write the stamp with `sha256sum package-lock.json > node_modules/.shelfsync-npm-ci.sha256`.
-   - Say in one line what came in (commits pulled, PRs merged since this PC last looked) and what was reinstalled, or "already up to date".
+   - **Memory notes:** `bash tools/memory-sync.sh restore` copies in any note from `docs/memory/` that this machine lacks or has an older copy of (a new PC or a cloud session starts with none). Fix a PROBLEM line before other work.
+   - Say in one line what came in (commits pulled, PRs merged since this PC last looked, memory notes restored) and what was reinstalled, or "already up to date".
 1. **Read the record:**
    - `CLAUDE.md` (the rules) and the memory notes (`MEMORY.md` index)
    - `docs/10-status.md` (where things stand)

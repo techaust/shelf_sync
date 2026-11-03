@@ -1,0 +1,13 @@
+- [Owner profile](user-owner.md) — TecHaust owner; not a shell user; recommended-first questions, $0 tools; Team plan since 2026-10-26
+- [Docs like TecHaust](docs-like-techaust.md) — numbered Markdown docs, ADRs, runbooks, status/decisions records
+- [Auto-use tools](auto-use-tools.md) — load fitting skills/tools per docs/09-tooling.md; turn off unneeded ones per project only
+- [ShelfSync brand](shelfsync-brand.md) — TecHaust product on Patina; S-cut logo approved (Phase 3 done 2026-10-26); store colours as small identifiers
+- [Audit to 10/10](audit-to-ten.md) — score every file/aspect, fix all, loop reviewer re-checks until approve
+- [Published pages](published-pages.md) — plan and mockup artifact links (Team org; old org unreachable); owner checks pages on a phone; plan page republished after every 02 change
+- [Claude app MSIX virtualization](claude-app-msix-virtualization.md) — apps started from Claude write AppData\Local into a private package copy; owner starts ShelfSync outside Claude for real-Windows checks
+- [uv: no Python downloads](uv-no-python-downloads.md) — uv auto-downloads interpreters; use UV_PYTHON_DOWNLOADS=never; check wheels on PyPI's JSON API
+- [GitHub repo](github-repo.md) — techaust/shelf_sync public during development (account billing blocks private Actions); main protected; pushes and PR merges automatic (auto-merge on green) since 2026-10-29
+- [Prove locally before push](prove-locally-before-push.md) — run release-build.ps1 and mypy --platform linux before pushing; owner hates CI round trips
+- [Cloud sessions](cloud-sessions.md) — owner also works in cloud env shelf_sync; Team screens differ; cloud can't read usage or report back; starts only on the owner's words; gh pr blocked there
+- [Owner keeps nothing](owner-keeps-nothing.md) — no owner-held backups; everything to resume lives on GitHub (docs/memory/, fresh-start runbook); signing-key conflict open
+- [Pane visual checks](pane-visual-checks.md) — comparing builds' colours in the built-in pane: hidden pane freezes transitions; set colour scheme; no hover
