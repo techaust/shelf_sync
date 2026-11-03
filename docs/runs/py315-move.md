@@ -3,6 +3,11 @@
 Status: open
 Tier: B ([12 §2](../12-models-and-usage.md): the tray's toasts, the installer build, packaging)
 Usage:
+- builder claude-opus-5-5/high [none: no 09 row fits; Context7 not signed in]: 5-h 9 → 11 % (stop), 11 → 16 % (finish)
+- analyst claude-opus-5-5/high [none]: 5-h 11 → 16 %
+- reviewer claude-opus-5-5/high [code-review, security-review] (+ its read-only general-purpose helper): 5-h 16 → 18 %
+- reviewer (re-check) claude-opus-5-5/high [code-review] (+ helper): 5-h 18 → 19 %
+- From `node tools/model-audit.mjs 2026-11-04`: every run Opus 5.5 at high; builder and analyst flagged "no skill loaded" (none fits, as above)
 
 ## 1. Brief
 _(lead, 2026-11-04)_ The owner moved the project from Python 3.14.8 to **3.15.2** after the fresh start (owner, 2026-11-04, [11](../11-decisions.md)), and approved the package list below. Python 3.15.2 is installed on this PC at `C:\Users\<user>\AppData\Local\Programs\Python\Python315\python.exe` (owner-installed outside Claude, PSF signature valid; not on PATH, use the full path or `py -3.15`).
@@ -251,5 +256,22 @@ The re-check of the fix diff follows (no critical or high finding, so not a seco
 
 
 ## 6. Integration notes
+_(lead, 2026-11-04)_
+- **Re-check of the fix diff:** APPROVE, with 5 new lows. Four were fixed in `61b3f19`: V56 wording, `errors="replace"`, `pth_text()` without `tag`, and the fake checks the UTF-8 request. Left as a follow-up: `[Console]::OutputEncoding` changes the shared console's code page for the rest of the build window (cosmetic; a UTF-8 StreamWriter would avoid it).
+- **Rebase:** the branch was rebased onto `main` after #51's squash merge (`git rebase --onto origin/main 3982c5f`).
+- **Release build** (`packaging/release-build.ps1`, Python 3.15.2, NSIS 3.13, `-Suffix -rehearsal`): passed three times, on `28310cd`, `9ac0345` and `61b3f19`. Each run had valid signatures on 34 embeddable files, a passing smoke test, and 98 of 98 installer checks.
+- **Full checks on `9ac0345`:** ruff, format, mypy and `mypy --platform linux`, bandit, and 2623 pytest passed with 18 skipped. On `61b3f19`: ruff, format, both mypy runs, and the packaging and notify tests (73 passed), plus the full pytest after the final release build.
+- **Not verified:**
+  - the owner's `-m windows` run outside Claude;
+  - Linux CI building PyYAML from source (the PR's CI shows it);
+  - `setup.sh` on a real cloud VM;
+  - the stores' TLS chains against 3.15's eMudhra refusal.
+- **Follow-ups:**
+  - the owner uploads the new `tools/cloud/setup.sh` to the cloud environment;
+  - check the stores' certificate chains before M6;
+  - the owner confirms the PyYAML build-tools row in 11;
+  - the console code-page low above;
+  - republish the plan page after the merge.
 
 ## 7. Handover
+_(lead, 2026-11-04)_ Built, reviewed (APPROVE, then the fix re-check APPROVE), and every local check and three release builds passed. Next: the PR's CI (Linux builds PyYAML from source), then the owner's `-m windows` run outside Claude and the cloud `setup.sh` upload. Status becomes "merged (PR #N)" at the end of the day.
