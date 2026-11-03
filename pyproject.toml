@@ -58,6 +58,8 @@ override-dependencies = [
     "winrt-windows-foundation-collections==4!10.0.28000.2957; sys_platform == 'win32'",
     "winrt-windows-ui-notifications==4!10.0.28000.2957; sys_platform == 'win32'",
 ]
+# PyYAML (dev only) has no cp315 wheel and this PC has no C compiler: build it as pure Python (docs/11, 2026-11-04).
+extra-build-variables = { pyyaml = { PYYAML_FORCE_LIBYAML = "0" } }
 
 [tool.ruff]
 line-length = 120
