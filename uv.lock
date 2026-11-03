@@ -24,6 +24,10 @@ overrides = [
     { name = "winrt-windows-foundation-collections", marker = "sys_platform == 'win32'", specifier = "==4!10.0.28000.2957" },
     { name = "winrt-windows-ui-notifications", marker = "sys_platform == 'win32'", specifier = "==4!10.0.28000.2957" },
 ]
+build-constraints = [
+    { name = "cython", specifier = "==3.3.0" },
+    { name = "setuptools", specifier = "==84.0.0" },
+]
 
 [[package]]
 name = "annotated-doc"

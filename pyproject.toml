@@ -60,6 +60,9 @@ override-dependencies = [
 ]
 # PyYAML (dev only) has no cp315 wheel and this PC has no C compiler: build it as pure Python (docs/11, 2026-11-04).
 extra-build-variables = { pyyaml = { PYYAML_FORCE_LIBYAML = "0" } }
+# The tools that build that sdist, pinned by version (not hash; uv.lock doesn't hold build tools). The release build
+# never runs them: packaging/build.py installs --no-dev --only-binary :all: (docs/11, 2026-11-04).
+build-constraint-dependencies = ["setuptools==84.0.0", "cython==3.3.0"]
 
 [tool.ruff]
 line-length = 120
