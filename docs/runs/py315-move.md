@@ -76,6 +76,30 @@ Each of these, except waiting or staying on 3.14.8, changes the approved list or
 
 **Commits:** `c77f510` (pins and lock). This report is in the next commit. Nothing pushed.
 
+### Builder addendum: PyYAML fixed, go/no-go is GO (2026-11-04)
+_(builder, after the lead's decision: `PYYAML_FORCE_LIBYAML=0`, Lead (proposed), 11)_
+
+**PyYAML:**
+- Added `extra-build-variables = { pyyaml = { PYYAML_FORCE_LIBYAML = "0" } }` to `[tool.uv]`, with a comment citing 11.
+- `uv lock --check` exits 0 (99 packages) and `uv.lock` is unchanged.
+- **The clean build passes:** `uv sync --locked --no-cache --reinstall-package pyyaml` exits 0 (`.logs/uv-sync-py315-pyyaml-pure.log`). It built `pyyaml-6.0.3-py3-none-any.whl` with no `yaml._yaml` extension, using setuptools 84.0.0 and Cython 3.3.0 (both resolved under the date cutoff).
+- `uv run python -c "import yaml; ..."` printed `3.15.2 6.0.3 False {'a': [1, 2]}`: `__with_libyaml__` is False and `safe_load` works.
+
+**Decision rows:** the three 2026-11-04 rows (Python 3.15.2, the winrt 4.x override, the PyYAML build) are appended to [11](../11-decisions.md) exactly as the lead gave them.
+
+**Go/no-go: GO.**
+- **Import:** windows-toasts 1.3.1 imports on winrt-runtime 4.1.0 and winrt-Windows.UI.Notifications `4!10.0.28000.2957`.
+- **Build a toast:** `Toast([...])` and `InteractableWindowsToaster('ShelfSync')` build, the same calls `backend/shelfsync/platform/notify.py` makes. The notifier AUMID defaults to `{1AC14E77-…}\cmd.exe`, as on winrt 3.
+- **The toast tests:** `uv run pytest -m windows -k toast --no-cov -v` ran **inside Claude** through `heavy.sh` (`.logs/pytest-windows-toast-py315.log`). **3 passed** (2686 deselected):
+  - `test_v29_windows_toasts_imports_on_windows_and_a_toast_can_be_made`
+  - `test_the_real_adapter_shows_one_toast_without_raising`, which sends a real toast through `ToastNotifier`
+  - `test_cold_toast_time_from_process_start_to_a_shown_toast`, at 4.44 s
+- This isn't the result that counts (V36); the owner's `-m windows` run outside Claude is.
+
+**New warning on winrt 4:** windows-toasts' `toasters.py:300` now raises `DeprecationWarning: ToastNotificationManager.create_toast_notifier_with_id() is deprecated, use create_toast_notifier() instead`. It's harmless today: pytest doesn't turn warnings into errors here, and Python hides `DeprecationWarning` in the app by default. It's worth a line in the new 04-A V row, because a later winrt release may remove that call.
+
+**Commits:** `e262432` (PyYAML build switch and the 11 rows). This addendum is in the next commit. Nothing pushed. Packaging, tests, CI, cloud scripts and docs haven't been started.
+
 ## 3. Builder report
 
 ## 5. Review
