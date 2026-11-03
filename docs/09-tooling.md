@@ -13,7 +13,7 @@
 | Windows | 11 Home Single Language | 10/11 | Home has no Windows Sandbox: the clean-account test uses a second local account ([07 §7](07-testing.md)) |
 | CPU / RAM | Intel i3-1115G4, 2 cores / 4 threads; 7.8 GB | — | At most 2 agents at once, at most 1 using a browser; heavy commands queued ([12 §4](12-models-and-usage.md)); the NFR-3 targets are set for this PC |
 | Free disk | C: 77.5 GB, D: 256.5 GB | ~5 GB for the test stack and the calibration cache | OK |
-| Python | 3.14.8 (3.12.10 also installed) | 3.14 (owner, 2026-10-27) | OK |
+| Python | 3.15.2 (installed by the owner after the 2026-11-04 format; the only Python in `AppData\Local\Programs\Python`) | 3.15 (owner, 2026-11-04; 3.14 from 2026-10-27) | OK |
 | Node / npm | 24.19.0 / 11.17.0 | For the UI and the hook scripts | OK |
 | git / GitHub CLI | 2.55.0 / 2.101.0, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; every push, merge and settings change needs the owner's yes |
 | NSIS | not installed | Release builds (CI); locally only for M1b testing | Installed at M1b with the owner's yes |
@@ -87,6 +87,6 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 - **Python, dev:** uv (hash-locked dependencies), ruff, mypy, pytest, pytest-cov, pytest-benchmark, hypothesis, respx, moto[server], bandit, pip-audit.
 - **UI, run time:** react, react-dom, react-router, @tanstack/react-query, @tanstack/react-virtual, @radix-ui/* (incl. Toast), lucide-react.
 - **UI, dev:** vite, typescript, tailwindcss, @biomejs/biome, vitest, @playwright/test, @axe-core/playwright, openapi-typescript.
-- **Build:** NSIS; the Python 3.14 embeddable package (SHA-256 pinned).
+- **Build:** NSIS; the Python 3.15 embeddable package (SHA-256 pinned).
 - **Brand (dev-only, P3.3):** chosen by the designer with the owner's yes; TecHaust's pipeline (sharp for rasters, a font-outline library) is the reference.
 - Exact pins are recorded in [04 §2](04-architecture.md) at M1a.

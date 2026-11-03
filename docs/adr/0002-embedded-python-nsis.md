@@ -18,3 +18,6 @@ The owner wants one `Setup.exe` for a fresh PC and pays for no tools. PyInstalle
 - The shortcut needs an AppUserModelID for toast notifications; how NSIS sets it is verified at M1b.
 - Uninstall removes every version folder the updater added, not only what NSIS installed.
 - Some wheels contain DLLs their projects don't sign; the M1b test runs on a clean account with Defender on and records the Smart App Control state.
+
+## Amendment 2026-11-04: Python 3.15 embeddable package
+The installer ships the **Python 3.15.2** embeddable package (`python-3.15.2-embed-amd64.zip`, SHA-256 pinned in [04 §2.1](../04-architecture.md)), with `python315._pth` in place of `python314._pth` ([ADR 0001](0001-python-fastapi-sqlite-react.md)'s 2026-11-04 amendment; [11](../11-decisions.md)). Its executables and `python315.dll` are PSF-signed (V12). The rest of this ADR is unchanged.

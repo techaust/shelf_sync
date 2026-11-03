@@ -20,9 +20,9 @@ Nothing to do. If you work more days before formatting, say **"end the day"** on
 ## After you format: your part (about 15 minutes)
 1. **Git for Windows:** in Edge, open **git-scm.com**, click **Download for Windows**, run the installer and click **Next** on every page (the defaults are fine). Claude Code on Windows needs it.
 2. **The Claude desktop app:** install it from **claude.ai/download** and sign in with your Team account (`admin@techaust.com`).
-3. **Python 3.14.8, installed by you, not by Claude:** anything Claude starts runs inside the Claude app's package, which hides new `AppData\Local` folders from the rest of Windows (04-A V36), so a Python that Claude installs isn't there for the checks you run in your own PowerShell.
-   1. In Edge, open `https://www.python.org/downloads/release/python-3148/`, scroll to **Files** and click **Windows installer (64-bit)** (`python-3.14.8-amd64.exe`, 31.8 MB).
-   2. Ask Claude to check its SHA-256 against the one on that page before you run it.
+3. **Python 3.15.2, installed by you, not by Claude:** anything Claude starts runs inside the Claude app's package, which hides new `AppData\Local` folders from the rest of Windows (04-A V36), so a Python that Claude installs isn't there for the checks you run in your own PowerShell.
+   1. In Edge, open `https://www.python.org/downloads/release/python-3152/`, scroll to **Files** and click **Windows installer (64-bit)** (`python-3.15.2-amd64.exe`, 35.9 MB).
+   2. Ask Claude to check its SHA-256 before you run it: python.org's page gives `06e225a228191b0f4d1dcf6905fbb21bf9f6970d13a2ec63137ab9bee76f15aa`.
    3. Double-click it in **Downloads**, tick **Add python.exe to PATH**, click **Install Now**, then **Close**.
 4. **The folders:** make `D:\Business\2. GPL Projects\3. Other Assets\Applications` and `D:\Business\1. Parent Project\TecHaust Technologies\Application` in File Explorer (only the folders that don't exist yet). If you already have a downloaded copy of `shelf_sync` there (GitHub's **Download ZIP**), that's fine: Claude turns it into a clone.
 5. In the Claude app, open the **Code** tab, start a new session in the `shelf_sync` folder (or in `Applications` if it doesn't exist yet) on **Opus 5.5, high**, and type:
