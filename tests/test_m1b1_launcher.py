@@ -322,11 +322,11 @@ def test_cold_toast_time_from_process_start_to_a_shown_toast(capfd: pytest.Captu
 
 
 def _packaged(tmp_path: Path, with_ui: bool) -> Path:
-    """`versions\\<v>`: the package beside python314._pth, optionally with ui\\index.html. Returns the package's
+    """`versions\\<v>`: the package beside python315._pth, optionally with ui\\index.html. Returns the package's
     __init__.py (what `ui_dir` is given)."""
     version = tmp_path / "versions" / "1.2.3"
     (version / "shelfsync").mkdir(parents=True)
-    (version / "python314._pth").write_text("python314.zip\n.\n", encoding="utf-8")
+    (version / "python315._pth").write_text("python315.zip\n.\n", encoding="utf-8")
     init = version / "shelfsync" / "__init__.py"
     init.write_text("", encoding="utf-8")
     if with_ui:

@@ -6,11 +6,12 @@ Writes `build/ShelfSync-<version>/` (what the installer puts in `versions\\<vers
 `build/files.txt` (one `path<TAB>size<TAB>sha256` line per file, sorted, for the release manifest). Steps:
 
 1. the version comes from pyproject.toml and must equal `shelfsync.__version__` and, in CI, the tag;
-2. the Python 3.14 embeddable package is downloaded (or taken from `--embed-zip`) and refused unless its SHA-256 is the
-   pinned one; every `.exe`, `.dll` and `.pyd` in it must carry a valid signature from a known publisher (V12);
-3. `python314._pth` is written from a template (the embeddable package's own is replaced);
+2. the Python embeddable package (`PYTHON_VERSION`, 3.15.2) is downloaded (or taken from `--embed-zip`) and refused
+   unless its SHA-256 is the pinned one and it holds `python315.dll` and `python315.zip`; every `.exe`, `.dll` and
+   `.pyd` in it must carry a valid signature from a known publisher (V12);
+3. `python315._pth` is written from a template (the embeddable package's own is replaced);
 4. the locked run-time wheels are installed into `Lib/site-packages` from `uv export --locked --no-dev` with hashes
-   required, binary wheels only, for win_amd64 and CPython 3.14 (the wheels' own DLLs aren't signed by their projects,
+   required, binary wheels only, for win_amd64 and CPython 3.15 (the wheels' own DLLs aren't signed by their projects,
    04 section 8's honest note);
 5. `backend/shelfsync`, the built UI (`frontend/dist`, as `ui/`), `brand/assets/app/shelfsync.ico` and the six tray
    icons (`brand/assets/tray`, as `tray/`) are copied in;
@@ -42,11 +43,12 @@ from pathlib import Path, PurePosixPath
 
 REPO = Path(__file__).resolve().parents[1]
 
-PYTHON_VERSION = "3.14.8"
-PYTHON_TAG = "314"  # python314._pth, python314.zip
+PYTHON_VERSION = "3.15.2"
+PYTHON_MINOR = ".".join(PYTHON_VERSION.split(".")[:2])  # "3.15": the wheels' --python-version
+PYTHON_TAG = PYTHON_MINOR.replace(".", "")  # "315": python315._pth, python315.dll, python315.zip
 EMBED_NAME = f"python-{PYTHON_VERSION}-embed-amd64.zip"
 EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{EMBED_NAME}"
-EMBED_SHA256 = "a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310"  # 04 section 2.1
+EMBED_SHA256 = "d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62"  # 04 section 2.1
 
 # Signers accepted on the files of the embeddable package: Python's own, and Microsoft's for the VC++ runtime DLLs.
 TRUSTED_SIGNERS = ("Python Software Foundation", "Microsoft Corporation")
@@ -109,7 +111,7 @@ def write_build_suffix(folder: Path, suffix: str) -> None:
 
 
 def pth_text(tag: str = PYTHON_TAG) -> str:
-    """`python314._pth`: the stdlib zip, the folder itself (where `shelfsync` sits), the wheels, and `site`."""
+    """`python315._pth`: the stdlib zip, the folder itself (where `shelfsync` sits), the wheels, and `site`."""
     return PTH_TEMPLATE.format(tag=tag)
 
 
@@ -210,6 +212,18 @@ def safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     archive.extractall(root)  # every entry was checked above
 
 
+def check_embedded_layout(folder: Path, tag: str = PYTHON_TAG) -> None:
+    """The extracted embeddable package must be the one `PYTHON_TAG` names: `python{tag}.dll` (the interpreter) and
+    `python{tag}.zip` (the stdlib the `._pth` written next points at). A mismatch would build a folder that can't
+    start."""
+    missing = [name for name in (f"python{tag}.dll", f"python{tag}.zip") if not (folder / name).is_file()]
+    if missing:
+        raise BuildError(
+            f"The embeddable package has no {' or '.join(missing)}: it isn't Python {PYTHON_MINOR}, or PYTHON_TAG "
+            f"({tag}) doesn't match PYTHON_VERSION"
+        )
+
+
 def write_zip(folder: Path, entries: Iterable[FileEntry], destination: Path) -> None:
     """Zip the listed files (no top-level folder), sorted, so the same tree gives the same entry order."""
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -281,12 +295,13 @@ def check_embedded_signatures(folder: Path) -> None:
 
 
 def install_wheels(site_packages: Path, work: Path) -> None:
-    """The locked run-time packages, with hashes required, binary wheels only, for Windows and CPython 3.14."""
+    """The locked run-time packages, with hashes required, binary wheels only, for Windows and CPython 3.15
+    (`PYTHON_MINOR`)."""
     requirements = work / "requirements.txt"
     run(["uv", "export", "--locked", "--no-dev", "--no-emit-project", "--format", "requirements-txt",
          "--output-file", str(requirements)])  # fmt: skip
     run(["uv", "pip", "install", "--python", sys.executable, "--target", str(site_packages), "--require-hashes",
-         "--only-binary", ":all:", "--no-deps", "--python-platform", "windows", "--python-version", "3.14",
+         "--only-binary", ":all:", "--no-deps", "--python-platform", "windows", "--python-version", PYTHON_MINOR,
          "--no-compile-bytecode", "--no-installer-metadata", "-r", str(requirements)])  # fmt: skip
 
 
@@ -356,6 +371,7 @@ def build(out: Path, tag: str | None, embed_zip: Path | None, suffix: str = "") 
         archive_path = download_embed_zip(REPO / "build-cache")
     with zipfile.ZipFile(archive_path) as archive:
         safe_extract(archive, folder)
+    check_embedded_layout(folder)
     check_embedded_signatures(folder)
 
     (folder / f"python{PYTHON_TAG}._pth").write_text(pth_text(), encoding="ascii", newline="\n")

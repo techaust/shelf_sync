@@ -5,6 +5,7 @@ release.yml.) The script is loaded by path: a folder named `packaging` would cla
 import hashlib
 import importlib.util
 import io
+import tomllib
 import zipfile
 from pathlib import Path
 from types import ModuleType
@@ -27,15 +28,37 @@ build = load_build()
 
 def test_the_pth_names_the_stdlib_zip_the_folder_the_wheels_and_site() -> None:
     """SYS-01, V11: `.` is the folder holding `shelfsync`; no `#` lines, no PYTHONPATH."""
-    assert build.pth_text() == "python314.zip\n.\nLib\\site-packages\nimport site\n"
+    assert build.pth_text() == "python315.zip\n.\nLib\\site-packages\nimport site\n"
 
 
 def test_the_pinned_embed_hash_is_the_one_in_04() -> None:
     """SYS-01: 04 section 2.1 and this script must agree."""
     text = (REPO / "docs" / "04-architecture.md").read_text(encoding="utf-8")
     assert build.EMBED_SHA256 in text
-    assert build.EMBED_URL.endswith("python-3.14.8-embed-amd64.zip")
+    assert build.EMBED_URL.endswith("python-3.15.2-embed-amd64.zip")
     assert (REPO / ".python-version").read_text(encoding="utf-8").strip() == build.PYTHON_VERSION
+
+
+def test_the_tag_and_the_wheels_python_follow_the_python_version() -> None:
+    """SYS-01, V11: the `._pth`, DLL and zip names and uv's --python-version all come from PYTHON_VERSION."""
+    assert "".join(build.PYTHON_VERSION.split(".")[:2]) == build.PYTHON_TAG
+    assert ".".join(build.PYTHON_VERSION.split(".")[:2]) == build.PYTHON_MINOR
+    assert build.PYTHON_TAG == "315"
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["requires-python"] == f"=={build.PYTHON_MINOR}.*"
+
+
+def test_the_embedded_layout_check_wants_the_tags_dll_and_zip(tmp_path: Path) -> None:
+    """SYS-01, V12: a package without python315.dll or python315.zip (another Python's) is refused, by name."""
+    (tmp_path / "python314.dll").write_bytes(b"")
+    (tmp_path / "python314.zip").write_bytes(b"")
+    with pytest.raises(build.BuildError, match=r"python315\.dll or python315\.zip"):
+        build.check_embedded_layout(tmp_path)
+    (tmp_path / "python315.dll").write_bytes(b"")
+    with pytest.raises(build.BuildError, match=r"no python315\.zip:"):
+        build.check_embedded_layout(tmp_path)
+    (tmp_path / "python315.zip").write_bytes(b"")
+    build.check_embedded_layout(tmp_path)
 
 
 def test_the_version_comes_from_pyproject_and_matches_the_package() -> None:
@@ -405,6 +428,8 @@ def test_a_build_ships_the_suffix_file_only_with_a_suffix_in_the_folder_files_tx
     embed = tmp_path / "embed.zip"
     with zipfile.ZipFile(embed, "w") as archive:
         archive.writestr("python.exe", b"exe")
+        archive.writestr(f"python{build.PYTHON_TAG}.dll", b"dll")  # the layout check runs for real
+        archive.writestr(f"python{build.PYTHON_TAG}.zip", b"zip")
 
     folder = build.build(tmp_path / "build", None, embed, suffix)
 
