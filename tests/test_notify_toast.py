@@ -77,6 +77,40 @@ def test_v29_windows_toasts_carries_a_windows_marker_in_the_lock() -> None:
     assert "marker" not in dependencies["pystray"]  # on every platform: its backend is chosen when imported
 
 
+# The winrt 4.x pins forced under windows-toasts 1.3.1 for Python 3.15 (owner, 2026-11-04, docs/11).
+APPROVED_WINRT_OVERRIDES = {
+    "winrt-runtime": "==4.1.0",
+    "winrt-windows-data-xml-dom": "==4!10.0.28000.2957",
+    "winrt-windows-foundation": "==4!10.0.28000.2957",
+    "winrt-windows-foundation-collections": "==4!10.0.28000.2957",
+    "winrt-windows-ui-notifications": "==4!10.0.28000.2957",
+}
+
+
+def test_v29_the_winrt_overrides_are_windows_only_and_the_approved_pins() -> None:
+    """V29 (Python 3.15): every override in the lock is one of the approved winrt pins, behind sys_platform ==
+    'win32', and every one of them is there."""
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    overrides = lock["manifest"]["overrides"]
+    assert {entry["name"]: entry["specifier"] for entry in overrides} == APPROVED_WINRT_OVERRIDES
+    assert len(overrides) == len(APPROVED_WINRT_OVERRIDES)  # no name twice
+    assert all(entry["marker"] == "sys_platform == 'win32'" for entry in overrides)
+
+
+def test_v29_winrt_packages_are_reached_only_through_windows_toasts() -> None:
+    """V29 (Python 3.15): a winrt-* package is a dependency only of windows-toasts or of another winrt package, so
+    the override can't reach anything else, and the Windows marker on windows-toasts keeps them all off Linux."""
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    winrt = {package["name"] for package in lock["package"] if package["name"].startswith("winrt-")}
+    assert set(APPROVED_WINRT_OVERRIDES) <= winrt
+    for package in lock["package"]:
+        groups = [package.get("dependencies", []), *package.get("optional-dependencies", {}).values()]
+        groups += package.get("dev-dependencies", {}).values()
+        names = {entry["name"] for group in groups for entry in group}
+        if names & winrt:
+            assert package["name"] == "windows-toasts" or package["name"] in winrt, package["name"]
+
+
 def test_v29_the_pyproject_pins_windows_toasts_with_the_marker() -> None:
     """V29."""
     text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
