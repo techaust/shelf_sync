@@ -1,6 +1,6 @@
-# The test stack: moto S3 server, and LocalWP (later)
+# The test stack: moto S3 server
 
-The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): a LocalWP site with WooCommerce and your Amazon S3 Storage extension, whose "User defined" endpoint points at **moto server**, a local stand-in for Amazon S3 ($0). This page covers the moto half today; the LocalWP half is added in m2.8 once its open question is settled (last section).
+The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): **moto server**, a local stand-in for Amazon S3 ($0), and a fake WooCommerce store inside the tests (nothing to start). There is no LocalWP site: you test on the real sites yourself ([11](../11-decisions.md) 2026-11-03).
 
 Nothing here touches your real bucket, AWS account or stores.
 
@@ -77,9 +77,3 @@ Click in its window and press **Ctrl+C**. It prints "Stopped. The bucket and its
 If it says "couldn't reach the storage service", the server isn't running or the port differs from the endpoint. Any other message: send Claude the message and the server window's last lines.
 
 The same check runs automatically in the tests (`tests/test_testenv_moto_s3.py`, the Storage Test through ShelfSync's own S3 client against this script's server).
-
-## 3. LocalWP and the S3 extension (the owner's, m2.8)
-
-To be written once the LocalWP site exists. What it will cover: making the LocalWP site with WooCommerce, activating your Amazon S3 Storage extension on it (your licence allows this, [11](../11-decisions.md) 2026-10-25), setting its "User defined" provider to the endpoint, region, bucket and made-up keys above (04-A V6), and the one script that adds sample products.
-
-**Transport (decided by you, [11](../11-decisions.md) 2026-11-03):** WooCommerce accepts Basic auth (how ShelfSync signs in to a store) only over HTTPS (still to verify), and LocalWP sites are `http://*.local`, so the test site uses LocalWP's own HTTPS, and only the test harness is given that site's certificate file. The app gains no setting and no package.

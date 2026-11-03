@@ -47,7 +47,7 @@ Recorded in [11-decisions.md](11-decisions.md).
 | SYNC-01 | Incremental sync every 15 min (setting) and right before any change: `modified_after` sent as GMT with `dates_are_gmt=true` | An edit made in WP admin shows in Cleanup within 15 minutes | M3 |
 | SYNC-02 | A product changed outside ShelfSync offers **accept** (adopt the store's state) or **restore** (put ShelfSync's state back) | Both are recorded in Activity with before/after | M3 (accept), M5 (restore) |
 | SYNC-03 | Nightly snapshot at 02:00 **Windows local time** (setting) of every product's slots, downloads and version fields on every store, trashed products included (`include_status=any,trash`; variations too if any appear, V30); if the PC was off or asleep, it runs at the next start or wake; kept 30 days (setting) | "Restore to date" lists the snapshot dates for a product | M3 |
-| SYNC-04 | The nightly snapshot also lists every product ID per store, including trash, to find products deleted or trashed outside ShelfSync | A product trashed on the test stack shows in Cleanup after the next snapshot | M3 |
+| SYNC-04 | The nightly snapshot also lists every product ID per store, including trash, to find products deleted or trashed outside ShelfSync | A product trashed in the fake store shows in Cleanup after the next snapshot; on the live stores, the owner's own check | M3 |
 | SYNC-05 | "Sync now" button | Starts an incremental sync and shows its progress | M3 |
 
 ## 2. Inspect, scan and match (`INS`, `MAT`)
@@ -77,7 +77,7 @@ Recorded in [11-decisions.md](11-decisions.md).
 |---|---|---|---|
 | APL-01 | A change plan is built before any write: the S3 key, and each store's slot from current to new file | The writes sent equal the plan (contract test) | M5 |
 | APL-02 | Upload with a **single** `put_object` carrying `ContentMD5` (S3 rejects a mismatch), never multipart; then `head_object` to confirm the size. The ETag isn't relied on | A corrupted body is rejected; the job retries, then fails without touching the stores | M5 |
-| APL-03 | Edit check: re-read the product right before writing; changed since the plan → back to Review | A simulated outside edit on the test stack sends the job to Review | M5 |
+| APL-03 | Edit check: re-read the product right before writing; changed since the plan → back to Review | A simulated outside edit in the fake store sends the job to Review | M5 |
 | APL-04 | Update the slot inside the **same download ID**; other slots untouched | Read-back shows the same ID with the new file ([04-A V3](04-architecture-appendix/A-stack-verification.md)) | M5 |
 | APL-05 | Read-back check after each store write | A slot that doesn't show the new file marks that store failed, naming possible causes (including Approved Download Directories, V5) | M5 |
 | APL-06 | Partial: any failed store makes the job **partial** with Retry for that store; nothing is deleted | Retry finishes the job; the dashboard count clears | M5 |

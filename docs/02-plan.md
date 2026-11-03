@@ -145,7 +145,7 @@ Phase 3 (brand and screens, about 4 days), then M1–M7, **about 24 build days**
 ## 11. Running cost
 | Item | Cost |
 |---|---|
-| Python, FastAPI, React, SQLite, NSIS, LocalWP, moto, Playwright, Windows Defender | $0 |
+| Python, FastAPI, React, SQLite, NSIS, moto, Playwright, Windows Defender | $0 |
 | GitHub repo (public during development: Actions on standard runners free and unlimited, branch protection free; if made private again: 2,000 min/month, Windows runners count 2×, no branch protection), Releases, Dependabot | $0 |
 | Code-signing certificate | not used (optional; would remove the SmartScreen/Smart App Control warnings) |
 | AWS for calibration and teaching | $0 for data (inside the free 100 GB/month); **under one US cent** in request charges, possibly covered by the free tier |
@@ -158,7 +158,7 @@ Draft 3 claimed 10 on every aspect before any code; the 2026-10-25 independent r
 |---|---|---|---|
 | Diagnosis | 10 | 9.5 | The UDesign case is recorded from OmniSync's log (the owner may add detail, optional); how the bucket's 2398 objects map to the downloads (M4 prep). Evidence with file:line in [01-B](01-audit-appendix/B-omnisync-evidence.md) |
 | Catalog and linking | 10 | 9.5 | Store counts re-measured 2026-10-25 (identical, [01-A](01-audit-appendix/A-store-data-checks.md)); linking and the near-miss suggestions are proven by the M3 catalog build |
-| Safety when applying | 10 | 9.5 | Meta removal and keeping the download ID proven on the test stack (M3, M5) |
+| Safety when applying | 10 | 9.5 | Meta removal and keeping the download ID proven against a fake store in tests (M5), then on the live stores by the owner and the M6 canary |
 | Usable without AI | 10 | 10 | — |
 | Look and feel | 10 | 9 | Scored after Phase 3 (approved 2026-10-26): the real Windows tray, File Explorer and NSIS at 150/200 % (M1); axe and a screen reader on the React screens (M1a onward) |
 | Matching logic | 10 | 9.5 | Cut-offs come from calibration (M4) |
