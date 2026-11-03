@@ -8,7 +8,7 @@
 set -u
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
-TOOLS="/opt/uv-0.12.19/bin:/opt/node-v24.19.0/bin:/opt/hostedtoolcache/Python/3.14.8/x64/bin"
+TOOLS="/opt/uv-0.12.19/bin:/opt/node-v24.19.0/bin:/opt/hostedtoolcache/Python/3.15.2/x64/bin"
 export PATH="$TOOLS:$PATH"
 export UV_PYTHON_DOWNLOADS=never
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
@@ -24,7 +24,7 @@ want() { # want <label> <expected> <command...>
   got="$("${@:3}" 2>&1 | head -1)"
   case "$got" in *"$2"*) echo "[cloud] $1: $got" ;; *) echo "[cloud] PROBLEM: $1 is '$got', expected $2 (is tools/cloud/setup.sh the environment's setup script?)"; problems=1 ;; esac
 }
-want "Python" "3.14.8" python3.14 --version
+want "Python" "3.15.2" python3.15 --version
 want "Node" "v24.19.0" node --version
 want "uv" "0.12.19" uv --version
 

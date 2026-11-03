@@ -52,9 +52,9 @@ On the Team plan the owner makes it as an Owner, on the **Cloud environments** a
 1. Open https://claude.ai/code. If it asks you to connect GitHub, follow it and click **Authorize** on GitHub's page.
 2. If it shows **Create your first cloud environment**, keep the defaults and click **Create & finish** (a plain **Default** environment; ShelfSync sessions use `shelf_sync`).
 
-The setup script installs the same Python 3.14.8, Node 24.19.0 and uv 0.12.19 that CI uses. Each download is checked against a fingerprint written in the script. If any fingerprint doesn't match, the session doesn't start, which is the safe outcome; tell the lead. The result is kept for about 7 days, so later sessions start quickly.
+The setup script installs the same Python 3.15.2, Node 24.19.0 and uv 0.12.19 that CI uses. Each download is checked against a fingerprint written in the script. If any fingerprint doesn't match, the session doesn't start, which is the safe outcome; tell the lead. The result is kept for about 7 days, so later sessions start quickly.
 
-When `tools/cloud/setup.sh` changes in the repo, load it again (2.3 step 5): the environment keeps its own copy.
+When `tools/cloud/setup.sh` changes in the repo, load it again (2.3 step 5): the environment keeps its own copy. (It changed on 2026-11-04 for Python 3.15.2: an environment loaded before then prints a Python **PROBLEM** line until it's loaded again.)
 
 ## 3. Start a cloud session
 1. In the **Code** tab, start a new session, pick **Cloud** and the **shelf_sync** environment, and the repo **techaust/shelf_sync** on branch **main** (or the branch the lead names).
