@@ -101,6 +101,104 @@ _(builder, after the lead's decision: `PYYAML_FORCE_LIBYAML=0`, Lead (proposed),
 **Commits:** `e262432` (PyYAML build switch and the 11 rows). This addendum is in the next commit. Nothing pushed. Packaging, tests, CI, cloud scripts and docs haven't been started.
 
 ## 3. Builder report
+_(builder, 2026-11-04, after the analyst's GO and the lead's F1 to F3 and items 1 to 7)_
+
+**Skills:** none loaded. 09 §3 has no builder row that fits, and Context7 isn't signed in on this PC. Library and platform facts come from the official pages, read 2026-11-04: python.org's release page, docs.python.org/3.15, and actions/python-versions' manifest and release.
+
+**Commits** (on top of `0f5424e`; nothing pushed):
+
+| Commit | What it does |
+|---|---|
+| `c77f510` | Pins and lock |
+| `429a692` | Builder stop report |
+| `e262432` | PyYAML pure-Python build; the three 11 rows |
+| `eef3072` | Early-check addendum |
+| `ac3d930` | F1 and F2 |
+| `ae28adb` | F3 |
+| `36e8fe7` | Packaging, test fixtures, 04 |
+| `b820826` | CI comments |
+| `46e6f3b` | Cloud scripts and runbook |
+| `1dfca43` | Docs |
+
+This report goes in the next commit.
+
+### The early-check fixes
+- **F1:** the 11 winrt row now says "all uploaded 31 Oct 2026".
+- **F2:**
+  - uv 0.12.19 accepts `[tool.uv] build-constraint-dependencies = ["setuptools==84.0.0", "cython==3.3.0"]`.
+  - `uv lock --check` then reported that the lock needed updating. `uv lock` added only `[manifest] build-constraints` (those two pins); no package changed.
+  - A `--no-cache --reinstall-package pyyaml` sync selected setuptools 84.0.0 and Cython 3.3.0 and built `pyyaml-6.0.3-py3-none-any.whl` (`.logs/uv-sync-py315-pyyaml-buildc.log`).
+  - The 11 PyYAML row now says the build tools are pinned by version, not hash, and that the release build never runs them. I checked that in `build.py`: it uses `uv export --locked --no-dev` and `--only-binary :all:`.
+- **F3:** two tests in `tests/test_notify_toast.py`:
+  - `test_v29_the_winrt_overrides_are_windows_only_and_the_approved_pins`: the override set equals the five approved pins exactly, and each has `sys_platform == 'win32'`.
+  - `test_v29_winrt_packages_are_reached_only_through_windows_toasts`: it checks every package's dependencies, optional dependencies and dev dependencies.
+
+### Packaging (`packaging/build.py`)
+- `PYTHON_VERSION = "3.15.2"`. `PYTHON_MINOR` ("3.15") and `PYTHON_TAG` ("315") are derived from it, and `--python-version` uses `PYTHON_MINOR` instead of the literal `"3.14"`.
+- `EMBED_SHA256 = d012f3aa…1f62`. I checked it against a fresh python.org download (13,740,486 bytes; the release page gives the same hash). The zip holds `python315._pth`, `python315.dll` and `python315.zip`.
+- A new `check_embedded_layout()` runs after extraction. If `python{TAG}.dll` or `.zip` is missing, it stops with an error that names the missing file.
+- Docstrings now say 3.15.
+- New tests:
+  - `test_the_tag_and_the_wheels_python_follow_the_python_version`: the tag and minor come from `PYTHON_VERSION`, and `requires-python` matches.
+  - `test_the_embedded_layout_check_wants_the_tags_dll_and_zip`.
+  - The stubbed-build test's fake embeddable zip now holds the DLL and zip, so the layout check runs for real.
+- Also changed: the `release-build.ps1` usage line, the `smoke.py` comment, and the `python315._pth`/`.zip` fixture names in four test files. No code in `backend/` names 314.
+
+### CI, cloud and docs
+- **CI:** the two `checks.yml` comments now point to `.python-version` and `UV_PYTHON_DOWNLOADS=never`. They make no claim about uv's Linux downloads. `release.yml` names no version.
+- **Cloud scripts:**
+  - `setup.sh` uses `python-3.15.2-linux-24.04-x64.tar.gz` from release `3.15.2-40340363276`; the URL comes from `versions-manifest.json`.
+  - Three sources give the same SHA-256 `a945ca65…cd01`: the release's own `hashes.sha256`, the asset's GitHub `digest`, and my own download (118,469,091 bytes).
+  - The tarball has `bin/python3.15`. Both scripts pass `bash -n`.
+  - The cloud runbook says an environment loaded before 2026-11-04 must load the script again.
+- **Docs:**
+  - 04: §2.1 rows, §2 runtime row, §8.
+  - 04-A: V11 (the 3.15 docs re-read: §4.2 and §4.8), V12 (`Get-AuthenticodeSignature`: `Valid`, PSF, for the installed `python.exe` and the embeddable zip's `python.exe`, `pythonw.exe` and `python315.dll`), V29, V38, V49, and a new **V55** (windows-toasts on winrt 4.x, inside Claude only, with its DeprecationWarning).
+  - ADR 0001 and 0002: a dated amendment each.
+  - 09 (:16 now says 3.15.2 is the only Python in `AppData\Local\Programs\Python`; :90), 02 :137, and CLAUDE.md :63, :66 and :73 (version facts only).
+  - fresh-start: the 3.15.2 installer, 35.9 MB, SHA-256 `06e225a2…15aa`, matching python.org's release page.
+  - History left as it was: 08 :51, the dated lines in `docs/memory/`, cloud-sessions :76, old run files and the CHANGELOG.
+
+### Cold toast (V49)
+| Run | Time |
+|---|---|
+| `.logs/cold-toast-1.log` | 0.39 s |
+| `.logs/cold-toast-2.log` | 0.36 s |
+| `.logs/cold-toast-3.log` | 0.37 s |
+| During the Windows checks below | 0.33 s |
+| The first run in the new venv | 4.44 s |
+
+The three runs were back to back, inside Claude. **All are under 5 s; nothing goes to the owner under the m1b.1 rule.** The 4.44 s first run came before any bytecode caches existed; I didn't measure the cause separately.
+
+### Done-means checks
+All ran through `heavy.sh` on Python 3.15.2:
+
+| Check | Result | Log |
+|---|---|---|
+| `uv sync --locked` | exit 0 (99 resolved, 94 for Windows) | `final-uv-sync` |
+| `ruff check` (full lint, run once) | All checks passed | `final-ruff-check` |
+| `ruff format --check` | 176 files already formatted | `final-ruff-format` |
+| `mypy` | no issues in 77 files | `final-mypy` |
+| `mypy --platform linux` | no issues in 77 files | `final-mypy-linux` |
+| `pytest` (full) | **2623 passed**, 18 skipped (symlink rights and other-platform skips), 52 deselected; coverage 93 % | `final-pytest` |
+| `bandit -r backend` | No issues identified | `final-bandit` |
+| pip-audit as CI runs it | No known vulnerabilities found | `final-pip-audit` |
+| `pytest -m windows --no-cov`, **inside Claude** | 51 passed, 1 skipped (V31, needs the owner and `SHELFSYNC_RUN_V31=1`); the 2 toast tests show the winrt 4 DeprecationWarning | `final-pytest-windows` |
+| `npm ci` then `npm run schema:check` | `src/api/schema.d.ts is current` | `final-npm-ci`, `final-schema-check` |
+
+### Not verified
+- The release build (the lead runs it).
+- The owner's `-m windows` run outside Claude, which is the result that counts (V36).
+- Toasts under ShelfSync's registered AUMID, from an installed copy.
+- Whether the PyYAML sdist builds the same way on Linux CI and in a cloud session. It should be pure Python there too, with the same pinned build tools; not run.
+- The cloud setup script on a real cloud VM.
+
+### Pre-existing, not fixed
+- `npm ci` reports **3 moderate severity vulnerabilities** in the frontend packages. This branch doesn't touch `frontend/` or `package-lock.json`, and I didn't look into them.
+
+### Open questions and notes for the lead
+- **02 changed (one word at :137).** CLAUDE.md says to republish the plan page after every change to 02; that's the lead's job.
+- **Cloud environment.** Its stored copy of `setup.sh` must be loaded again before the next cloud session, or session-start prints a Python PROBLEM line.
 
 ## 5. Review
 
