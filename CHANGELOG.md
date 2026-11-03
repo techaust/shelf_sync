@@ -2,6 +2,12 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-04 (this PR) build(python): Python 3.15.2, winrt 4.x under windows-toasts, PyYAML pure build, embedded 3.15.2 [SYS-01]
+- 2026-11-04 [#51](https://github.com/techaust/shelf_sync/pull/51) chore: new folder layout after the 2026-11-04 fresh start
+- 2026-11-03 [#50](https://github.com/techaust/shelf_sync/pull/50) docs: fresh start without owner backups (memory notes on GitHub, fresh-start runbook)
+- 2026-11-03 [#49](https://github.com/techaust/shelf_sync/pull/49) revert: undo the owner's answers to m2.0 Q2, Q3 and Q5 (#47)
+- 2026-11-03 [#47](https://github.com/techaust/shelf_sync/pull/47) docs: record the owner's answers to m2.0 Q2, Q3 and Q5
+- 2026-11-02 [#46](https://github.com/techaust/shelf_sync/pull/46) docs: end of day 2026-11-02 (run files closed, CLAUDE.md cloud and worktree rules, CHANGELOG #45)
 - 2026-11-02 [#45](https://github.com/techaust/shelf_sync/pull/45) docs: record the 2026-11-02 parallel run (status, roadmap, CHANGELOG #34-#44, m2.0 handover)
 - 2026-11-02 [#44](https://github.com/techaust/shelf_sync/pull/44) feat(ui): Test connection on Settings › Storage, the three steps and the stale-answer note [SET-02, ERR-03]
 - 2026-11-02 [#43](https://github.com/techaust/shelf_sync/pull/43) feat(testenv): moto S3 server for the test stack, 127.0.0.1 only; V8 presigned URLs recorded

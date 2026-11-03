@@ -32,7 +32,7 @@ One Python process holds the web server, the job worker and the tray. No separat
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | **Python 3.14** ([ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendment, 2026-10-27), the official Windows embeddable package (PSF-signed executables, V12) with `python314._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
+| Runtime | **Python 3.15** ([ADR 0001](adr/0001-python-fastapi-sqlite-react.md) amendments, 2026-10-27 and 2026-11-04), the official Windows embeddable package (PSF-signed executables, V12) with `python315._pth` edited to add `Lib\site-packages`, the app folder and `import site` (V11) | No PyInstaller-style unsigned program ([ADR 0002](adr/0002-embedded-python-nsis.md)) |
 | Web | **FastAPI** on **uvicorn** (bound to `127.0.0.1`), **python-multipart** for uploads | Typed routes; OpenAPI generates the UI's TypeScript types (**openapi-typescript**) |
 | Database | **SQLite** through the standard `sqlite3` module, WAL mode, numbered SQL migrations with a small runner, foreign keys on | One file, no ORM |
 | HTTP | **httpx** (stores, GitHub), **boto3** (S3; `request_checksum_calculation="when_required"` for non-AWS endpoints, V10) | boto3 handles range reads, presigning and `ContentMD5` |
@@ -50,7 +50,7 @@ One Python process holds the web server, the job worker and the tray. No separat
 | Windows-only parts | Credential Manager (keyring), toasts (windows-toasts), the tray's win32 backend, the `current` junction, the HKCU Run value and the Defender scan each sit behind a **small interface** with a real Windows adapter and a fake. Windows-only packages carry `sys_platform == "win32"` markers in the uv lock (V29) | Linux CI tests the logic against the fakes; the real adapters are proven by the **Windows checks** on this PC ([07 §1](07-testing.md)) |
 
 ### 2.1 Pins (M1a)
-Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is the newest release on or before **2026-10-12** (at least 14 days old), from PyPI, npm and GitHub. The same cutoff applies to everything these pull in: uv's `exclude-newer` and npm's `before` are set to it, and both lock files hold a hash for every package. Later milestones add their packages here with the owner's yes.
+Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is the newest release on or before **2026-10-12** (at least 14 days old), from PyPI, npm and GitHub. The same cutoff applies to everything these pull in: uv's `exclude-newer` and npm's `before` are set to it, and both lock files hold a hash for every package. Later milestones add their packages here with the owner's yes. One exception since Python 3.15 ([11](11-decisions.md), 2026-11-04): PyYAML (dev only) has no 3.15 wheel and is built from its sdist as pure Python, so its build tools, setuptools 84.0.0 and Cython 3.3.0, are pinned by version only (`build-constraint-dependencies`), have no hash in `uv.lock`, and aren't seen by pip-audit (`uv export` leaves build tools out). They run on dev PCs, in CI and in cloud sessions, never in the release build.
 
 | Group | Package | Version | Released | Licence |
 |---|---|---|---|---|
@@ -93,9 +93,9 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | CI actions (by commit SHA) | actions/checkout | v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1` | 2026-07-20 | MIT |
 | | actions/setup-node | v7.1.0 `949feb2413d6458794dcd2491c4babbbce0c15c1` | 2026-10-08 | MIT |
 | | astral-sh/setup-uv | v10.3.0 `1c37ad07a6a961277cf70c0d37d6f313000f5884` | 2026-10-09 | MIT |
-| | actions/setup-python | v7.0.0 `5fda3b95a4ea91299a34e894583c3862153e4b97` | 2026-07-20 | MIT (owner, 2026-10-27: CI's Python 3.14.8) |
+| | actions/setup-python | v7.0.0 `5fda3b95a4ea91299a34e894583c3862153e4b97` | 2026-07-20 | MIT (owner, 2026-10-27; CI's Python is 3.15.2 since 2026-11-04, [11](11-decisions.md)) |
 | | actions/upload-artifact | v7.0.2 `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | 2026-10-07 | MIT |
-| Build downloads (M1b, SHA-256 pinned) | Python 3.14.8 embeddable, `python-3.14.8-embed-amd64.zip` | 3.14.8 `a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310` (python.org's release page) | 2026 (3.14.8) | PSF-2.0 |
+| Build downloads (M1b, SHA-256 pinned) | Python 3.15.2 embeddable, `python-3.15.2-embed-amd64.zip` (owner, 2026-11-04, [11](11-decisions.md)) | 3.15.2 `d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62` (python.org's release page) | 2026 (3.15.2) | PSF-2.0 |
 | | NSIS portable, `nsis-3.13.zip` (2,363,925 bytes) | 3.13 `ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8` (first download, 2026-10-27; no published checksum, V37) | 2026-09-27 | zlib (build tool, not shipped) |
 
 Local tools on this PC (not shipped), after the 2026-11-04 fresh start: Python at `.python-version`'s version (owner-installed from python.org's 64-bit installer, outside the Claude app so Windows sees it, V36), uv 0.12.19 (Astral's standalone build in `C:\Users\<user>\.local\bin`, SHA-256 checked), Node 24.22.1 and npm 11.19.1 (already installed; CI stays on 24.19.0, [11](11-decisions.md) 2026-11-04), git 2.56.0, gh 2.103.3; NSIS 3.13 extracted to `D:\Business\2. GPL Projects\3. Other Assets\Applications\tools\nsis-3.13\`, beside the repo (SHA-256 matches the pin above).
@@ -215,7 +215,7 @@ stateDiagram-v2
 - **GitHub Releases:** read-only check. The token is **optional** (owner, 2026-10-27): while the repo is public the releases are read without one; if the owner sets a fine-grained read-only token, it's used (and its 14-day expiry warning applies), so checks keep working if the repo goes private.
 
 ## 8. Packaging, install and updates
-- **Build (CI, Windows, on a release tag):** download the Python 3.14 embeddable package (SHA-256 pinned), check its executables' signatures, write `python314._pth`, install the app's wheels with `pip install --target Lib\site-packages` from the hash-locked requirements, add the built UI, then compile `ShelfSync-Setup.exe` with NSIS. The build produces an **unsigned** release manifest; the owner signs it offline ([06 §6](06-security.md), runbook `release.md`).
+- **Build (CI, Windows, on a release tag):** download the Python 3.15 embeddable package (SHA-256 pinned), check it holds `python315.dll` and `python315.zip` and its executables' signatures, write `python315._pth`, install the app's wheels with `pip install --target Lib\site-packages` from the hash-locked requirements, add the built UI, then compile `ShelfSync-Setup.exe` with NSIS. The build produces an **unsigned** release manifest; the owner signs it offline ([06 §6](06-security.md), runbook `release.md`).
 - **Install layout (per user, no admin):**
   - program: `%LOCALAPPDATA%\Programs\ShelfSync\versions\<version>\`
   - a **directory junction** `%LOCALAPPDATA%\Programs\ShelfSync\current` → the active version (junctions need no admin)

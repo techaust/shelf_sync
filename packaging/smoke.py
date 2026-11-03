@@ -196,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # The listing is taken before ANY probe runs, so a `__pycache__` written by the isolation or icon probe is caught
     # by the "folder unchanged" check at the end (V47).
     before = {e.path: (e.size, e.sha256) for e in build.file_listing(folder)}  # type: ignore[attr-defined]
-    # python314._pth puts the interpreter in isolated mode: neither PYTHONPATH nor the working folder is on sys.path,
+    # python315._pth puts the interpreter in isolated mode: neither PYTHONPATH nor the working folder is on sys.path,
     # so nothing loads from wherever a shortcut or the Run key happens to start it.
     probe = subprocess.run(  # nosec B603
         [str(folder_python), "-c", "import sys; print(sys.flags.isolated, sys.flags.safe_path)"],

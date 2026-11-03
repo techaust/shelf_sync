@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 def packaged_init(tmp_path: Path) -> Path:
     version = tmp_path / "versions" / "1.2.3"
     (version / "shelfsync").mkdir(parents=True)
-    (version / "python314._pth").write_text("python314.zip\n.\n", encoding="utf-8")
+    (version / "python315._pth").write_text("python315.zip\n.\n", encoding="utf-8")
     init = version / "shelfsync" / "__init__.py"
     init.write_text("", encoding="utf-8")
     return init

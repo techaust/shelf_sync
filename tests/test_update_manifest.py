@@ -308,7 +308,7 @@ def test_unsafe_paths_are_refused(path: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", ["a.txt", "ui/assets/index-abc123.js", "Lib/site-packages/x/__init__.py", "python314._pth", "a b/c.d"]
+    "path", ["a.txt", "ui/assets/index-abc123.js", "Lib/site-packages/x/__init__.py", "python315._pth", "a b/c.d"]
 )
 def test_ordinary_paths_are_fine(path: str) -> None:
     assert is_safe_relative_path(path)

@@ -2,15 +2,17 @@
 # Setup script for ShelfSync's cloud environment (docs/runbooks/cloud-sessions.md). The owner loads this file into the
 # environment's "Setup script" box once; it runs as root on the Ubuntu 24.04 VM before Claude Code starts, and the
 # result is cached for about 7 days. It installs exactly what CI uses (.github/workflows/checks.yml), because the image
-# has neither: Python 3.14.8 (the GitHub build actions/setup-python installs; uv has no 3.14.8 download for Linux),
+# has neither: Python 3.15.2 (the GitHub build actions/setup-python installs; uv never downloads one),
 # Node 24.19.0 and uv 0.12.19. Each download is checked against a pinned SHA-256 before anything is unpacked; a
 # mismatch stops the script, and the session doesn't start (owner, 2026-10-29; docs/11).
 # tools/cloud/session-start.sh puts these first on PATH for every command in the session.
 set -euo pipefail
 
-PY_URL="https://github.com/actions/python-versions/releases/download/3.14.8-36806082737/python-3.14.8-linux-24.04-x64.tar.gz"
-PY_SHA="fa74abc70a55c10f6631967784878704eef81bbde9b8ec27469534f6ba997cb3" # computed 2026-10-29 (the release publishes none)
-PY_DIR="/opt/hostedtoolcache/Python/3.14.8/x64" # the same folder setup-python uses on GitHub's runners
+# actions/python-versions' versions-manifest.json entry for 3.15.2, linux 24.04 x64 (2026-11-04, docs/11).
+PY_URL="https://github.com/actions/python-versions/releases/download/3.15.2-40340363276/python-3.15.2-linux-24.04-x64.tar.gz"
+# The release's hashes.sha256 and the asset's GitHub digest; a download computed 2026-11-04 gave the same.
+PY_SHA="a945ca657bf4efeac7483c0c82381448d3b651a8d0e49be421c71fd53085cd01"
+PY_DIR="/opt/hostedtoolcache/Python/3.15.2/x64" # the same folder setup-python uses on GitHub's runners
 NODE_URL="https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz"
 NODE_SHA="14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647" # nodejs.org SHASUMS256.txt
 NODE_DIR="/opt/node-v24.19.0"
@@ -41,14 +43,14 @@ wait "$uv"
 rm -rf "$PY_DIR" && mkdir -p "$PY_DIR"
 tar -xzf "$TMP/python.tgz" -C "$PY_DIR"
 rm -f "$PY_DIR/setup.sh"
-ln -sf python3.14 "$PY_DIR/bin/python"
+ln -sf python3.15 "$PY_DIR/bin/python"
 
 rm -rf "$NODE_DIR" && mkdir -p "$NODE_DIR"
 tar -xJf "$TMP/node.tar.xz" -C "$NODE_DIR" --strip-components=1
 
 # uv: the wheel is a zip; take its one binary.
 mkdir -p "$UV_DIR"
-"$PY_DIR/bin/python3.14" -I -c '
+"$PY_DIR/bin/python3.15" -I -c '
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     name = next(n for n in z.namelist() if n.endswith(".data/scripts/uv"))
@@ -56,6 +58,6 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 ' "$TMP/uv.whl" "$UV_DIR/uv"
 chmod 755 "$UV_DIR/uv"
 
-"$PY_DIR/bin/python3.14" --version
+"$PY_DIR/bin/python3.15" --version
 "$NODE_DIR/bin/node" --version
 "$UV_DIR/uv" --version

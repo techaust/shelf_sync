@@ -2,7 +2,7 @@
 # (SYS-01, 06 section 6). release.yml calls it on a throwaway runner; the lead runs it on this PC before any push that
 # touches packaging, with -Suffix (throwaway installer names and Credential Manager service) and without -RealSecrets.
 #
-#   powershell -File packaging\release-build.ps1 -Python <python 3.14.8> -Makensis <makensis.exe> -Work <new empty folder>
+#   powershell -File packaging\release-build.ps1 -Python <python 3.15.2> -Makensis <makensis.exe> -Work <new empty folder>
 #       [-Tag v<X.Y.Z>] [-SourceCommit <40 hex>] [-Suffix -rehearsal] [-RealSecrets]
 #
 # -Suffix is empty, or "-" followed by 1 to 32 of A-Z a-z 0-9 . _ - (the rule of backend/shelfsync/platform/names.py):
