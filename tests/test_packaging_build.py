@@ -41,8 +41,8 @@ def test_the_pinned_embed_hash_is_the_one_in_04() -> None:
 
 def test_the_tag_and_the_wheels_python_follow_the_python_version() -> None:
     """SYS-01, V11: the `._pth`, DLL and zip names and uv's --python-version all come from PYTHON_VERSION."""
-    assert "".join(build.PYTHON_VERSION.split(".")[:2]) == build.PYTHON_TAG
-    assert ".".join(build.PYTHON_VERSION.split(".")[:2]) == build.PYTHON_MINOR
+    assert build.PYTHON_VERSION == "3.15.2"
+    assert build.PYTHON_MINOR == "3.15"
     assert build.PYTHON_TAG == "315"
     pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["project"]["requires-python"] == f"=={build.PYTHON_MINOR}.*"

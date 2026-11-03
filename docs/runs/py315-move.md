@@ -100,6 +100,39 @@ _(builder, after the lead's decision: `PYYAML_FORCE_LIBYAML=0`, Lead (proposed),
 
 **Commits:** `e262432` (PyYAML build switch and the 11 rows). This addendum is in the next commit. Nothing pushed. Packaging, tests, CI, cloud scripts and docs haven't been started.
 
+### Analyst: GO (2026-11-04)
+_(copied in by the lead)_ **GO** for the pins, lock and PyYAML switch.
+- **Lock diff:** checked with tomllib against `0f5424e`. Exactly the five winrt updates plus `winrt-windows-storage-streams`; no other version or hash changed. Every compiled package has a cp315 or abi3 wheel for Windows and Linux. Every file was uploaded on or before its cutoff.
+- **Override scope:** all five `[manifest].overrides` carry `sys_platform == 'win32'`, and winrt is reached only through windows-toasts, so Linux installs no winrt.
+- **PyYAML switch:** `PYYAML_FORCE_LIBYAML` is read the same way on every platform (setup.py:154-165).
+- **Release build:** PyYAML never reaches it (`build.py` uses `--no-dev --only-binary :all:`; `release.yml` runs no `uv sync`).
+
+**Fixes asked for:**
+- **F1:** the winrt row in 11 says "uploaded 31 Oct".
+- **F2:** pin the build tools with `build-constraint-dependencies`.
+- **F3:** a lock test that the overrides stay Windows-only and inside windows-toasts.
+
+**Missed by the brief:**
+1. `build.py:289` hard-codes `"--python-version", "3.14"`, which would break the release build.
+2. 04-A V11, V12, V29, V38 and V49.
+3. 04 :35, :96 and :218; 09; 02; CLAUDE.md :63; `release-build.ps1`; `smoke.py`; the CI comments.
+4. Test fixtures naming `python314._pth`.
+5. Cloud: the hash's source, `session-start.sh`, the runbook, and the owner re-uploading `setup.sh`.
+6. `npm run schema:check` added to done-means.
+7. The installer details in `fresh-start.md`.
+
+**3.15 changes checked against the backend (none breaks it):**
+- UTF-8 Mode on by default.
+- Removed APIs: none of them is used.
+- `sqlite3.connect()` positional arguments: every call already passes the rest by keyword.
+- base64 non-strict mode, and strptime `%d` without a year: neither applies.
+- `._pth`: the 3.15 docs still describe it.
+- checked-hash `.pyc`: still works.
+
+**Open:**
+- TLS: Python 3.15.2 rejects certain eMudhra intermediate certificates. The stores' chains need checking, with the owner's go-ahead.
+- The cold toast took 4.44 s on its first run, so it needed measuring.
+
 ## 3. Builder report
 _(builder, 2026-11-04, after the analyst's GO and the lead's F1 to F3 and items 1 to 7)_
 
@@ -201,6 +234,21 @@ All ran through `heavy.sh` on Python 3.15.2:
 - **Cloud environment.** Its stored copy of `setup.sh` must be loaded again before the next cloud session, or session-start prints a Python PROBLEM line.
 
 ## 5. Review
+_(reviewer, 2026-11-04, copied in by the lead)_ **APPROVE**. Nothing critical or high: 1 medium and 6 lows. `code-review` and `security-review` were loaded; security-review found nothing at confidence 8 or higher.
+- **The reviewer's own checks:** `uv lock --check` passed (99 packages), and the packaging, notify, manifest and tray tests passed (191 passed, 2 skipped).
+- **Embedded package signatures:** an unsigned file in the 3.15 embeddable package fails the build rather than slipping through.
+
+**Findings, all fixed by the lead in the next commit:**
+1. **Medium:** `plan-page.src.html:200` still said "Python 3.14". Now 3.15, and the plan page gets republished after the merge.
+2. **Low:** setuptools and Cython are unhashed and unaudited build tools, approved only as Lead (proposed). They're now noted in 04 §2.1, and the owner confirms the 11 row at the next gate.
+3. **Low:** the winrt lock test now refuses a seventh winrt package (an exact set).
+4. **Low:** the tag test asserts the literals `3.15.2`, `3.15` and `315` instead of recomputing them.
+5. **Low:** `check_embedded_layout()` lost its unused `tag` parameter, so its error names the right version.
+6. **Low:** UTF-8 Mode on 3.15. The signature check asks PowerShell for UTF-8 and reads it with `encoding="utf-8"`; 04-A V56 verifies both.
+7. **Low:** the analyst's GO wasn't in the run file. Added above, in §2.
+
+The re-check of the fix diff follows (no critical or high finding, so not a second full review).
+
 
 ## 6. Integration notes
 

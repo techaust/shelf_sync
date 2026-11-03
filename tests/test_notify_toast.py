@@ -102,7 +102,8 @@ def test_v29_winrt_packages_are_reached_only_through_windows_toasts() -> None:
     the override can't reach anything else, and the Windows marker on windows-toasts keeps them all off Linux."""
     lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
     winrt = {package["name"] for package in lock["package"] if package["name"].startswith("winrt-")}
-    assert set(APPROVED_WINRT_OVERRIDES) <= winrt
+    # Exactly the six the owner excepted from the 14-day cutoff (docs/11, 2026-11-04): a seventh fails here.
+    assert winrt == set(APPROVED_WINRT_OVERRIDES) | {"winrt-windows-storage-streams"}
     for package in lock["package"]:
         groups = [package.get("dependencies", []), *package.get("optional-dependencies", {}).values()]
         groups += package.get("dev-dependencies", {}).values()

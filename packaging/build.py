@@ -212,15 +212,15 @@ def safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
     archive.extractall(root)  # every entry was checked above
 
 
-def check_embedded_layout(folder: Path, tag: str = PYTHON_TAG) -> None:
-    """The extracted embeddable package must be the one `PYTHON_TAG` names: `python{tag}.dll` (the interpreter) and
-    `python{tag}.zip` (the stdlib the `._pth` written next points at). A mismatch would build a folder that can't
-    start."""
-    missing = [name for name in (f"python{tag}.dll", f"python{tag}.zip") if not (folder / name).is_file()]
+def check_embedded_layout(folder: Path) -> None:
+    """The extracted embeddable package must be the one `PYTHON_TAG` names: `python{PYTHON_TAG}.dll` (the
+    interpreter) and `python{PYTHON_TAG}.zip` (the stdlib the `._pth` written next points at). A mismatch would build a
+    folder that can't start."""
+    missing = [name for name in (f"python{PYTHON_TAG}.dll", f"python{PYTHON_TAG}.zip") if not (folder / name).is_file()]
     if missing:
         raise BuildError(
             f"The embeddable package has no {' or '.join(missing)}: it isn't Python {PYTHON_MINOR}, or PYTHON_TAG "
-            f"({tag}) doesn't match PYTHON_VERSION"
+            f"({PYTHON_TAG}) doesn't match PYTHON_VERSION"
         )
 
 
@@ -256,7 +256,7 @@ def download_embed_zip(cache: Path) -> Path:
 def powershell_signatures(folder: Path) -> list[dict[str, str | None]]:
     """Get-AuthenticodeSignature for every .exe, .dll and .pyd under `folder` (Windows only)."""
     script = (
-        "$ErrorActionPreference='Stop'; "
+        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
         "Get-ChildItem -LiteralPath $env:SHELFSYNC_BUILD_FOLDER -Recurse -File "
         "| Where-Object { $_.Extension -in '.exe','.dll','.pyd' } "
         "| Get-AuthenticodeSignature | ForEach-Object { [pscustomobject]@{ Path=$_.Path; Status=[string]$_.Status; "
@@ -269,7 +269,9 @@ def powershell_signatures(folder: Path) -> list[dict[str, str | None]]:
     done = subprocess.run(  # nosec B603 B607
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
-        text=True,
+        # PowerShell is told to write UTF-8 above, so a non-ASCII path decodes the same on any Python (3.15 reads
+        # pipes as UTF-8 by default, PEP 686; 04-A V56).
+        encoding="utf-8",
         check=False,
         timeout=600,
         env=env,
