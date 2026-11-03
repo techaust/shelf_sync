@@ -295,6 +295,9 @@ def test_the_signature_check_drops_psmodulepath_and_reports_powershells_error(
         env = kwargs["env"]
         assert isinstance(env, dict)
         seen["env"] = env
+        # V56: PowerShell is told to write UTF-8 and the output is read as UTF-8 (Python 3.15 UTF-8 Mode)
+        assert kwargs["encoding"] == "utf-8"
+        assert "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8" in args[-1]
         return subprocess.CompletedProcess(args, 1, "", "Get-AuthenticodeSignature: the module could not be loaded")
 
     monkeypatch.setenv("PSModulePath", r"C:\Program Files\PowerShell\7\Modules")

@@ -110,9 +110,9 @@ def write_build_suffix(folder: Path, suffix: str) -> None:
         (folder / SUFFIX_FILE).write_text(suffix, encoding="ascii")  # no line end: the suffix alone
 
 
-def pth_text(tag: str = PYTHON_TAG) -> str:
+def pth_text() -> str:
     """`python315._pth`: the stdlib zip, the folder itself (where `shelfsync` sits), the wheels, and `site`."""
-    return PTH_TEMPLATE.format(tag=tag)
+    return PTH_TEMPLATE.format(tag=PYTHON_TAG)
 
 
 def sha256_of(path: Path) -> str:
@@ -272,6 +272,7 @@ def powershell_signatures(folder: Path) -> list[dict[str, str | None]]:
         # PowerShell is told to write UTF-8 above, so a non-ASCII path decodes the same on any Python (3.15 reads
         # pipes as UTF-8 by default, PEP 686; 04-A V56).
         encoding="utf-8",
+        errors="replace",  # an error PowerShell writes before the line above still reaches BuildError
         check=False,
         timeout=600,
         env=env,
