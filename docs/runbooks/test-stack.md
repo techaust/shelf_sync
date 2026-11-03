@@ -9,7 +9,7 @@ Nothing here touches your real bucket, AWS account or stores.
 **Run these in Windows PowerShell**, one block at a time, in the same window. Go to the `shelf_sync` folder:
 
 ```powershell
-cd "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"
+cd "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync"
 ```
 
 Tell uv never to download a Python (this window only):

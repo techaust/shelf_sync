@@ -27,7 +27,7 @@ The test releases are public on GitHub (the repo is public). v0.1.2 is a deliber
 ## Step 16: the Windows checks
 In Windows PowerShell on your own account:
 ```powershell
-cd "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"
+cd "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync"
 ```
 ```powershell
 $env:UV_PYTHON_DOWNLOADS='never'; uv run pytest -m windows --no-cov 2>&1 | Tee-Object .logs\windows-checks.log

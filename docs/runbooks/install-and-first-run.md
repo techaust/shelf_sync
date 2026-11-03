@@ -7,7 +7,7 @@ ShelfSync installs for your Windows account only: no admin rights, no changes fo
 2. **Check it before running it** ([06 §6](../06-security.md)): nothing ShelfSync controls checks a hand-downloaded installer.
    - **On your own account** (it has the repo), in Windows PowerShell:
      ```powershell
-     cd "D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\shelf_sync"
+     cd "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync"
      ```
      ```powershell
      $env:UV_PYTHON_DOWNLOADS='never'; $env:PYTHONPATH='backend'; uv run python tools/release/verify_setup.py "$env:USERPROFILE\Downloads\manifest.json" "$env:USERPROFILE\Downloads\manifest.json.sig" "$env:USERPROFILE\Downloads\ShelfSync-Setup-<X.Y.Z>.exe"

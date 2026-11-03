@@ -98,7 +98,7 @@ Approved by the owner on 2026-10-26 as one list ([11](11-decisions.md)). Each is
 | Build downloads (M1b, SHA-256 pinned) | Python 3.14.8 embeddable, `python-3.14.8-embed-amd64.zip` | 3.14.8 `a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310` (python.org's release page) | 2026 (3.14.8) | PSF-2.0 |
 | | NSIS portable, `nsis-3.13.zip` (2,363,925 bytes) | 3.13 `ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8` (first download, 2026-10-27; no published checksum, V37) | 2026-09-27 | zlib (build tool, not shipped) |
 
-Local tools already on this PC (not shipped): Python 3.14.8 (owner-installed from python.org, 2026-10-27; 3.12.10 also still installed), uv 0.12.19, Node 24.19.0, npm 11.17.0, git 2.55.0, gh 2.101.0; NSIS 3.13 extracted to `…\SOFTWARE\tools\nsis-3.13\`, beside the repo (2026-10-27).
+Local tools on this PC (not shipped), after the 2026-11-04 fresh start: Python at `.python-version`'s version (owner-installed from python.org's 64-bit installer, outside the Claude app so Windows sees it, V36), uv 0.12.19 (Astral's standalone build in `C:\Users\<user>\.local\bin`, SHA-256 checked), Node 24.22.1 and npm 11.19.1 (already installed; CI stays on 24.19.0, [11](11-decisions.md) 2026-11-04), git 2.56.0, gh 2.103.3; NSIS 3.13 extracted to `D:\Business\2. GPL Projects\3. Other Assets\Applications\tools\nsis-3.13\`, beside the repo (SHA-256 matches the pin above).
 
 ## 3. Folder structure
 ```text

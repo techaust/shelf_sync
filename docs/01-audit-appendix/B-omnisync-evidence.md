@@ -1,6 +1,6 @@
 # 01-B: Evidence from OmniSync (read-only, 2026-10-25)
 
-Read on 2026-10-25 from OmniSync's code and its own log, without running anything and without opening `config.env`. Paths are relative to `D:\BUSINESS\3. CHILD PROJECTS\1. GPL PROJECTS\OTHER ASSETS\SOFTWARE\OmniSync`. Line numbers are as of that date.
+Read on 2026-10-25 from OmniSync's code and its own log, without running anything and without opening `config.env`. Paths are relative to `D:\Business\2. GPL Projects\3. Other Assets\Applications\Omni_Sync`. Line numbers are as of that date.
 
 ## P1: mappings come from the attached file, and collisions are dropped
 - **Key from the attached file:** `omnisync/mappings.py:310` `build_mapping()` reads each product's download entries (`:321`), takes the file name (`:324–325`), and turns it into the mapping key with `_mapping_key_from_base()` (`:326`, defined at `:47–50`: strip `.zip` and the version, then slugify). The product's own URL slug is used only when it has no parsable download (`:334–337`).
