@@ -5,6 +5,8 @@ Four small scripts in `tools/research/`, used for the audit ([01-A](../01-audit-
 - **They borrow OmniSync's store settings** by importing `omnisync.config` read-only, so they run with OmniSync's own Python (its `venv` folder), which has `requests` and the keys configured.
 - **`-B` stops Python from writing cache files** into OmniSync's folder. Nothing in OmniSync is changed: the config module only reads its settings and the Windows keyring when imported (checked 2026-10-25).
 
+**They need the OmniSync folder**, which was never on GitHub; the owner let it go at the 2026-11-03 fresh start ([11](../11-decisions.md), [fresh-start.md](fresh-start.md)). Where it's missing, these scripts can't run.
+
 Run them only when the owner asks for a fresh count. The numbers will differ a little from 01-A as the stores change; the newest run wins.
 
 ## 1. Open PowerShell

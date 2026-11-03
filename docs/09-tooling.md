@@ -62,7 +62,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 | T8 | **code-review**, **security-review**, **simplify**, **run** | Skills | Reviews, clean-up, running the app | Local only |
 | T9 | **Security review** plugin | Plugin (hooks) | Warns on risky edits as they happen | Already on |
 | T10 | **Agents** (`.claude/agents/`): analyst, builder, designer, reviewer, code-finder, test-runner, doc-clerk | Claude Code subagents | [12 §3](12-models-and-usage.md) | Fixed tool lists; no connectors |
-| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh**, **cloud/setup.sh**, **cloud/session-start.sh** | Repo scripts (`tools/`) | Keep every run on Opus 5.5 at high; audit runs; queue heavy commands (shared lock with techaust_platform on this PC); stall and memory alarms; prepare a cloud session | Local; the cloud scripts download only pinned, hash-checked files |
+| T11 | **model-guard hook**, **model-audit**, **heavy.sh**, **watch.sh**, **cloud/setup.sh**, **cloud/session-start.sh**, **memory-sync.sh** | Repo scripts (`tools/`) | Keep every run on Opus 5.5 at high; audit runs; queue heavy commands (shared lock with techaust_platform on this PC); stall and memory alarms; prepare a cloud session; copy the memory notes to and from `docs/memory/` | Local; the cloud scripts download only pinned, hash-checked files |
 | T12 | **start-session** / **end-session** | Project skills | "start the day" / "end the day" | Local |
 
 ## 5. Not used for this project
