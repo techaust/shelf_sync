@@ -859,8 +859,9 @@ def test_windows_only_a_folder_limited_to_this_account_is_accepted(tmp_path: Pat
     mine.mkdir()
     laragon.restrict_to_current_user(mine)
     assert laragon.folder_is_private(mine) is None
-    owner, grantees = laragon.folder_access(mine)
-    assert owner.startswith("S-1-") and len(grantees) == 1 and grantees[0].startswith("S-1-5-21-")
+    if sys.platform == "win32":  # for mypy --platform linux: `folder_access` exists on Windows only
+        owner, grantees = laragon.folder_access(mine)
+        assert owner.startswith("S-1-") and len(grantees) == 1 and grantees[0].startswith("S-1-5-21-")
 
 
 @pytest.mark.windows
