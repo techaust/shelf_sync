@@ -2,6 +2,9 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-04 [#55](https://github.com/techaust/shelf_sync/pull/55) chore(claude): turn off every tool ShelfSync doesn't use, for this project only
+- 2026-11-04 [#54](https://github.com/techaust/shelf_sync/pull/54) docs: new links for the plan page and the mockup after the fresh start
+- 2026-11-04 [#53](https://github.com/techaust/shelf_sync/pull/53) docs: py315-move merged; the owner's Windows checks pass outside Claude (V49, V55)
 - 2026-11-04 [#52](https://github.com/techaust/shelf_sync/pull/52) build(python): Python 3.15.2, winrt 4.x under windows-toasts, PyYAML pure build, embedded 3.15.2 [SYS-01]
 - 2026-11-04 [#51](https://github.com/techaust/shelf_sync/pull/51) chore: new folder layout after the 2026-11-04 fresh start
 - 2026-11-03 [#50](https://github.com/techaust/shelf_sync/pull/50) docs: fresh start without owner backups (memory notes on GitHub, fresh-start runbook)

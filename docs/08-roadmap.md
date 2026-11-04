@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Phase** | 4, Build. Phases 1–3 approved (2026-10-25, 2026-10-25, 2026-10-26). **M1a approved 2026-10-27** (PRs #7–#9, and #12 for the Quit fix found in its exit test). **M1b code done 2026-10-28** (#13, #15–#18, and #20 for the Settings screens); its exit test is the owner's ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)). **M2 started 2026-10-28:** plan in [runs/m2.0-plan.md](runs/m2.0-plan.md); M2.1 to M2.6 merged (#19, #22–#24, #26, #27, #33). Next: M2.7 S3 and M2.8 test stack wait for the owner's package yes; then the M2 exit test |
+| **Phase** | 4, Build. Phases 1–3 approved (2026-10-25, 2026-10-25, 2026-10-26). **M1a approved 2026-10-27** (PRs #7–#9, and #12 for the Quit fix found in its exit test). **M1b code done 2026-10-28** (#13, #15–#18, and #20 for the Settings screens); its exit test is the owner's ([runbooks/m1b-exit-test.md](runbooks/m1b-exit-test.md)). **M2 started 2026-10-28:** plan in [runs/m2.0-plan.md](runs/m2.0-plan.md); M2.1 to M2.6 merged (#19, #22–#24, #26, #27, #33); M2.7 S3 and its screen (#41, #44) and the moto half of M2.8 (#43) merged 2026-11-02. **2026-11-04:** the PC was formatted and set up again; the project moved to Python 3.15.2 (#52). Next: the LocalWP half of M2.8 (after m2.0 §3 Q3), then the owner's M2 exit test |
 | **Date** | 2026-10-25; status line updated 2026-10-27 |
 | **Rule** | Each phase and milestone ends with a short summary to the owner and **waits for "approved"** before the next starts. Nothing writes to the live stores before M6 |
 | **Traceability** | Every PRD ID has its milestone in the **M** column of [03](03-prd.md). The lists below are copied from there |

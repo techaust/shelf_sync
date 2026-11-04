@@ -3,62 +3,84 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-11-02, 08:25 IST: the end of the day ("end the day"), in the orchestrating PC session that started at about 00:45 IST. The owner asked for every pending task to run in parallel under one session and went to sleep at about 01:20 IST; the session ran the rest on its own, and the owner closed the two cloud sessions in the morning.
+2026-11-04, 16:20 IST: the end of the day ("end the day"), in the PC session that started at about 01:40 IST. It was the first day on the newly formatted PC.
 
 ## Done
 All merged on green under the automatic rule.
 
 | PR | Task | What |
 |---|---|---|
-| [#37](https://github.com/techaust/shelf_sync/pull/37) | P0 | **boto3 1.43.112 and moto 5.2.4 locked** (owner's yes): `moto[s3]` plus flask and flask-cors instead of the `server` extra (16 packages, not about 44) |
-| [#38](https://github.com/techaust/shelf_sync/pull/38) | T4 | `switchStore` and the Settings › Updates model and wording moved to `lib/`; `lib/layers.test.ts` enforces "nothing in `api/`, `lib/`, `components/` reaches `screens/`" (cloud session) |
-| [#39](https://github.com/techaust/shelf_sync/pull/39) | T5 | Dark values as component tokens, each theme scope written once (cloud session); 48 computed-colour comparisons with `main` identical (04-A V54) |
-| [#40](https://github.com/techaust/shelf_sync/pull/40) | T6 | A `-Suffix` build uses suffixed Run value and AUMID (m1b.3 finding 7) |
-| [#41](https://github.com/techaust/shelf_sync/pull/41) | T1 / m2.7 | **The S3 client and the 3-step Storage Test** (`POST /api/storage/test`, ERR-03): an isolated boto3 client, only its own `shelfsync-test/` object, L1–L13 in 11; 04-A V8, V10, V51–V53 verified |
-| [#42](https://github.com/techaust/shelf_sync/pull/42) | T7 | `tools/release/rehearse.py` runs a current build again: **46 of 46 checks** inside Claude; each copy gated (throwaway names, no real data folder) |
-| [#43](https://github.com/techaust/shelf_sync/pull/43) | T3 / m2.8 (moto part) | `testenv/moto_s3.py`: moto S3 on 127.0.0.1:47630 only, Host allowlist, CORS off; runbook `test-stack.md`; V8 presigned URLs recorded (moto accepts expired and tampered links) |
-| [#44](https://github.com/techaust/shelf_sync/pull/44) | T2 | **Test connection on Settings › Storage**: the three steps, the left-behind warning, the stale-answer note; checked in the pane against a local moto server |
-| [#45](https://github.com/techaust/shelf_sync/pull/45) | Record | The night's record: status, roadmap, CHANGELOG #34–#44, m2.0 handover (brought up to date with `main` after #44, then merged) |
-| (this PR) | End of day | Every run file closed with its PR, `Usage:` and handover; CLAUDE.md and the cloud runbook gain the orchestration and worktree-clean-up rules; one 11 row |
+| [#51](https://github.com/techaust/shelf_sync/pull/51) | Fresh start | **The new folder layout:** `shelf_sync` in `D:\Business\2. GPL Projects\3. Other Assets\Applications\`, NSIS beside it, techaust_platform in `D:\Business\1. Parent Project\TecHaust Technologies\Application\`. Every path in the repo updated. OmniSync is back as read-only reference, and its `config.env` is blocked at the new path. The fresh-start runbook is rewritten from the real run |
+| [#52](https://github.com/techaust/shelf_sync/pull/52) | py315-move (Tier B) | **Python 3.15.2 replaces 3.14.8** (owner's choice):<br>- winrt 4.x forced under windows-toasts 1.3.1.<br>- PyYAML built as pure Python, with its build tools pinned.<br>- The installer embeds 3.15.2.<br>- CI comments, cloud scripts, 04, 04-A (new V55, V56) and the ADRs updated.<br>Reviews: builder, analyst GO, reviewer APPROVE, and a fix re-check APPROVE. Three local release builds passed |
+| [#53](https://github.com/techaust/shelf_sync/pull/53) | py315-move | The owner's `-m windows` run outside Claude passed (51 passed, 1 skipped; cold toast 0.46 s). The run file is closed |
+| [#54](https://github.com/techaust/shelf_sync/pull/54) | Pages | **New links** for the plan page (https://claude.ai/artifact/PznaCjWtR9afUfV1ho4vqN) and the mockup (https://claude.ai/artifact/UER2z6uQage6XFJuHtYCys): the old ones no longer open from the owner's account |
+| [#55](https://github.com/techaust/shelf_sync/pull/55) | Tools | **Everything ShelfSync doesn't use is turned off for this project:**<br>- Sentry, Supabase and Upstash plugins (`@inline`).<br>- The Claude Docs connector.<br>- The user-level Supabase, Upstash and duplicate AWS servers, and scheduled tasks (this PC's `disabledMcpServers`).<br>aws-core and the skills bundle stay on (owner) |
+| (this PR) | End of day | CLAUDE.md rule 8 (where the tool switches live), the 08 status cell, this page, CHANGELOG #53–#55, and two memory notes |
 
-Every task had its run file, the reviews its tier asks for (Tier A/B: the analyst's early check; screens: a visual review in the built-in pane), and a release build before any push that ships code. Details are in each run file (`docs/runs/t1`… are named `m2.7-s3.md`, `t2-…` to `t7-…`).
+**Set up on this PC** (machine-level, not in the repo):
+- **Python 3.15.2:** the owner installed it, outside Claude.
+- **uv 0.12.19** (SHA-256 checked) and **NSIS 3.13** (matches the pin).
+- **Plugins:** `security-guidance` and `aws-core` reinstalled with the owner's yes.
+- **Repo:** the downloaded copy was made into a clone, its git settings set, and the 14 memory notes restored.
+- **Packages:** `uv sync` and `npm ci` (frontend, brand).
 
 ## In progress
-- Nothing. No agent runs, and both cloud sessions are closed.
-- The five finished worktrees are removed from git and their branches deleted, but their folders are still in `.claude\worktrees\`: the paths inside are too long for git to delete, and the app blocks a long-path delete. They hold nothing that isn't merged.
+- Nothing. No agent is running, and the builder's worktree and every finished branch are removed.
 
 ## Next
-1. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through the new **Test connection**, and the test stack. Before it: the owner's LocalWP half of m2.8 (below).
-2. **m2.8, the LocalWP half** (Tier B, with the analyst's early check): LocalWP + WooCommerce + the owner's Amazon S3 Storage extension pointed at `testenv/moto_s3.py` (V6), after the owner's answer to [runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q3.
+1. **Check the tool switches** ("check the tools"): after the owner restarts the Claude app, a new session should show no Sentry, Supabase, Upstash or Claude Docs.
+2. **m2.8, the LocalWP half** (Tier B, with the analyst's early check), after the owner's answer to [runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q3. The 2026-11-03 answers to Q2, Q3 and Q5 were reverted, so all three are open.
+3. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through **Test connection**, and the test stack. The keys were lost in the format and must be made again first ([runbooks/keys-and-policies.md](runbooks/keys-and-policies.md)).
 
 ## Waits on the owner
-0. **Formatting the PC (2026-11-03):** ready, with nothing for the owner to back up. The memory notes are now in `docs/memory/`, OmniSync is let go ([11](11-decisions.md)), and the steps afterwards are in [runbooks/fresh-start.md](runbooks/fresh-start.md). Before the release signing key is made, the owner decides where it lives, since they keep no backups (release.md A assumes an offline copy).
-1. **Review the night's "Lead (proposed)" rows** in [11](11-decisions.md), dated 2026-11-02: the moto package set, m2.7's L1–L13 and the region rule, T2's layout and strings, T3's server defaults, T4 and T5's structure. One row records a lead mistake: T3 ran as Tier C, though 12 §2 puts the test stack in Tier B.
-2. **13's new proposed strings:** the Storage Test row (m2.7 and T2) and the region error.
-3. **Runs outside the Claude app** (Windows PowerShell):
-   - T7's rehearsal outside Claude (steps in [runs/t7-rehearse-current-build.md](runs/t7-rehearse-current-build.md) §2);
-   - the `-m windows` checks (T6 changed the Run value and AUMID code);
-   - `testenv/moto_s3.py` stopped with Ctrl+C in a real console ([runbooks/test-stack.md](runbooks/test-stack.md)).
-4. **m2.0-plan §3 Q3** (WooCommerce over HTTPS on LocalWP) and **Q5** (bucket versioning state; with versioning on, each Test leaves a tiny old version and a delete marker).
-5. **Tidying, any time:** delete the five folders in `.claude\worktrees\` in File Explorer; archive the finished T6 session on this PC ("T6 · -Suffix build: no real Run value or AUMID", PR #40 merged).
-6. Still open from before: the Edge check (password prompts, Copy, Export download), the M1b exit test, Auto-fix (now works from the lead: turned on for #37–#45), and the optional "Automatically delete head branches" setting (more merged branches on GitHub now, including the cloud sessions' `refactor/switch-store-lib` and `refactor/dark-tokens`, which were re-pushed under new names after rebasing).
+1. **Restart the Claude app.** After that, this session's tools see `uv` on the PATH, the aws-core plugin's AWS server can connect (once AWS keys exist), and the tool switches load.
+2. **Upload the new `tools/cloud/setup.sh`** to the `shelf_sync` cloud environment (claude.ai/admin-settings › Cloud environments › `shelf_sync` › Setup script › Choose file). Until then cloud sessions print a Python PROBLEM line.
+3. **Review the "Lead (proposed)" rows** in [11](11-decisions.md):
+   - today's: local Node 24.22.1, and the PyYAML build tools pinned by version only, without a hash or pip-audit;
+   - still open from 2026-11-02: the moto package set, m2.7's L1–L13, T2 to T5.
+4. **Share the new pages** if anyone else should see them: both are private to the owner's account.
+5. **m2.0-plan §3 Q2, Q3 and Q5** (import rule, WooCommerce over HTTPS on LocalWP, bucket versioning).
+6. **Where the release signing key lives**, since the owner keeps no backups: decide before the key is made.
+7. **Still open from before:**
+   - 13's proposed strings (the Storage Test row, the region error);
+   - T7's rehearsal outside Claude;
+   - stopping `testenv/moto_s3.py` with Ctrl+C in a real console;
+   - the Edge check;
+   - the M1b exit test;
+   - the optional "Automatically delete head branches" setting.
 
 ## Not verified
-- **Anything against real AWS or a store** (by design): V52's 403 without `s3:ListBucket`, what other S3-compatible services answer, and whether one rejects the checksum headers. The M2 exit test is the first live check.
-- **V6:** whether the S3 extension works against `testenv/moto_s3.py` (with CORS off and the Host allowlist).
-- **Screens:** Playwright with axe (CI only), Windows High Contrast, a screen reader; T2's stale note in dark; the brief loading skeletons and forced colours after T5 (unit-tested only). The built-in pane's captures were cropped late in the night, so some T2 shots are partial (their text was read from the page).
-- **T7 outside Claude**, a killed rehearsal run, and the real mutex shared by rehearsal copies (a T6 follow-up).
-- **T6:** an update installed into a rehearsal copy drops the suffix (follow-up below).
-- **Unchanged from before:** a second Windows user for V33; IPv6 listeners; the cross-port parts of V32 in a browser; 2× full-page shots of the real app; a daily backup at a real 02:00 and across DST; the store Test connection against the live stores.
+- **The tool switches:** they load at session start, so they were set and documented but not yet seen in a new session. Of them, only `claude mcp list` was checked: the three user-level servers show "Disabled for this project".
+- **Toasts under the registered AUMID** from an installed copy on winrt 4.x. The owner's `-m windows` run used the default notifier.
+- **`setup.sh` on a real cloud VM** with Python 3.15.2. The script's SHA-256 matches three sources.
+- **The Python 3.15.2 installer's SHA-256:** the file was gone before it could be checked, so the PSF signature on `python.exe` was checked instead.
+- **The stores' TLS chains:** Python 3.15 rejects certain eMudhra intermediate certificates. Checking the stores needs the owner's go-ahead; it's due before M6.
+- **The new artifact pages on claude.ai and on a phone:** they were built from the repo and published, but not looked at.
+- **Unchanged from before:**
+  - anything against real AWS or a store;
+  - V6 (the S3 extension against moto);
+  - Playwright with axe (CI only), Windows High Contrast, a screen reader;
+  - a second Windows user (V33), IPv6 listeners, the cross-port parts of V32, 2× full-page shots;
+  - a daily backup at a real 02:00 and across DST.
 
 ## Open follow-ups
-- **The updater in a suffixed (rehearsal) build** must refuse to check or install, or an update drops the suffix; this must land before `release_key.PUBLIC_KEY` is set (T6). A rehearsal copy also still uses the real data folder, Credential Manager service at run time, single-instance name and default `InstallDir`.
-- **T7 review lows 1, 3, 4, 5:** block (not only prove) the real Credential Manager service in copies; guard each credential delete; per-store leftovers; refuse a `--work` inside a real folder. Then one more real rehearsal run.
-- **m2.7:** L1's known limit (an overran Storage Test held by a trickling endpoint keeps the busy flag); review N2 (the hold-past-the-limit tests need the clients built within 2 s; watch for flakes); one isolated Session per Test (M5 client cache).
-- **T2:** share the store and storage Test button and result parts (`components/StoreTest.tsx` gains `id`, `describedBy`, `blocked`).
-- **Older, unchanged:** `switchStore` follow-up **closed** by T4; the token task **closed** by T5; `rehearse.py` **closed** by T7. Still open: the cloud toolchain (update `tools/cloud/setup.sh` when versions change).
+- **New today:**
+  - The console code-page low from the py315 re-check: the signature check's `[Console]::OutputEncoding` leaves the shared console on UTF-8 for the rest of a release build. Cosmetic.
+  - 3 moderate npm vulnerabilities in the frontend packages; seen at `npm ci` and not looked at.
+  - The GitHub plugin's connection failed earlier today, then connected; `gh` covers everything either way.
+  - The plugin's AWS server needs AWS keys and `uv` on the PATH.
+- **The updater in a suffixed (rehearsal) build** must refuse to check or install, before `release_key.PUBLIC_KEY` is set (T6).
+- **T7 review lows 1, 3, 4 and 5**, then one more real rehearsal run.
+- **m2.7:** L1's known limit; review N2 (watch for flaky tests); one isolated Session per Test (M5 client cache).
+- **T2:** share the store and storage Test button parts.
+- **OmniSync's research scripts** can't run: there's no venv and no keys, and making a venv would change OmniSync.
 
 ## Usage
-- **The 5-hour window:** 31 % at 00:51 IST; it reset at about 02:20 IST and reached **97 %** at about 06:15 IST, when new agents stopped (the 95 % gate) until the reset at about 07:20 IST; about 17 % at 08:05 IST; **0 % at 08:10 IST** (`get_usage`; the window resets at 18:00 IST).
-- **Cloud sessions:** T4 and T5 ran in the cloud from the owner's go. Later tasks couldn't start cloud sessions: the app starts them only on the owner's own words, not from an automated turn, so T1, T2, T3 and T7 ran here with agents, at most two at once. Cloud sessions also can't report back; the lead watched their branches on GitHub.
-- **Model audit** (`node tools/model-audit.mjs 2026-11-02`, this PC): every run Opus 5.5 at high. 2 flagged "no skill loaded": T7's builder and analyst, whose brief named no skill (none fits a rehearsal-script change). The four built-in `general-purpose` runs are the read-only helpers `code-review` starts (the allowed exception, 12 §3). The cloud sessions' runs (T4, T5) are logged on their own machines.
+- **The 5-hour window:**
+  - 3 % at the start (about 01:50 IST); 19 % at the peak of the py315 task (about 03:45 IST).
+  - After the reset: 11 % now (16:16 IST); it resets at 20:10 IST.
+  - Weekly, all models: 39 %.
+- **Model audit** (`node tools/model-audit.mjs 2026-11-04`): every run Opus 5.5 at high.
+  - 2 flagged "no skill loaded": the builder and the analyst, for whom no 09 §3 row fits.
+  - The 2 `general-purpose` runs are the read-only helpers that `code-review` starts (the allowed exception, 12 §3).
+- **Agents today:** the builder (twice resumed), the analyst, and two reviewers. At most two ran at once.
