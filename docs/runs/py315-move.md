@@ -1,6 +1,6 @@
 # Run: move to Python 3.15.2 (py315-move)
 
-Status: open
+Status: merged (PR #52)
 Tier: B ([12 §2](../12-models-and-usage.md): the tray's toasts, the installer build, packaging)
 Usage:
 - builder claude-opus-5-5/high [none: no 09 row fits; Context7 not signed in]: 5-h 9 → 11 % (stop), 11 → 16 % (finish)
@@ -275,3 +275,9 @@ _(lead, 2026-11-04)_
 
 ## 7. Handover
 _(lead, 2026-11-04)_ Built, reviewed (APPROVE, then the fix re-check APPROVE), and every local check and three release builds passed. Next: the PR's CI (Linux builds PyYAML from source), then the owner's `-m windows` run outside Claude and the cloud `setup.sh` upload. Status becomes "merged (PR #N)" at the end of the day.
+
+_(lead, 2026-11-04, after the merge)_ #52 merged on green: the Python, Brand and UI checks all passed, so Linux CI built PyYAML from its sdist with the pinned build tools. The owner's `uv run pytest -m windows --no-cov` in Windows PowerShell, outside Claude, gave 51 passed and 1 skipped (V31, which needs the owner present), with both toast tests passing and a cold toast of 0.46 s (`.logs\windows-checks-py315.log`; 04-A V49 and V55 updated). The worktree and branches are removed, and the plan page is republished. **Still open:**
+- the owner uploads `tools/cloud/setup.sh` to the cloud environment;
+- check the stores' certificate chains before M6;
+- the owner reviews the "Lead (proposed)" rows in 11;
+- the console code-page low.

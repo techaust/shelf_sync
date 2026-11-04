@@ -2,7 +2,7 @@
 
 One line per merged PR, newest first.
 
-- 2026-11-04 (this PR) build(python): Python 3.15.2, winrt 4.x under windows-toasts, PyYAML pure build, embedded 3.15.2 [SYS-01]
+- 2026-11-04 [#52](https://github.com/techaust/shelf_sync/pull/52) build(python): Python 3.15.2, winrt 4.x under windows-toasts, PyYAML pure build, embedded 3.15.2 [SYS-01]
 - 2026-11-04 [#51](https://github.com/techaust/shelf_sync/pull/51) chore: new folder layout after the 2026-11-04 fresh start
 - 2026-11-03 [#50](https://github.com/techaust/shelf_sync/pull/50) docs: fresh start without owner backups (memory notes on GitHub, fresh-start runbook)
 - 2026-11-03 [#49](https://github.com/techaust/shelf_sync/pull/49) revert: undo the owner's answers to m2.0 Q2, Q3 and Q5 (#47)
