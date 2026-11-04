@@ -15,12 +15,13 @@ import datetime
 import ipaddress
 import ssl
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 from cryptography import x509
@@ -100,28 +101,64 @@ def make_certificate(
     )
 
 
+@dataclass(frozen=True)
+class RecordedRequest:
+    """One request as the server received it: `target` is the raw request target (path and query string)."""
+
+    method: str
+    target: str
+    headers: dict[str, str]
+    body: bytes
+
+    @property
+    def path(self) -> str:
+        return self.target.split("?", 1)[0]
+
+    @property
+    def query(self) -> dict[str, list[str]]:
+        return parse_qs(self.target.split("?", 1)[1]) if "?" in self.target else {}
+
+
+# An app answers one request: (status, headers, body).
+App = Callable[[RecordedRequest], tuple[int, dict[str, str], bytes]]
+
+
+def _ok_app(_: RecordedRequest) -> tuple[int, dict[str, str], bytes]:
+    return 200, {"Content-Type": "application/json"}, b'{"ok": true}'
+
+
 @dataclass
 class ServerRecord:
-    """What the HTTPS server saw: the SNI names offered, the Host headers of the requests, and handshake failures."""
+    """What the HTTPS server saw: the SNI names offered, the requests (and their Host headers), and handshake
+    failures."""
 
     sni_names: list[str | None] = field(default_factory=list)
-    hosts: list[str | None] = field(default_factory=list)
+    requests: list[RecordedRequest] = field(default_factory=list)
     handshake_errors: list[str] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def hosts(self) -> list[str | None]:
+        return [request.headers.get("Host") for request in self.requests]
 
 
 class _Handler(BaseHTTPRequestHandler):
     server: _TlsServer
 
-    def do_GET(self) -> None:
+    def _answer(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        request = RecordedRequest(self.command, self.path, dict(self.headers.items()), self.rfile.read(length))
         with self.server.record.lock:
-            self.server.record.hosts.append(self.headers.get("Host"))
-        body = b'{"ok": true}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+            self.server.record.requests.append(request)
+        status, headers, body = self.server.app(request)
+        self.send_response(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    do_GET = do_POST = do_PUT = do_DELETE = _answer
 
     def log_message(self, format: str, *args: Any) -> None:  # quiet: pytest shows stderr on a failure only
         pass
@@ -133,9 +170,10 @@ class _TlsServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, context: ssl.SSLContext, record: ServerRecord) -> None:
+    def __init__(self, context: ssl.SSLContext, record: ServerRecord, app: App) -> None:
         self.tls = context
         self.record = record
+        self.app = app
         super().__init__(("127.0.0.1", 0), _Handler)
 
     def finish_request(self, request: Any, client_address: Any) -> None:
@@ -155,8 +193,13 @@ class RunningServer:
 
 
 @contextmanager
-def tls_server(certificate: TestCertificate, folder: Path) -> Iterator[RunningServer]:
-    """Serve `GET` (200, a small JSON body) over TLS with `certificate` on 127.0.0.1, any free port."""
+def tls_server(
+    certificate: TestCertificate | tuple[bytes, bytes], folder: Path, app: App = _ok_app
+) -> Iterator[RunningServer]:
+    """Serve `app` (by default 200 and a small JSON body for any request) over TLS with `certificate` (or a
+    (cert PEM, key PEM) pair) on 127.0.0.1, any free port."""
+    if isinstance(certificate, tuple):
+        certificate = TestCertificate(*certificate)
     cert_path, key_path = certificate.write(folder, "server")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert_path, key_path)
@@ -167,7 +210,7 @@ def tls_server(certificate: TestCertificate, folder: Path) -> Iterator[RunningSe
             record.sni_names.append(name)
 
     context.sni_callback = remember_sni
-    server = _TlsServer(context, record)
+    server = _TlsServer(context, record, app)
     thread = threading.Thread(target=server.serve_forever, name="tls-test-server", daemon=True)
     thread.start()
     try:

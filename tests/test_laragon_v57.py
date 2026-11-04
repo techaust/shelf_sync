@@ -11,7 +11,11 @@ self-signed `CA:FALSE` certificate as its own trust anchor are fine: `localhost`
 pass), but its one-label wildcard `*.test` never matches `shelfsync-test.test`: "Hostname mismatch" (measured: a
 wildcard matches only with at least two labels after the `*`). A certificate naming `shelfsync-test.test` exactly, or
 a wildcard with two labels after the star, is accepted. So Laragon's certificate as it was read on 2026-11-05 can't
-be used for the site; the options are the owner's (run file m2.8 §2).
+be used for the site.
+
+**Chosen (owner, 2026-11-05, run file m2.8 §2 option 2):** the harness makes the site's own certificate
+(`testenv.laragon.make_site_certificate`: self-signed, `CA:FALSE`, naming exactly the site, serverAuth). The last tests
+here pin that shape through the harness's own `tls_context` and `make_transport` (every socket to 127.0.0.1).
 """
 
 import ssl
@@ -20,8 +24,10 @@ from pathlib import Path
 import httpx
 import pytest
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import ExtendedKeyUsageOID
 
+from testenv import laragon
 from tests.tls_support import (
     LARAGON_DNS_NAMES,
     SITE_NAME,
@@ -177,3 +183,76 @@ def test_v57_recorded_openssl_wildcards_need_two_labels_after_the_star(
             assert response.status_code == 200
         else:
             assert refusal(context_from(certificate, tmp_path), server.port, name).verify_code == HOSTNAME_MISMATCH
+
+
+# ---------- the chosen shape: the harness's own site certificate (owner, 2026-11-05) ----------
+
+
+@pytest.fixture(scope="module")
+def harness_made() -> laragon.SiteCertificate:
+    return laragon.make_site_certificate(SITE_NAME)
+
+
+def harness_fetch(cert_path: Path, port: int, name: str = SITE_NAME) -> httpx.Response:
+    """Through the harness's own context and transport: the request names `name` and the socket goes to 127.0.0.1."""
+    transport = laragon.make_transport(laragon.tls_context(cert_path))
+    with httpx.Client(transport=transport, trust_env=False, follow_redirects=False) as client:
+        return client.get(f"https://{name}:{port}/")
+
+
+def test_v57_the_harness_certificate_names_only_the_site(harness_made: laragon.SiteCertificate) -> None:
+    cert = x509.load_pem_x509_certificate(harness_made.cert_pem)
+    assert cert.subject == cert.issuer
+    constraints = cert.extensions.get_extension_for_class(x509.BasicConstraints)
+    assert constraints.value.ca is False and constraints.critical
+    usage = cert.extensions.get_extension_for_class(x509.KeyUsage).value
+    assert usage.digital_signature and usage.key_encipherment and not usage.key_cert_sign
+    assert cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value == x509.ExtendedKeyUsage(
+        [ExtendedKeyUsageOID.SERVER_AUTH]
+    )
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert list(names) == [x509.DNSName(SITE_NAME)]  # no wildcard, no IP address, nothing else
+    assert harness_made.not_after == cert.not_valid_after_utc
+    assert harness_made.fingerprint == cert.fingerprint(hashes.SHA256()).hex(":").upper()
+
+
+def test_v57_the_harness_certificate_is_accepted_for_the_site(
+    harness_made: laragon.SiteCertificate, tmp_path: Path
+) -> None:
+    trusted = tmp_path / "site.crt"
+    trusted.write_bytes(harness_made.cert_pem)
+    with tls_server((harness_made.cert_pem, harness_made.key_pem), tmp_path / "server") as server:
+        response = harness_fetch(trusted, server.port)
+        assert server.record.sni_names == [SITE_NAME]
+        assert server.record.hosts == [f"{SITE_NAME}:{server.port}"]
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("name", ["other.test", f"deep.{SITE_NAME}"])
+def test_v57_the_harness_certificate_is_refused_for_another_name(
+    harness_made: laragon.SiteCertificate, tmp_path: Path, name: str
+) -> None:
+    trusted = tmp_path / "site.crt"
+    trusted.write_bytes(harness_made.cert_pem)
+    with (
+        tls_server((harness_made.cert_pem, harness_made.key_pem), tmp_path / "server") as server,
+        pytest.raises(httpx.ConnectError) as raised,
+    ):
+        harness_fetch(trusted, server.port, name)
+    error = verification_error(raised.value)
+    assert error is not None and error.verify_code == HOSTNAME_MISMATCH
+
+
+def test_v57_another_harness_certificate_for_the_site_is_refused(
+    harness_made: laragon.SiteCertificate, tmp_path: Path
+) -> None:
+    """A second `cert --force` makes a new key: the old file no longer trusts the site (check needs the new one)."""
+    trusted = tmp_path / "site.crt"
+    trusted.write_bytes(harness_made.cert_pem)
+    newer = laragon.make_site_certificate(SITE_NAME)
+    with tls_server((newer.cert_pem, newer.key_pem), tmp_path / "server") as server:
+        with pytest.raises(httpx.ConnectError) as raised:
+            harness_fetch(trusted, server.port)
+        assert server.record.requests == []
+    error = verification_error(raised.value)
+    assert error is not None and error.verify_code == SELF_SIGNED_LEAF
