@@ -62,7 +62,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 | T2 | **Context7** | MCP | Current library docs (§2) | Read-only public docs |
 | T3 | **aws-sdk-python-usage** | Skill | boto3 patterns | Local code |
 | T4 | **aws-iam** | Skill | The two least-privilege policies ([06 §5](06-security.md)) | Writes no AWS settings |
-| T5 | **AWS MCP** (`run_script`) | MCP | Read-only bucket checks | Each use with the owner's go-ahead; never writes |
+| T5 | **AWS MCP** (`run_script`) | MCP | Read-only bucket checks | Each use with the owner's go-ahead; never writes. **Can't start on this PC yet** (needs Python `<3.15`); rechecked at calibration prep ([11](11-decisions.md), 2026-11-04) |
 | T6 | **Built-in browser** pane | Built in | Screenshots and visual checks (owner declined headless Chrome) | Local pages only |
 | T7 | **frontend-design**, **dataviz**, **artifact-design** | Skills | Design work, charts, owner-facing pages | No external access |
 | T8 | **code-review**, **security-review**, **simplify**, **run** | Skills | Reviews, clean-up, running the app | Local only |
