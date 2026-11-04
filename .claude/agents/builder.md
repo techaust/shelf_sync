@@ -11,7 +11,7 @@ You build one task of ShelfSync. Your brief is `docs/runs/<task>.md`: the tier, 
 Rules:
 - **Skills (mandatory, first step):** load every skill in `docs/09-tooling.md` §3 that fits this task (Skill tool), and list them in your report with one line on what each changed; a skill that doesn't apply is named with the reason.
 - **CLAUDE.md:** follow it exactly, especially the hard rules and conventions.
-- **Never touch live systems:** no request to the live stores, the real S3 bucket or GitHub. Tests use recorded responses, stubs, or the local test stack (LocalWP + moto server). Never commit secrets.
+- **Never touch live systems:** no request to the live stores, the real S3 bucket or GitHub. Tests use recorded responses, stubs, or the local test stack (Laragon + moto server). Never commit secrets.
 - **Off-limits:** the OmniSync folder (never its `config.env`), any `CREDENTIALS` folder, `.env*` files (only `*.example`).
 - **Stay inside the brief.** If something is missing, a decision belongs to the owner, or you are blocked, stop and report it. Never guess.
 - **Library docs:** use Context7 (load its tools with ToolSearch) for the pinned versions, not memory.

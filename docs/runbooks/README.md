@@ -17,7 +17,7 @@ Step-by-step procedures written for the owner: click by click, one command per b
 | [fresh-start.md](fresh-start.md) | Carry on after formatting the PC: what you do (about 10 minutes), what Claude sets up, and what doesn't come back |
 | [cloud-sessions.md](cloud-sessions.md) | Set up the ShelfSync cloud environment once; start a cloud session; what may and may not run there |
 | [restore-database.md](restore-database.md) | Restore the database from a daily, pre-migration or pre-rollback backup with the restore command |
-| [test-stack.md](test-stack.md) | Start and stop the test stack's moto S3 server, point ShelfSync's Settings › Storage at it and run the Storage Test; LocalWP and the S3 extension join it in m2.8 |
+| [test-stack.md](test-stack.md) | Start and stop the test stack's moto S3 server, point ShelfSync's Settings › Storage at it and run the Storage Test; Laragon and the S3 extension join it in m2.8 |
 
 ## What the Settings pages do (M2)
 Wording as on screen ([13](../13-content.md)). Every key is kept in Windows Credential Manager and is never shown again or sent to the page.

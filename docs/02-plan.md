@@ -145,7 +145,7 @@ Phase 3 (brand and screens, about 4 days), then M1–M7, **about 24 build days**
 ## 11. Running cost
 | Item | Cost |
 |---|---|
-| Python, FastAPI, React, SQLite, NSIS, LocalWP, moto, Playwright, Windows Defender | $0 |
+| Python, FastAPI, React, SQLite, NSIS, Laragon (free tier), moto, Playwright, Windows Defender | $0 |
 | GitHub repo (public during development: Actions on standard runners free and unlimited, branch protection free; if made private again: 2,000 min/month, Windows runners count 2×, no branch protection), Releases, Dependabot | $0 |
 | Code-signing certificate | not used (optional; would remove the SmartScreen/Smart App Control warnings) |
 | AWS for calibration and teaching | $0 for data (inside the free 100 GB/month); **under one US cent** in request charges, possibly covered by the free tier |

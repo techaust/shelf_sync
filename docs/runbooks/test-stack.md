@@ -1,6 +1,6 @@
-# The test stack: moto S3 server, and LocalWP (later)
+# The test stack: moto S3 server, and Laragon (later)
 
-The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): a LocalWP site with WooCommerce and your Amazon S3 Storage extension, whose "User defined" endpoint points at **moto server**, a local stand-in for Amazon S3 ($0). This page covers the moto half today; the LocalWP half is added in m2.8 once its open question is settled (last section).
+The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): a Laragon site with WooCommerce and your Amazon S3 Storage extension, whose "User defined" endpoint points at **moto server**, a local stand-in for Amazon S3 ($0). This page covers the moto half today; the Laragon half is added in m2.8 (last section).
 
 Nothing here touches your real bucket, AWS account or stores.
 
@@ -78,8 +78,8 @@ If it says "couldn't reach the storage service", the server isn't running or the
 
 The same check runs automatically in the tests (`tests/test_testenv_moto_s3.py`, the Storage Test through ShelfSync's own S3 client against this script's server).
 
-## 3. LocalWP and the S3 extension (the owner's, m2.8)
+## 3. Laragon and the S3 extension (the owner's, m2.8)
 
-To be written once the LocalWP site exists. What it will cover: making the LocalWP site with WooCommerce, activating your Amazon S3 Storage extension on it (your licence allows this, [11](../11-decisions.md) 2026-10-25), setting its "User defined" provider to the endpoint, region, bucket and made-up keys above (04-A V6), and the one script that adds sample products.
+To be written in m2.8. What it will cover: making the Laragon site (`https://<site>.test`) with WordPress and WooCommerce, activating your Amazon S3 Storage extension on it (your licence allows it on the local test site, [11](../11-decisions.md) 2026-10-25; that row named LocalWP, so it's confirmed for Laragon before m2.8 activates it), setting its "User defined" provider to the endpoint, region, bucket and made-up keys above (04-A V6), and the one script that adds sample products.
 
-**Open question, not decided here** ([runs/m2.0-plan.md](../runs/m2.0-plan.md) §3 Q3, test-stack transport): WooCommerce accepts Basic auth (how ShelfSync signs in to a store) only over HTTPS (still to verify), and LocalWP sites are `http://*.local`. The recommendation there is LocalWP's own HTTPS, with the test harness given that site's certificate file (no app setting); the alternatives are OAuth 1.0a for loopback only, or the `truststore` package (a new package, so your yes first). Your choice settles this section.
+**Decided 2026-11-05** ([11](../11-decisions.md), [runs/m2.0-plan.md](../runs/m2.0-plan.md) §3 Q3): the test site runs in **Laragon** (already installed at `C:\laragon`; its free tier is for non-commercial use only, and you made the call on its terms). ShelfSync signs in with Basic auth over Laragon's own HTTPS, and only the test harness is given Laragon's certificate file (`C:\laragon\etc\ssl\laragon.crt`): the app gets no new setting or package. Whether Python 3.15 accepts that certificate for a `.test` address is checked first in m2.8 (04-A V57).

@@ -119,7 +119,7 @@ shelf_sync/
 ├─ frontend/        React + TypeScript UI (src/screens, src/components, src/api)
 ├─ brand/           logo geometry (source), generated assets, tokens.json
 ├─ packaging/       NSIS script, embedded-Python build script, ._pth template
-├─ testenv/         one-command LocalWP + moto test stack (scripts, fixtures)
+├─ testenv/         one-command Laragon + moto test stack (scripts, fixtures)
 ├─ tests/           unit, property, fuzz, contract, integration, calibration, performance, e2e
 ├─ tools/           research scripts, heavy.sh, watch.sh, model-guard.mjs, model-audit.mjs, release signing
 ├─ docs/            this documentation
@@ -239,7 +239,7 @@ stateDiagram-v2
 | Environment | Stores | S3 | Used for |
 |---|---|---|---|
 | Unit / contract | Recorded responses | Stubbed (botocore Stubber) | Every commit in CI |
-| **Local test stack** (`testenv/`) | LocalWP WordPress + WooCommerce + the owner's **Amazon S3 Storage** extension set to a "User defined" endpoint (V6) | **moto server** (V7, V8) | Every store write is proven here first (M2 setup, M5 writes). If the extension can't use moto, real downloads are proven only in the canary, and the tests prove the stored shortcode |
+| **Local test stack** (`testenv/`) | Laragon WordPress + WooCommerce (`https://<site>.test`, its certificate given to the test harness only, 04-A V57) + the owner's **Amazon S3 Storage** extension set to a "User defined" endpoint (V6) | **moto server** (V7, V8) | Every store write is proven here first (M2 setup, M5 writes). If the extension can't use moto, real downloads are proven only in the canary, and the tests prove the stored shortcode |
 | Calibration | Live stores, **read-only** | Live bucket, **range reads with the read-only key** | M4, with the owner's go-ahead |
 | Live canary | Both live stores, **one product** the owner picks | Live bucket | M6, each step with the owner's yes |
 | Live | Both stores | Live bucket | After M6 |
