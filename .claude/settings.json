@@ -23,16 +23,25 @@
       "Read(**/.env.development)",
       "mcp__supabase",
       "mcp__upstash",
+      "mcp__plugin_supabase_supabase",
+      "mcp__plugin_upstash_upstash",
       "mcp__plugin_cloudflare_cloudflare",
       "mcp__plugin_sentry_sentry",
       "mcp__plugin_playwright_playwright",
       "mcp__claude-in-chrome",
-      "mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c"
+      "mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c",
+      "mcp__scheduled-tasks",
+      "mcp__mcp-registry",
+      "mcp__visualize"
     ]
   },
+  "disableClaudeAiConnectors": true,
   "enabledPlugins": {
     "cloudflare@cloudflare": false,
-    "playwright@claude-plugins-official": false
+    "playwright@claude-plugins-official": false,
+    "sentry@inline": false,
+    "supabase@inline": false,
+    "upstash@inline": false
   },
   "skillOverrides": {
     "claude-api": "off",
