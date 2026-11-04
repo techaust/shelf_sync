@@ -47,7 +47,7 @@ Each case in [01 §3](01-audit.md) has a fixture ZIP built from its **header fil
 - A manual NVDA pass (free screen reader) on Review and Upload before M7.
 
 ## 5. The local test stack and the live canary
-- **Test stack ($0):** a **LocalWP** site with WooCommerce and the owner's **Amazon S3 Storage** extension (they already have it for the stores), set to a "User defined" endpoint pointing at **moto server** (04-A V6–V8). One script sets it up with sample products shaped like real ones (no customer data). Every write path is proven here first. If the extension can't use moto, the tests prove the stored shortcode and slot, and real downloads are proven in the canary.
+- **Test stack ($0):** a **Laragon** site with WooCommerce (`https://<site>.test`, Basic auth over Laragon's HTTPS, its certificate given to the test harness only) and the owner's **Amazon S3 Storage** extension (they already have it for the stores), set to a "User defined" endpoint pointing at **moto server** (04-A V6–V8). One script sets it up with sample products shaped like real ones (no customer data). Every write path is proven here first. If the extension can't use moto, the tests prove the stored shortcode and slot, and real downloads are proven in the canary.
 - **Live canary (M6, each step with the owner's yes):**
   1. the owner picks one low-traffic product
   2. apply on both stores, then read back both

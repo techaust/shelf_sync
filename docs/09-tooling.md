@@ -18,7 +18,7 @@
 | Node / npm | 24.22.1 / 11.19.1 | For the UI and the hook scripts | OK |
 | git / GitHub CLI | 2.56.0 / 2.103.3, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; branch pushes and PR merges are automatic (owner, 2026-10-29), repo settings, tags and releases need the owner's yes |
 | NSIS | 3.13, in the shared `Applications\tools\nsis-3.13` folder | Release builds (CI, and the local release build before a push) | OK |
-| LocalWP | not checked | Test stack (M2) | Installed at M2 with the owner's yes |
+| Laragon | 8.8.0 at `C:\laragon` (Apache 2.4.69, PHP 8.3.36, MySQL 8.4.3), checked 2026-11-05 | Test stack (M2; replaces LocalWP) | Installed by the owner; free tier, non-commercial use only by its EULA: the owner's call on its terms ([11](11-decisions.md) 2026-11-05) |
 | moto | `moto[s3]` 5.2.4 in the dev dependencies | Tests and the test stack (M2) | OK |
 | Smart App Control state | **Off** (owner, 2026-10-25) | Re-recorded on the clean account at M1b | Owner checks (runbook `clean-account.md`); Claude never changes it |
 
@@ -30,6 +30,7 @@
   - **claude.ai connectors** (Claude Docs): `disableClaudeAiConnectors: true` in `.claude/settings.json`.
   - **User-level and app MCP servers** (`supabase`, `upstash`, the duplicate unpinned `aws-mcp`, `scheduled-tasks`, and the plugin servers again as a second guard): `disabledMcpServers` in this project's entry of `~/.claude.json`, the list `/mcp`'s toggle writes. It lives on this PC only, so [fresh-start.md](runbooks/fresh-start.md) re-applies it.
   - **Tools, as a last guard:** `permissions.deny` for every one of those servers, plus Claude in Chrome, the MCP registry and the inline visualizer.
+  - **Seen 2026-11-05, in a new session after a full restart of the Claude app:** Sentry, Supabase, Upstash, Cloudflare and Playwright are hidden. The **Claude Docs** connector and **`scheduled-tasks`** still show: the desktop app adds them itself, out of reach of `disableClaudeAiConnectors` and `disabledMcpServers`, so the deny rules are what stops them (their tools can't run). Nothing more can be switched off for them here ([11](11-decisions.md) 2026-11-05).
   - **Skills:** `skillOverrides` hides standalone skills only (`claude-api`); it can't hide one skill inside a plugin. So aws-core's other skills and the anthropic-skills bundle's document skills still show: the owner kept both plugins on (2026-11-04) for `aws-sdk-python-usage`, `aws-iam`, the AWS MCP and `pdf`. The older `skillOverrides` entries naming plugin skills have no effect.
 - **Context7 coverage** (checked): WooCommerce REST API (`/woocommerce/woocommerce-rest-api-docs`), pystray (`/moses-palmer/pystray`) are indexed; **NSIS is not** (its official docs at nsis.sourceforge.io are used instead).
 - **Not installed (optional, free):** Design (Anthropic), A11y Enforcer (community).
