@@ -230,7 +230,7 @@ Responsive: designed for 1280–1920 px; usable at 1024 px (nav collapses to ico
 - **Done (2026-10-26, approved):**
   - The mockup is in `docs/05-design-system-appendix/mockup/` ([runs/p3.4-mockups.md](runs/p3.4-mockups.md)).
   - The 16 screenshots plus 13 extras, PNG at 2× and full page, are in `docs/05-design-system-appendix/screenshots/`, made with the in-pane capture helper ([runs/p3.5-screenshots.md](runs/p3.5-screenshots.md)).
-  - The clickable artifact is https://claude.ai/artifact/Gzzm2Mztikj8xqL49UoiRj. On a phone it shows the desktop layout shrunk to fit.
+  - The clickable artifact is https://claude.ai/artifact/UER2z6uQage6XFJuHtYCys. On a phone it shows the desktop layout shrunk to fit.
 
 ## 9. What the owner approves in this document
 1. The Patina tokens unchanged, plus the three app-bar tokens (§2.2).
