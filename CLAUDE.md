@@ -75,8 +75,8 @@ App (from the repo root; heavy ones through `bash tools/heavy.sh --log <name> â€
 Other tools:
 - `node tools/model-audit.mjs [YYYY-MM-DD]`: every run since that date (default today), with models, effort and skills; it flags anything outside the plan.
 - Brand (in `brand/`, through `bash tools/heavy.sh --log <name> â€¦`): `npm run build` rebuilds every logo, icon and image; `npm test` (vitest) also fails on any hand edit.
-- Plan page: `python -I docs/02-plan-appendix/build_plan_page.py <out.html>`, then publish to https://claude.ai/artifact/9CYLJk6kRPncuJ3Lmunn5f. **Republish it after every change to 02.**
-- Mockup artifact: `python -I docs/05-design-system-appendix/screenshots/capture/build_artifact.py docs/05-design-system-appendix/mockup <out.html>`, then publish to https://claude.ai/artifact/Gzzm2Mztikj8xqL49UoiRj. It's a desktop layout that shrinks to fit on phones.
+- Plan page: `python -I docs/02-plan-appendix/build_plan_page.py <out.html>`, then publish to https://claude.ai/artifact/PznaCjWtR9afUfV1ho4vqN. **Republish it after every change to 02.**
+- Mockup artifact: `python -I docs/05-design-system-appendix/screenshots/capture/build_artifact.py docs/05-design-system-appendix/mockup <out.html>`, then publish to https://claude.ai/artifact/UER2z6uQage6XFJuHtYCys. It's a desktop layout that shrinks to fit on phones.
 
 ## Conventions
 - **Docs:** Markdown in `docs/`; HTML mockups, images and the small scripts that build them only in `docs/NN-name-appendix/` folders.

@@ -3,7 +3,7 @@
 - [Auto-use tools](auto-use-tools.md) — load fitting skills/tools per docs/09-tooling.md; turn off unneeded ones per project only
 - [ShelfSync brand](shelfsync-brand.md) — TecHaust product on Patina; S-cut logo approved (Phase 3 done 2026-10-26); store colours as small identifiers
 - [Audit to 10/10](audit-to-ten.md) — score every file/aspect, fix all, loop reviewer re-checks until approve
-- [Published pages](published-pages.md) — plan and mockup artifact links (Team org; old org unreachable); owner checks pages on a phone; plan page republished after every 02 change
+- [Published pages](published-pages.md) — plan and mockup artifact links (new links 2026-11-04 after the fresh start); owner checks pages on a phone; plan page republished after every 02 change
 - [Claude app MSIX virtualization](claude-app-msix-virtualization.md) — apps started from Claude write AppData\Local into a private package copy; owner starts ShelfSync outside Claude for real-Windows checks
 - [uv: no Python downloads](uv-no-python-downloads.md) — uv auto-downloads interpreters; use UV_PYTHON_DOWNLOADS=never; check wheels on PyPI's JSON API
 - [GitHub repo](github-repo.md) — techaust/shelf_sync public during development (account billing blocks private Actions); main protected; pushes and PR merges automatic (auto-merge on green) since 2026-10-29
