@@ -195,7 +195,7 @@ def harness_made() -> laragon.SiteCertificate:
 
 def harness_fetch(cert_path: Path, port: int, name: str = SITE_NAME) -> httpx.Response:
     """Through the harness's own context and transport: the request names `name` and the socket goes to 127.0.0.1."""
-    transport = laragon.make_transport(laragon.tls_context(cert_path))
+    transport = laragon.make_transport(laragon.tls_context(cert_path), name)
     with httpx.Client(transport=transport, trust_env=False, follow_redirects=False) as client:
         return client.get(f"https://{name}:{port}/")
 

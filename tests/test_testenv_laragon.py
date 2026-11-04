@@ -1,13 +1,13 @@
 """`testenv/laragon.py`, the Laragon half of the test stack (m2.8): the site guard, the TLS context, `cert`, `keys`
 and `check`. No Laragon and no network beyond loopback: `check` runs against a small fake WooCommerce over HTTPS on
 127.0.0.1 with a certificate the harness made (`tests/tls_support.py`), through the harness's own transport.
-Credential Manager is a `MemorySecretStore` here; the real one only under `-m windows`."""
+Credential Manager is a `MemorySecretStore` here; the real one only under `-m windows`. `seed` is in
+`test_testenv_seed.py`."""
 
-import base64
 import datetime
 import getpass
-import json
 import logging
+import os
 import ssl
 import subprocess
 import sys
@@ -25,15 +25,25 @@ from cryptography.hazmat.primitives import serialization
 from shelfsync.apply.woocommerce import ReadOutcome
 from shelfsync.platform import secrets as platform_secrets
 from shelfsync.platform.secrets import MemorySecretStore, SecretStoreError
-from testenv import laragon
+from testenv import laragon, moto_s3
+from tests.laragon_support import (
+    ALL_VALUES,
+    RO_KEY,
+    RO_SECRET,
+    RW_KEY,
+    RW_SECRET,
+    SITE,
+    basic,
+    json_answer,
+    site,
+    store_with_keys,
+    write_site_cert,
+)
 from tests.tls_support import RecordedRequest, RunningServer, make_certificate, tls_server
 
-SITE = "shelfsync-test.test"
-RO_KEY = "ck_" + "r0Read0nly" * 3
-RO_SECRET = "cs_" + "r0S3cretRO" * 3
-RW_KEY = "ck_" + "rWr1teKey0" * 3
-RW_SECRET = "cs_" + "rWS3cretRW" * 3
-ALL_VALUES = (RO_KEY, RO_SECRET, RW_KEY, RW_SECRET)
+DEFAULT = site()
+RO, RW = laragon.pairs_for(DEFAULT)
+ENTRIES = (RO.key_entry, RO.secret_entry, RW.key_entry, RW.secret_entry)
 
 
 # ---------- the site guard ----------
@@ -47,17 +57,17 @@ ALL_VALUES = (RO_KEY, RO_SECRET, RW_KEY, RW_SECRET)
         ("https://SHELFSYNC-TEST.TEST", "https://shelfsync-test.test", 443),
         ("https://shelfsync-test.test:443", "https://shelfsync-test.test", 443),
         ("https://shelfsync-test.test:8443", "https://shelfsync-test.test:8443", 8443),
+        ("https://shelfsync-test.test:65535", "https://shelfsync-test.test:65535", 65535),
         ("https://shop.other-site.test", "https://shop.other-site.test", 443),
     ],
 )
 def test_a_test_site_is_accepted(value: str, url: str, port: int) -> None:
-    site = laragon.parse_site(value)
-    assert (site.url, site.port) == (url, port)
+    parsed = laragon.parse_site(value)
+    assert (parsed.url, parsed.port) == (url, port)
 
 
 def test_the_default_site_and_its_laragon_project() -> None:
-    site = laragon.parse_site(laragon.DEFAULT_SITE)
-    assert (site.host, site.project) == (SITE, "shelfsync-test")
+    assert (DEFAULT.host, DEFAULT.project) == (SITE, "shelfsync-test")
 
 
 REFUSED_SITES = [
@@ -81,6 +91,10 @@ REFUSED_SITES = [
     "https://shelfsync-test.test/?a=1",
     "https://shelfsync-test.test/#top",
     "https://shelfsync-test.test@store-a.example",
+    "https://shelfsync-test.test:0",  # httpx lets port 0 through
+    "https://shelfsync-test.test:65536",  # and ports past 65535
+    "https://xn--bcher-kva.test",  # httpx decodes an IDNA name (bücher.test): refused
+    "https://bücher.test",
     "",
 ]
 
@@ -91,27 +105,21 @@ def test_anything_but_https_on_a_test_name_is_refused(value: str) -> None:
         laragon.parse_site(value)
 
 
+@pytest.mark.parametrize("command", ["check", "keys", "seed", "cert"])
 @pytest.mark.parametrize("value", ["https://store-a.example", "http://shelfsync-test.test", "https://127.0.0.1"])
-def test_check_refuses_the_site_before_anything_else(
-    value: str, capsys: pytest.CaptureFixture[str], tmp_path: Path
+def test_every_command_refuses_the_site_before_anything_else(
+    command: str, value: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def no_secrets() -> MemorySecretStore:
         raise AssertionError("the secrets were reached")
 
     with pytest.raises(SystemExit) as raised:
-        laragon.main(["check", "--site", value, "--cert", str(tmp_path / "x.crt")], secrets_factory=no_secrets)
+        laragon.main([command, "--site", value], secrets_factory=no_secrets)
     assert raised.value.code == 2
     assert "never talks to a real store" in capsys.readouterr().err
 
 
-# ---------- the TLS context ----------
-
-
-def write_site_cert(folder: Path, made: laragon.SiteCertificate) -> Path:
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{SITE}.crt"
-    path.write_bytes(made.cert_pem)
-    return path
+# ---------- the TLS context and the transport ----------
 
 
 @pytest.fixture(scope="module")
@@ -162,19 +170,54 @@ def test_a_python_whose_defaults_arent_strict_is_refused(
         laragon.tls_context(write_site_cert(tmp_path, site_cert))
 
 
+class Inner(httpx.BaseTransport):
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, int | None, object]] = []
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.seen.append((request.url.host, request.url.port, request.extensions.get("sni_hostname")))
+        return httpx.Response(204)
+
+
+def test_the_transport_sends_every_request_to_loopback() -> None:
+    inner = Inner()
+    transport = laragon.LoopbackOnlyTransport(inner, "anything-at-all.test")
+    with httpx.Client(transport=transport) as client:
+        request = client.build_request("GET", "https://anything-at-all.test:8443/x")
+        transport.handle_request(request)
+        assert request.headers["Host"] == "anything-at-all.test:8443"
+    assert inner.seen == [("127.0.0.1", 8443, "anything-at-all.test")]
+
+
+def test_a_transport_serves_one_site_only() -> None:
+    """httpcore pools connections by 127.0.0.1 and the port and sets SNI only on a new one, so a shared transport
+    could carry a second site's request over the first site's connection: it is refused instead."""
+    inner = Inner()
+    transport = laragon.LoopbackOnlyTransport(inner, SITE)
+    with httpx.Client(transport=transport) as client, pytest.raises(laragon.HarnessError, match="needs its own"):
+        client.get("https://other-site.test/x")
+    assert inner.seen == []
+
+
+def test_make_transport_gives_a_new_transport_each_time(site_cert: laragon.SiteCertificate, tmp_path: Path) -> None:
+    context = laragon.tls_context(write_site_cert(tmp_path, site_cert))
+    assert laragon.make_transport(context, SITE) is not laragon.make_transport(context, SITE)
+
+
 # ---------- cert ----------
 
 
 @dataclass
 class Restrict:
-    """A stand-in for `restrict_to_current_user` that records what it was given, and the file's size at the time."""
+    """A stand-in for `restrict_to_current_user`: records each path, whether it was a folder, and a file's size."""
 
-    calls: list[tuple[Path, int]] = field(default_factory=list)
-    fail: bool = False
+    calls: list[tuple[Path, str]] = field(default_factory=list)
+    fail_on_file: bool = False
 
     def __call__(self, path: Path) -> None:
-        self.calls.append((path, path.stat().st_size))
-        if self.fail:
+        kind = "folder" if path.is_dir() else f"file of {path.stat().st_size} bytes"
+        self.calls.append((path, kind))
+        if self.fail_on_file and not path.is_dir():
             raise laragon.HarnessError("Couldn't limit it (test).")
 
 
@@ -192,14 +235,20 @@ def run_cert(tmp_path: Path, laragon_root: Path, restrict: Restrict, *extra: str
     )
 
 
+def sites_enabled(root: Path) -> Path:
+    return root / "etc" / "apache2" / "sites-enabled"
+
+
 def test_cert_writes_the_pair_and_the_apache_site(
     tmp_path: Path, fake_laragon: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     restrict = Restrict()
     assert run_cert(tmp_path, fake_laragon, restrict) == 0
-    crt, key = tmp_path / "tls" / f"{SITE}.crt", tmp_path / "tls" / f"{SITE}.key"
-    vhost = fake_laragon / "etc" / "apache2" / "sites-enabled" / f"00-{SITE}.conf"
-    assert restrict.calls == [(key, 0)]  # limited while still empty, before the key was written
+    folder = tmp_path / "tls"
+    crt, key = folder / f"{SITE}.crt", folder / f"{SITE}.key"
+    vhost = sites_enabled(fake_laragon) / f"00-{SITE}.conf"
+    # the folder is limited first, then the key while still empty (under its temporary name)
+    assert restrict.calls == [(folder, "folder"), (folder / f"{SITE}.key.new", "file of 0 bytes")]
     cert = x509.load_pem_x509_certificate(crt.read_bytes())
     private = serialization.load_pem_private_key(key.read_bytes(), password=None)
     assert cert.public_key() == private.public_key()
@@ -213,13 +262,19 @@ def test_cert_writes_the_pair_and_the_apache_site(
     assert f'SSLCertificateFile "{crt.as_posix()}"' in text
     assert f'SSLCertificateKeyFile "{key.as_posix()}"' in text
     assert "ServerAlias" not in text
+    assert sorted(path.name for path in folder.iterdir()) == [f"{SITE}.crt", f"{SITE}.key"]  # no .new left
     out = capsys.readouterr().out
     assert f"Made a certificate for {SITE}" in out and str(key) in out
     assert "PRIVATE KEY" not in out
 
 
+def test_the_key_never_shows_in_a_repr(site_cert: laragon.SiteCertificate) -> None:
+    assert "PRIVATE KEY" not in repr(site_cert)
+    assert "BEGIN CERTIFICATE" in repr(site_cert)
+
+
 def test_the_apache_file_is_read_before_laragons_own() -> None:
-    files = laragon.cert_files(laragon.parse_site(laragon.DEFAULT_SITE), Path("tls"), Path("laragon"))
+    files = laragon.cert_files(DEFAULT, Path("tls"), Path("laragon"))
     assert sorted([files.vhost.name, f"auto.{SITE}.conf", "00-default.conf"]) == [
         "00-default.conf",
         files.vhost.name,
@@ -229,8 +284,7 @@ def test_the_apache_file_is_read_before_laragons_own() -> None:
 
 def test_cert_uses_the_sites_own_port(tmp_path: Path, fake_laragon: Path) -> None:
     assert run_cert(tmp_path, fake_laragon, Restrict(), "--site", f"https://{SITE}:8443") == 0
-    vhost = fake_laragon / "etc" / "apache2" / "sites-enabled" / f"00-{SITE}.conf"
-    assert "<VirtualHost *:8443>" in vhost.read_text(encoding="utf-8")
+    assert "<VirtualHost *:8443>" in (sites_enabled(fake_laragon) / f"00-{SITE}.conf").read_text(encoding="utf-8")
 
 
 def test_cert_never_replaces_without_force(
@@ -245,28 +299,68 @@ def test_cert_never_replaces_without_force(
     assert (tmp_path / "tls" / f"{SITE}.crt").read_bytes() != first
 
 
+def test_a_failed_force_keeps_the_old_set(
+    tmp_path: Path, fake_laragon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With --force the new files are written under temporary names and swapped in only when all three are there."""
+    assert run_cert(tmp_path, fake_laragon, Restrict()) == 0
+    folder = tmp_path / "tls"
+    before = {path.name: path.read_bytes() for path in folder.iterdir()}
+    vhost_before = (sites_enabled(fake_laragon) / f"00-{SITE}.conf").read_bytes()
+    assert run_cert(tmp_path, fake_laragon, Restrict(fail_on_file=True), "--force") == 1
+    assert {path.name: path.read_bytes() for path in folder.iterdir()} == before
+    assert (sites_enabled(fake_laragon) / f"00-{SITE}.conf").read_bytes() == vhost_before
+    assert "Couldn't limit it" in capsys.readouterr().err
+
+
+def test_a_file_system_failure_is_reported_not_raised(
+    tmp_path: Path, fake_laragon: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def no_replace(source: object, target: object) -> None:
+        raise PermissionError(13, "Access is denied", str(target))
+
+    monkeypatch.setattr(os, "replace", no_replace)
+    assert run_cert(tmp_path, fake_laragon, Restrict()) == 1
+    assert "Couldn't write the certificate files (Access is denied)" in capsys.readouterr().err
+    assert list((tmp_path / "tls").iterdir()) == []  # the temporary files are gone
+    assert list(sites_enabled(fake_laragon).iterdir()) == []
+
+
 def test_cert_needs_laragons_folder_and_the_site(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run_cert(tmp_path, tmp_path / "nowhere", Restrict()) == 1
     assert "doesn't look like Laragon's folder" in capsys.readouterr().err
     root = tmp_path / "laragon"
-    (root / "etc" / "apache2" / "sites-enabled").mkdir(parents=True)
+    sites_enabled(root).mkdir(parents=True)
     assert run_cert(tmp_path, root, Restrict()) == 1
     assert "Make the site in Laragon first" in capsys.readouterr().err
     assert not (tmp_path / "tls").exists()
 
 
+def test_cert_wont_limit_a_folder_holding_other_files(
+    tmp_path: Path, fake_laragon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "tls").mkdir()
+    (tmp_path / "tls" / "notes.txt").write_text("mine", encoding="utf-8")
+    restrict = Restrict()
+    assert run_cert(tmp_path, fake_laragon, restrict) == 1
+    assert "holds other files (notes.txt)" in capsys.readouterr().err
+    assert restrict.calls == []
+
+
 def test_a_key_that_cant_be_limited_is_never_left_behind(tmp_path: Path, fake_laragon: Path) -> None:
-    assert run_cert(tmp_path, fake_laragon, Restrict(fail=True)) == 1
+    assert run_cert(tmp_path, fake_laragon, Restrict(fail_on_file=True)) == 1
     assert list((tmp_path / "tls").iterdir()) == []
-    assert list((fake_laragon / "etc" / "apache2" / "sites-enabled").iterdir()) == []
+    assert list(sites_enabled(fake_laragon).iterdir()) == []
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the 0600 mode is the non-Windows path")
-def test_off_windows_the_key_is_mode_0600(tmp_path: Path) -> None:
+@pytest.mark.skipif(sys.platform == "win32", reason="the 0600 and 0700 modes are the non-Windows path")
+def test_off_windows_the_key_and_folder_are_owner_only(tmp_path: Path) -> None:
     path = tmp_path / "k"
     path.write_bytes(b"")
     laragon.restrict_to_current_user(path)
     assert path.stat().st_mode & 0o777 == 0o600
+    laragon.restrict_to_current_user(tmp_path)
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
 
 
 # ---------- keys ----------
@@ -283,29 +377,55 @@ def prompts(*answers: str) -> tuple[list[str], Callable[[str], str]]:
     return asked, prompt
 
 
-def run_keys(store: MemorySecretStore, *answers: str, remove: bool = False) -> int:
+def run_keys(store: MemorySecretStore, *answers: str, remove: bool = False, host: str = SITE) -> int:
     _, prompt = prompts(*answers)
-    return laragon.main(["keys", *(["--remove"] if remove else [])], secrets_factory=lambda: store, prompt=prompt)
+    argv = ["keys", "--site", f"https://{host}", *(["--remove"] if remove else [])]
+    return laragon.main(argv, secrets_factory=lambda: store, prompt=prompt)
 
 
-def test_keys_saves_both_pairs_under_their_own_entries(capsys: pytest.CaptureFixture[str]) -> None:
+def test_keys_saves_both_pairs_under_the_sites_own_entries(capsys: pytest.CaptureFixture[str]) -> None:
     store = MemorySecretStore()
     assert run_keys(store, RO_KEY, RO_SECRET, RW_KEY, RW_SECRET) == 0
-    assert laragon.read_pair(store, laragon.READ_ONLY) == (RO_KEY, RO_SECRET)
-    assert laragon.read_pair(store, laragon.READ_WRITE) == (RW_KEY, RW_SECRET)
+    assert ENTRIES == (
+        "woo-shelfsync-test.test-ro-key",
+        "woo-shelfsync-test.test-ro-secret",
+        "woo-shelfsync-test.test-rw-key",
+        "woo-shelfsync-test.test-rw-secret",
+    )
+    assert laragon.read_pair(store, RO) == (RO_KEY, RO_SECRET)
+    assert laragon.read_pair(store, RW) == (RW_KEY, RW_SECRET)
     captured = capsys.readouterr()
-    assert captured.out.splitlines() == ["Saved read-only key pair.", "Saved read/write key pair."]
+    assert captured.out.splitlines() == [
+        f"Saved read-only key pair for {SITE}.",
+        f"Saved read/write key pair for {SITE}.",
+    ]
     assert not any(value in captured.out + captured.err for value in ALL_VALUES)
 
 
-def test_the_prompts_name_the_pair_and_say_nothing_is_shown() -> None:
+def test_two_sites_keep_their_own_keys() -> None:
+    store = MemorySecretStore()
+    assert run_keys(store, RO_KEY, RO_SECRET, RW_KEY, RW_SECRET) == 0
+    other_ro, other_rw = (
+        ("ck_" + "0therR0key" * 3, "cs_" + "0therR0sec" * 3),
+        ("ck_" + "0therRWkey" * 3, "cs_" + "0therRWsec" * 3),
+    )
+    assert run_keys(store, *other_ro, *other_rw, host="twin.test") == 0
+    twin_ro, _ = laragon.pairs_for(site(host="twin.test"))
+    assert laragon.read_pair(store, twin_ro) == other_ro
+    assert laragon.read_pair(store, RO) == (RO_KEY, RO_SECRET)
+    assert run_keys(store, remove=True, host="twin.test") == 0
+    assert laragon.read_pair(store, twin_ro) is None
+    assert laragon.read_pair(store, RO) == (RO_KEY, RO_SECRET)  # --remove deleted only that site's entries
+
+
+def test_the_prompts_name_the_pair_and_the_site_and_say_nothing_is_shown() -> None:
     asked, prompt = prompts(RO_KEY, RO_SECRET, RW_KEY, RW_SECRET)
-    laragon.save_keys(MemorySecretStore(), prompt)
+    laragon.save_keys(MemorySecretStore(), prompt, DEFAULT)
     assert [text.split(" (")[0] for text in asked] == [
-        "Read-only consumer key",
-        "Read-only consumer secret",
-        "Read/write consumer key",
-        "Read/write consumer secret",
+        f"Read-only consumer key for {SITE}",
+        f"Read-only consumer secret for {SITE}",
+        f"Read/write consumer key for {SITE}",
+        f"Read/write consumer secret for {SITE}",
     ]
     assert all("nothing is shown" in text for text in asked)
 
@@ -323,25 +443,25 @@ def test_the_prompts_name_the_pair_and_say_nothing_is_shown() -> None:
 def test_a_pair_of_the_wrong_shape_isnt_saved(key: str, secret: str, capsys: pytest.CaptureFixture[str]) -> None:
     store = MemorySecretStore()
     assert run_keys(store, key, secret, "") == 1
-    assert laragon.read_pair(store, laragon.READ_ONLY) is None
+    assert laragon.read_pair(store, RO) is None
     out = capsys.readouterr().out
     assert "Read-only key pair not saved: a consumer key starts with ck_" in out
-    assert key not in out or not key  # the typed value is never repeated back
+    assert key not in out  # the typed value is never repeated back
 
 
 def test_the_same_pair_twice_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
     store = MemorySecretStore()
     assert run_keys(store, RO_KEY, RO_SECRET, RO_KEY, RW_SECRET) == 1
-    assert laragon.read_pair(store, laragon.READ_WRITE) is None
+    assert laragon.read_pair(store, RW) is None
     assert "it's the same as the other pair" in capsys.readouterr().out
 
 
 def test_nothing_typed_skips_a_pair_and_keeps_the_saved_one(capsys: pytest.CaptureFixture[str]) -> None:
     store = MemorySecretStore()
-    store.set("woo-ro-key", RO_KEY)
-    store.set("woo-ro-secret", RO_SECRET)
+    store.set(RO.key_entry, RO_KEY)
+    store.set(RO.secret_entry, RO_SECRET)
     assert run_keys(store, "", RW_KEY, RW_SECRET) == 0
-    assert laragon.read_pair(store, laragon.READ_ONLY) == (RO_KEY, RO_SECRET)
+    assert laragon.read_pair(store, RO) == (RO_KEY, RO_SECRET)
     assert capsys.readouterr().out.startswith("Read-only key pair skipped (nothing typed)")
 
 
@@ -354,26 +474,31 @@ class FailingSecondWrite(MemorySecretStore):
 
 def test_a_half_written_pair_is_put_back(capsys: pytest.CaptureFixture[str]) -> None:
     store = FailingSecondWrite()
-    MemorySecretStore.set(store, "woo-ro-key", "ck_" + "old0ld0ld0" * 3)
+    MemorySecretStore.set(store, RO.key_entry, "ck_" + "old0ld0ld0" * 3)
     assert run_keys(store, RO_KEY, RO_SECRET, "") == 1
-    assert store.get("woo-ro-key") == "ck_" + "old0ld0ld0" * 3
+    assert store.get(RO.key_entry) == "ck_" + "old0ld0ld0" * 3
     out = capsys.readouterr().out
     assert "Read-only key pair not saved: Credential Manager write failed (TestError)." in out
 
 
 def test_keys_remove_deletes_exactly_its_entries(capsys: pytest.CaptureFixture[str]) -> None:
     store = MemorySecretStore()
-    for name in ("woo-ro-key", "woo-ro-secret", "woo-rw-key", "woo-rw-secret", "unrelated", "store-1-key"):
+    for name in (*ENTRIES, "unrelated", "store-1-key", "woo-ro-key"):
         store.set(name, "value-" + name)
     assert run_keys(store, remove=True) == 0
-    assert [name for name in ("unrelated", "store-1-key") if store.get(name)] == ["unrelated", "store-1-key"]
-    assert all(store.get(name) is None for name in ("woo-ro-key", "woo-ro-secret", "woo-rw-key", "woo-rw-secret"))
-    assert "Removed the test stack's two key pairs" in capsys.readouterr().out
+    assert [name for name in ("unrelated", "store-1-key", "woo-ro-key") if store.get(name)] == [
+        "unrelated",
+        "store-1-key",
+        "woo-ro-key",
+    ]
+    assert all(store.get(name) is None for name in ENTRIES)
+    assert f"Removed the two key pairs of {SITE}" in capsys.readouterr().out
 
 
-def test_the_entries_are_never_shelfsyncs_own() -> None:
+@pytest.mark.parametrize("host", [SITE, "store-1.test", "install-token.test", "s3.test", "a.b.test"])
+def test_the_entries_are_never_shelfsyncs_own(host: str) -> None:
     assert laragon.SERVICE != platform_secrets.SERVICE_NAME
-    names = {name for pair in laragon.PAIRS for name in (pair.key_entry, pair.secret_entry)}
+    names = {name for pair in laragon.pairs_for(site(host=host)) for name in (pair.key_entry, pair.secret_entry)}
     assert len(names) == 4
     assert not names & set(platform_secrets.OWNED_SECRET_NAMES)
     assert not any(name.startswith("store-") for name in names)
@@ -415,10 +540,6 @@ def test_a_console_that_would_show_the_typing_is_refused(monkeypatch: pytest.Mon
 # ---------- check, against a fake HTTPS WooCommerce ----------
 
 
-def basic(key: str, secret: str) -> str:
-    return "Basic " + base64.b64encode(f"{key}:{secret}".encode()).decode()
-
-
 @dataclass
 class FakeWoo:
     """The two REST paths Test connection reads (WooCommerce REST v3 docs), with HTTP Basic for the read-only pair."""
@@ -428,30 +549,15 @@ class FakeWoo:
     downloadable: int = 9
 
     def __call__(self, request: RecordedRequest) -> tuple[int, dict[str, str], bytes]:
-        json_type = {"Content-Type": "application/json"}
         if self.redirect_to is not None:
             return 302, {"Location": self.redirect_to}, b""
         if request.headers.get("Authorization") != self.authorization:
-            body = {"code": "woocommerce_rest_cannot_view", "message": "Sorry.", "data": {"status": 401}}
-            return 401, json_type, json.dumps(body).encode()
+            return json_answer(401, {"code": "woocommerce_rest_cannot_view", "message": "Sorry."})
         if request.method == "GET" and request.path == "/wp-json/wc/v3/system_status":
-            body = {"environment": {"version": "9.4.1", "wp_version": "6.8.3"}}
-            return 200, json_type, json.dumps(body).encode()
+            return json_answer(200, {"environment": {"version": "9.4.1", "wp_version": "6.8.3"}})
         if request.method == "GET" and request.path == "/wp-json/wc/v3/products":
-            headers = {**json_type, "X-WP-Total": str(self.downloadable), "X-WP-TotalPages": "9"}
-            return 200, headers, json.dumps([{"id": 7}]).encode()
-        body = {"code": "rest_no_route", "message": "No route.", "data": {"status": 404}}
-        return 404, json_type, json.dumps(body).encode()
-
-
-@pytest.fixture
-def saved_keys() -> MemorySecretStore:
-    store = MemorySecretStore()
-    store.set("woo-ro-key", RO_KEY)
-    store.set("woo-ro-secret", RO_SECRET)
-    store.set("woo-rw-key", RW_KEY)
-    store.set("woo-rw-secret", RW_SECRET)
-    return store
+            return json_answer(200, [{"id": 7}], {"X-WP-Total": str(self.downloadable), "X-WP-TotalPages": "9"})
+        return json_answer(404, {"code": "rest_no_route", "message": "No route."})
 
 
 @pytest.fixture
@@ -461,15 +567,14 @@ def woo(site_cert: laragon.SiteCertificate, tmp_path: Path) -> Iterator[tuple[Ru
         yield server, app
 
 
-def run_check(store: MemorySecretStore, port: int, cert: Path) -> int:
+def run_check(store: MemorySecretStore, port: int, cert: Path, host: str = SITE) -> int:
     return laragon.main(
-        ["check", "--site", f"https://{SITE}:{port}", "--cert", str(cert)], secrets_factory=lambda: store
+        ["check", "--site", f"https://{host}:{port}", "--cert", str(cert)], secrets_factory=lambda: store
     )
 
 
 def test_check_passes_and_words_it_as_settings_does(
     woo: tuple[RunningServer, FakeWoo],
-    saved_keys: MemorySecretStore,
     site_cert: laragon.SiteCertificate,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -477,7 +582,7 @@ def test_check_passes_and_words_it_as_settings_does(
 ) -> None:
     server, _ = woo
     caplog.set_level(logging.DEBUG)
-    assert run_check(saved_keys, server.port, write_site_cert(tmp_path / "trust", site_cert)) == 0
+    assert run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert)) == 0
     out = capsys.readouterr()
     line = out.out.strip()
     assert line.startswith(f"https://{SITE}:{server.port}: Connected in ")
@@ -497,6 +602,28 @@ def test_check_passes_and_words_it_as_settings_does(
     assert "Store TS read test: ok" in caplog.text
 
 
+def test_two_sites_on_one_port_each_get_their_own_connection(
+    site_cert: laragon.SiteCertificate, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Like Laragon: two name-based sites on one port, the certificate chosen by SNI. Each check makes its own
+    transport, so the second site gets a new connection with its own SNI and certificate."""
+    twin = laragon.make_site_certificate("twin.test")
+    store = store_with_keys()
+    for pair, value in zip(
+        laragon.pairs_for(site(host="twin.test")), ((RO_KEY, RO_SECRET), (RW_KEY, RW_SECRET)), strict=True
+    ):
+        store.set(pair.key_entry, value[0])
+        store.set(pair.secret_entry, value[1])
+    by_name = {"twin.test": (twin.cert_pem, twin.key_pem)}
+    with tls_server((site_cert.cert_pem, site_cert.key_pem), tmp_path / "server", FakeWoo(), by_name) as server:
+        assert run_check(store, server.port, write_site_cert(tmp_path / "a", site_cert)) == 0
+        assert run_check(store, server.port, write_site_cert(tmp_path / "b", twin, "twin.test"), "twin.test") == 0
+        # the fake server closes each connection (HTTP/1.0), so two connections per check, each with its own SNI
+        assert server.record.sni_names == [SITE, SITE, "twin.test", "twin.test"]
+        assert server.record.hosts == [f"{SITE}:{server.port}"] * 2 + [f"twin.test:{server.port}"] * 2
+    assert capsys.readouterr().out.count("Connected in ") == 2
+
+
 def test_check_with_refused_keys_says_so(
     woo: tuple[RunningServer, FakeWoo],
     site_cert: laragon.SiteCertificate,
@@ -504,9 +631,7 @@ def test_check_with_refused_keys_says_so(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     server, _ = woo
-    store = MemorySecretStore()
-    store.set("woo-ro-key", RW_KEY)
-    store.set("woo-ro-secret", RW_SECRET)
+    store = store_with_keys(ro=(RW_KEY, RW_SECRET))
     assert run_check(store, server.port, write_site_cert(tmp_path / "trust", site_cert)) == 1
     assert capsys.readouterr().out.strip() == (
         f"https://{SITE}:{server.port}: HTTP 401: the Shop Manager key was refused."
@@ -515,14 +640,13 @@ def test_check_with_refused_keys_says_so(
 
 def test_check_never_follows_a_redirect(
     woo: tuple[RunningServer, FakeWoo],
-    saved_keys: MemorySecretStore,
     site_cert: laragon.SiteCertificate,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     server, app = woo
     app.redirect_to = "https://store-a.example/wp-json/wc/v3/system_status"
-    assert run_check(saved_keys, server.port, write_site_cert(tmp_path / "trust", site_cert)) == 1
+    assert run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert)) == 1
     assert len(server.record.requests) == 1  # the conftest guard would also have refused store-a.example
     assert capsys.readouterr().out.strip() == (
         f"https://{SITE}:{server.port}: The store sent the request to another address (store-a.example). "
@@ -531,14 +655,11 @@ def test_check_never_follows_a_redirect(
 
 
 def test_check_with_another_certificate_is_a_tls_error(
-    woo: tuple[RunningServer, FakeWoo],
-    saved_keys: MemorySecretStore,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    woo: tuple[RunningServer, FakeWoo], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     server, _ = woo
     other = write_site_cert(tmp_path / "trust", laragon.make_site_certificate(SITE))  # same name, another key
-    assert run_check(saved_keys, server.port, other) == 1
+    assert run_check(store_with_keys(), server.port, other) == 1
     assert server.record.requests == []
     assert capsys.readouterr().out.strip() == (
         f"https://{SITE}:{server.port}: The store's security certificate wasn't accepted."
@@ -557,32 +678,21 @@ def test_check_needs_the_read_only_pair(
     assert server.record.sni_names == []  # nothing was sent
 
 
-def test_check_without_the_certificate_file_says_so(
-    saved_keys: MemorySecretStore, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert run_check(saved_keys, 443, tmp_path / "missing.crt") == 1
+def test_check_without_the_certificate_file_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run_check(store_with_keys(), 443, tmp_path / "missing.crt") == 1
     assert "Run the cert command first" in capsys.readouterr().err
 
 
 def test_check_defaults_to_the_certificate_cert_writes() -> None:
-    files = laragon.cert_files(laragon.parse_site(laragon.DEFAULT_SITE), laragon.DEFAULT_CERT_DIR, Path("x"))
-    assert files.cert == laragon.DEFAULT_CERT_DIR / f"{SITE}.crt"
+    files = laragon.cert_files(DEFAULT, laragon.DEFAULT_CERT_DIR, Path("x"))
+    assert files.cert == laragon.default_cert(DEFAULT) == laragon.DEFAULT_CERT_DIR / f"{SITE}.crt"
 
 
-def test_the_transport_sends_every_request_to_loopback() -> None:
-    seen: list[tuple[str, int | None, object]] = []
-
-    class Inner(httpx.BaseTransport):
-        def handle_request(self, request: httpx.Request) -> httpx.Response:
-            seen.append((request.url.host, request.url.port, request.extensions.get("sni_hostname")))
-            return httpx.Response(204)
-
-    transport = laragon.LoopbackOnlyTransport(Inner())
-    with httpx.Client(transport=transport) as client:
-        request = client.build_request("GET", "https://anything-at-all.test:8443/x")
-        transport.handle_request(request)
-        assert request.headers["Host"] == "anything-at-all.test:8443"
-    assert seen == [("127.0.0.1", 8443, "anything-at-all.test")]
+def test_the_moto_defaults_match_the_moto_script() -> None:
+    expected = f"http://{moto_s3.HOST}:{moto_s3.DEFAULT_PORT}"
+    assert expected == laragon.DEFAULT_MOTO
+    assert laragon.DEFAULT_BUCKET == moto_s3.DEFAULT_BUCKET
+    assert laragon.DEFAULT_REGION == moto_s3.DEFAULT_REGION
 
 
 @pytest.mark.parametrize(
@@ -613,7 +723,20 @@ def test_the_outcomes_without_a_failure() -> None:
     assert laragon.describe(old) == "WooCommerce 5.7.0 is too old. ShelfSync needs 5.8 or newer."
 
 
+def test_the_certificate_is_valid_from_an_hour_ago_for_a_year() -> None:
+    now = datetime.datetime(2026, 11, 5, 12, 0, tzinfo=datetime.UTC)
+    made = laragon.make_site_certificate(SITE, now)
+    cert = x509.load_pem_x509_certificate(made.cert_pem)
+    assert cert.not_valid_before_utc == now - datetime.timedelta(hours=1)
+    assert cert.not_valid_after_utc == now - datetime.timedelta(hours=1) + datetime.timedelta(days=365)
+
+
 # ---------- Windows only (run on purpose with -m windows) ----------
+
+
+def icacls_entries(path: Path) -> list[str]:
+    listing = subprocess.run(["icacls", str(path)], check=True, capture_output=True, text=True).stdout
+    return [line.strip() for line in listing.splitlines() if ":(" in line]
 
 
 @pytest.mark.windows
@@ -622,11 +745,26 @@ def test_windows_the_key_file_is_limited_to_this_account(tmp_path: Path) -> None
     path = tmp_path / "site.key"
     path.write_bytes(b"")
     laragon.restrict_to_current_user(path)
-    listing = subprocess.run(["icacls", str(path)], check=True, capture_output=True, text=True).stdout
-    entries = [line.strip() for line in listing.splitlines() if ":(" in line]
-    assert len(entries) == 1, listing
+    entries = icacls_entries(path)
+    assert len(entries) == 1, entries
     assert entries[0].endswith(":(F)") and "(I)" not in entries[0]
     assert getpass.getuser().lower() in entries[0].lower()
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="icacls is Windows only")
+def test_windows_the_certificate_folder_is_limited_to_this_account(tmp_path: Path) -> None:
+    folder = tmp_path / "tls"
+    folder.mkdir()
+    laragon.restrict_to_current_user(folder)
+    entries = icacls_entries(folder)
+    assert len(entries) == 1, entries
+    assert entries[0].endswith(":(OI)(CI)(F)") and "(I)" not in entries[0].split(":", 1)[1].replace("(OI)(CI)", "")
+    assert getpass.getuser().lower() in entries[0].lower()
+    inside = folder / f"{SITE}.crt"
+    inside.write_bytes(b"x")  # a file made in it inherits only this account
+    inherited = icacls_entries(inside)
+    assert len(inherited) == 1 and getpass.getuser().lower() in inherited[0].lower(), inherited
 
 
 @pytest.mark.windows
@@ -635,20 +773,11 @@ def test_windows_keys_round_trip_in_a_throwaway_service(capsys: pytest.CaptureFi
     store = platform_secrets.KeyringSecretStore(f"ShelfSync-TestStack-pytest-{uuid.uuid4().hex[:8]}")
     try:
         _, prompt = prompts(RO_KEY, RO_SECRET, RW_KEY, RW_SECRET)
-        assert laragon.save_keys(store, prompt) == 0
-        assert laragon.read_pair(store, laragon.READ_ONLY) == (RO_KEY, RO_SECRET)
-        assert laragon.remove_keys(store) == 0
-        assert laragon.read_pair(store, laragon.READ_WRITE) is None
+        assert laragon.save_keys(store, prompt, DEFAULT) == 0
+        assert laragon.read_pair(store, RO) == (RO_KEY, RO_SECRET)
+        assert laragon.remove_keys(store, DEFAULT) == 0
+        assert laragon.read_pair(store, RW) is None
     finally:
-        for pair in laragon.PAIRS:
-            store.delete(pair.key_entry)
-            store.delete(pair.secret_entry)
+        for name in ENTRIES:
+            store.delete(name)
     assert not any(value in capsys.readouterr().out for value in ALL_VALUES)
-
-
-def test_the_certificate_is_valid_from_an_hour_ago_for_a_year() -> None:
-    now = datetime.datetime(2026, 11, 5, 12, 0, tzinfo=datetime.UTC)
-    made = laragon.make_site_certificate(SITE, now)
-    cert = x509.load_pem_x509_certificate(made.cert_pem)
-    assert cert.not_valid_before_utc == now - datetime.timedelta(hours=1)
-    assert cert.not_valid_after_utc == now - datetime.timedelta(hours=1) + datetime.timedelta(days=365)

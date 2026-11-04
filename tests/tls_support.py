@@ -194,20 +194,31 @@ class RunningServer:
 
 @contextmanager
 def tls_server(
-    certificate: TestCertificate | tuple[bytes, bytes], folder: Path, app: App = _ok_app
+    certificate: TestCertificate | tuple[bytes, bytes],
+    folder: Path,
+    app: App = _ok_app,
+    by_name: dict[str, tuple[bytes, bytes]] | None = None,
 ) -> Iterator[RunningServer]:
     """Serve `app` (by default 200 and a small JSON body for any request) over TLS with `certificate` (or a
-    (cert PEM, key PEM) pair) on 127.0.0.1, any free port."""
+    (cert PEM, key PEM) pair) on 127.0.0.1, any free port. `by_name` gives other certificates chosen by the SNI name
+    the client sends, as Apache does for name-based sites on one port."""
     if isinstance(certificate, tuple):
         certificate = TestCertificate(*certificate)
     cert_path, key_path = certificate.write(folder, "server")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert_path, key_path)
     record = ServerRecord()
+    named: dict[str, ssl.SSLContext] = {}
+    for index, (name, pair) in enumerate((by_name or {}).items()):
+        other_cert, other_key = TestCertificate(*pair).write(folder, f"server-{index}")
+        named[name] = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        named[name].load_cert_chain(other_cert, other_key)
 
-    def remember_sni(_: Any, name: str | None, __: Any) -> None:
+    def remember_sni(connection: Any, name: str | None, __: Any) -> None:
         with record.lock:
             record.sni_names.append(name)
+        if name in named:
+            connection.context = named[name]
 
     context.sni_callback = remember_sni
     server = _TlsServer(context, record, app)
