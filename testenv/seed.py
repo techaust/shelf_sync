@@ -20,7 +20,6 @@ import base64
 import hashlib
 import re
 import socket
-import ssl
 import time
 from collections.abc import Callable, Sequence
 from decimal import Decimal, InvalidOperation
@@ -30,6 +29,10 @@ from typing import Any
 import httpx
 
 from shelfsync import __version__
+
+# Read-only reuse of the store client's own TLS test (a private name, but the same repository and the same meaning:
+# an `ssl.SSLError` anywhere in the cause chain), so `seed` and `check` call the same failure a certificate problem.
+from shelfsync.apply.woocommerce import _is_tls_error
 from shelfsync.platform.secrets import SecretStore
 from testenv.laragon import (
     SPACING_MS,
@@ -101,6 +104,9 @@ class SeedClient:
             follow_redirects=False,
             trust_env=False,
             timeout=httpx.Timeout(30.0, connect=10.0),
+            # A 3xx is refused in a response hook: httpx runs the hooks before it reads the `Location` header to build
+            # `next_request` (even with redirects off), and that reading raises for a malformed address.
+            event_hooks={"response": [_refuse_redirect]},
         )
 
     def __enter__(self) -> SeedClient:
@@ -113,6 +119,8 @@ class SeedClient:
         self, method: str, path: str, params: dict[str, str] | None = None, body: dict[str, Any] | None = None
     ) -> tuple[Any, httpx.Headers]:
         params = params or {}
+        # The same rule, word for word, as `WooClient.get` (backend/shelfsync/apply/woocommerce.py), where it is inline
+        # and so can't be imported: change both together.
         if any(name.lower().startswith("consumer_") or "key" in name.lower() for name in params):
             raise ValueError("credentials never go in a query string")
         if self._sent:
@@ -121,13 +129,6 @@ class SeedClient:
         try:
             with self._client.stream(method, self._base + path, params=params, json=body) as response:
                 status = response.status_code
-                if 300 <= status < 400:
-                    host = httpx.URL(response.headers.get("location", "")).host.lower()
-                    where = f" ({host})" if _HOST.fullmatch(host) else ""
-                    raise SeedError(
-                        f"The site sent {method} {path} to another address{where} (HTTP {status}); seed never "
-                        "follows that. Nothing more was written."
-                    )
                 data = b""
                 for chunk in response.iter_raw():
                     data += chunk
@@ -142,7 +143,7 @@ class SeedClient:
         except httpx.TimeoutException:
             raise SeedError(f"The site took too long to answer {method} {path}.") from None
         except httpx.TransportError as error:
-            if _is_tls(error):
+            if _is_tls_error(error):
                 raise SeedError("The site's security certificate wasn't accepted. Nothing was written.") from None
             raise SeedError("Couldn't reach the site. Is Laragon running?") from None
 
@@ -154,15 +155,26 @@ def _json(data: bytes) -> Any:
         return None
 
 
-def _is_tls(error: BaseException) -> bool:
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        if isinstance(current, ssl.SSLError):
-            return True
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return False
+def _refuse_redirect(response: httpx.Response) -> None:
+    """Stop at any 3xx: seed never follows one, so its keys never go anywhere else."""
+    if 300 <= response.status_code < 400:
+        host = _location_host(response.headers.get("location", ""))
+        where = f" ({host})" if host else ""
+        request = response.request
+        raise SeedError(
+            f"The site sent {request.method} {request.url.path} to another address{where} "
+            f"(HTTP {response.status_code}); seed never follows that. Nothing more was written."
+        )
+
+
+def _location_host(location: str) -> str | None:
+    """The host a redirect named, if it is a plain host name; None when there is none or it can't be parsed (httpx
+    raises `InvalidURL`, and the IDNA codec a `ValueError` subclass, for a malformed one)."""
+    try:
+        host = httpx.URL(location).host.lower()
+    except httpx.InvalidURL, ValueError:
+        return None
+    return host if _HOST.fullmatch(host) else None
 
 
 # ---------- reading the site ----------
@@ -197,9 +209,21 @@ def list_products(client: SeedClient) -> list[dict[str, Any]]:
     return list(found.values())
 
 
+def _check_slug(sample: Sample, product: dict[str, Any]) -> None:
+    """The rule `--reset` uses, before `seed` changes or deletes a product: the marker alone isn't enough, its slug
+    must be the sample's too (or WordPress's trashed form). Otherwise the run stops."""
+    slug = product.get("slug")
+    if slug not in sample.accepted_slugs():
+        raise SeedError(
+            f"Product #{product.get('id')} is marked as sample {sample.id}, but its slug {_shown(slug)} isn't the "
+            f"sample's ({sample.slug!r}). seed changes nothing: put the slug back or delete that product by hand."
+        )
+
+
 def _index(products: list[dict[str, Any]], samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
-    """Each sample's product, by marker. Refuses two products with one marker, and a product that isn't the sample
-    but holds a sample's slug (seed would get `<slug>-2` and change nothing of the other product)."""
+    """Each sample's product, by marker, checked before anything is written. Refuses two products with one marker, a
+    marked product whose slug isn't the sample's (`_check_slug`), and a product that isn't the sample but holds a
+    sample's slug (seed would get `<slug>-2` and change nothing of the other product)."""
     ids = {sample.id for sample in samples}
     marked: dict[str, list[dict[str, Any]]] = {}
     for product in products:
@@ -210,6 +234,9 @@ def _index(products: list[dict[str, Any]], samples: Sequence[Sample]) -> dict[st
         if len(found) > 1:
             numbers = ", ".join(f"#{product['id']}" for product in found)
             raise SeedError(f"Products {numbers} are all marked as sample {marker}. Delete the extra ones by hand.")
+    by_id = {sample.id: sample for sample in samples}
+    for marker, found in marked.items():
+        _check_slug(by_id[marker], found[0])
     for sample in samples:
         for product in products:
             if product.get("slug") == sample.slug and marker_of(product) != sample.id:
@@ -291,12 +318,11 @@ def new_product(sample: Sample) -> dict[str, Any]:
 
 
 def changes(sample: Sample, current: dict[str, Any]) -> dict[str, Any]:
-    """The fields that differ from the sample (the description is set at creation only)."""
+    """The fields that differ from the sample (the description is set at creation only; the slug is never changed:
+    a product whose slug isn't the sample's is refused before anything is written, `_check_slug`)."""
     out: dict[str, Any] = {}
     if current.get("name") != sample.name:
         out["name"] = sample.name
-    if current.get("slug") not in sample.accepted_slugs():
-        out["slug"] = sample.slug
     if sample.status != "trash" and current.get("status") != sample.status:
         out["status"] = sample.status
     if sample.type == "variable":
@@ -399,6 +425,7 @@ def _create(client: SeedClient, sample: Sample) -> int:
 def seed_one(client: SeedClient, sample: Sample, current: dict[str, Any] | None) -> tuple[str, int]:
     """Bring one sample to its shape. Returns what was done and the product ID."""
     if current is not None:
+        _check_slug(sample, current)  # again here, so no caller can reach a delete or a write without it
         product_id: int = current["id"]
         in_trash = current.get("status") == "trash"
         update = changes(sample, current)
@@ -502,7 +529,8 @@ def run_reset(
 def upload_files(moto: str, bucket: str, region: str, samples: Sequence[Sample]) -> int:
     """Put every sample's file in the moto bucket (every run: moto keeps nothing after a restart), through ShelfSync's
     own S3 client; each `put_object` carries `ContentMD5` and is checked with `head_object`. Returns how many were
-    uploaded; 0 (and a message) when the S3 server isn't running or has no such bucket."""
+    uploaded. When the S3 server isn't running, has no such bucket, or refuses a file, it says so and returns: the
+    products are seeded all the same."""
     from botocore.exceptions import BotoCoreError, ClientError
 
     from testenv.moto_s3 import s3_client
@@ -526,14 +554,35 @@ def upload_files(moto: str, bucket: str, region: str, samples: Sequence[Sample])
         except BotoCoreError, ClientError:
             say(not_there)
             return 0
-        for file in files:
+        for done, file in enumerate(files):
             body = file.zip_bytes()
             digest = base64.b64encode(hashlib.md5(body).digest()).decode("ascii")  # Content-MD5, not security
-            client.put_object(Bucket=bucket, Key=file.key, Body=body, ContentType="application/zip", ContentMD5=digest)
-            head = client.head_object(Bucket=bucket, Key=file.key)
-            if head.get("ContentLength") != len(body):
-                raise SeedError(f"The S3 server kept {file.key} with the wrong size.")
+            try:
+                client.put_object(
+                    Bucket=bucket, Key=file.key, Body=body, ContentType="application/zip", ContentMD5=digest
+                )
+                stored = client.head_object(Bucket=bucket, Key=file.key).get("ContentLength")
+            except (BotoCoreError, ClientError) as error:
+                problem = _aws_problem(error)
+            else:
+                if stored == len(body):
+                    continue
+                problem = "it kept the file with the wrong size"
+            say(
+                f"Uploaded {done} of {len(files)} sample files, then the S3 server refused {file.key} ({problem}); "
+                "the rest weren't uploaded. The products are still seeded. Run seed again to retry."
+            )
+            return done
     finally:
         client.close()
     say(f"Uploaded {len(files)} sample files to {bucket} at {moto}.")
     return len(files)
+
+
+def _aws_problem(error: Exception) -> str:
+    """A fixed-shape description of a botocore error: its AWS code when it has a plain one, else its type."""
+    response = getattr(error, "response", None)
+    code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+    if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9.]{1,64}", code):
+        return code
+    return type(error).__name__

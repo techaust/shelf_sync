@@ -229,10 +229,15 @@ def fake_laragon(tmp_path: Path) -> Path:
     return root
 
 
-def run_cert(tmp_path: Path, laragon_root: Path, restrict: Restrict, *extra: str) -> int:
-    return laragon.main(
-        ["cert", "--dir", str(tmp_path / "tls"), "--laragon", str(laragon_root), *extra], restrict=restrict
-    )
+def run_cert(
+    tmp_path: Path,
+    laragon_root: Path,
+    restrict: Restrict,
+    *extra: str,
+    private_folder: Callable[[Path], str | None] = lambda _: None,  # the real check is Windows-only (-m windows)
+) -> int:
+    argv = ["cert", "--dir", str(tmp_path / "tls"), "--laragon", str(laragon_root), *extra]
+    return laragon.main(argv, restrict=restrict, private_folder=private_folder)
 
 
 def sites_enabled(root: Path) -> Path:
@@ -546,7 +551,7 @@ class FakeWoo:
 
     authorization: str = field(default_factory=lambda: basic(RO_KEY, RO_SECRET))
     redirect_to: str | None = None
-    downloadable: int = 9
+    downloadable: int = 10  # what seed's samples give (runbook §3.5)
 
     def __call__(self, request: RecordedRequest) -> tuple[int, dict[str, str], bytes]:
         if self.redirect_to is not None:
@@ -586,7 +591,7 @@ def test_check_passes_and_words_it_as_settings_does(
     out = capsys.readouterr()
     line = out.out.strip()
     assert line.startswith(f"https://{SITE}:{server.port}: Connected in ")
-    assert line.endswith(" ms. WooCommerce 9.4.1, 9 downloadable products.")
+    assert line.endswith(" ms. WooCommerce 9.4.1, 10 downloadable products.")
     # the two GETs, SNI and Host on the site's name, the keys in the Authorization header only
     assert [(r.method, r.path) for r in server.record.requests] == [
         ("GET", "/wp-json/wc/v3/system_status"),
@@ -654,6 +659,21 @@ def test_check_never_follows_a_redirect(
     )
 
 
+def test_check_words_a_redirect_to_an_unreadable_address(
+    woo: tuple[RunningServer, FakeWoo],
+    site_cert: laragon.SiteCertificate,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """httpx can't decode this `Location` and `WooClient` lets the error through; the harness words it instead."""
+    server, app = woo
+    app.redirect_to = "https://xn--a.test/"
+    assert run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert)) == 1
+    assert capsys.readouterr().out.strip() == (
+        f"https://{SITE}:{server.port}: The store sent the request to another address. Update the store's address."
+    )
+
+
 def test_check_with_another_certificate_is_a_tls_error(
     woo: tuple[RunningServer, FakeWoo], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -706,7 +726,19 @@ def test_the_moto_defaults_match_the_moto_script() -> None:
             403,
             "HTTP 403: the key is valid but isn't allowed to read this. It needs the Shop Manager role.",
         ),
-        ("not_woocommerce", 404, "That address answers, but it isn't a WooCommerce store's REST API. (HTTP 404)"),
+        ("not_woocommerce", 404, "That address answers, but it isn't a WooCommerce store's REST API (HTTP 404)."),
+        (
+            "unreachable",
+            502,
+            "Couldn't reach the store (HTTP 502). Check the address and your internet connection.",
+        ),
+        (
+            "blocked",
+            403,
+            "Something in front of the store (a firewall or a security check) blocked the request (HTTP 403).",
+        ),
+        ("bad_response", 200, "The store's answer wasn't what ShelfSync expected."),  # under 300: no status
+        ("wc_too_old", 200, "The store's WooCommerce is too old. ShelfSync needs 5.8 or newer."),
         ("some_new_reason", None, "The test failed."),
     ],
 )
@@ -721,6 +753,72 @@ def test_the_outcomes_without_a_failure() -> None:
     assert laragon.describe(empty) == "Connected, but the store has no downloadable products yet."
     old = ReadOutcome("wc_too_old", 200, None, "5.7.0", "6.0")
     assert laragon.describe(old) == "WooCommerce 5.7.0 is too old. ShelfSync needs 5.8 or newer."
+
+
+def test_a_failed_second_swap_puts_the_old_set_back(
+    tmp_path: Path, fake_laragon: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_cert(tmp_path, fake_laragon, Restrict()) == 0
+    folder, vhost = tmp_path / "tls", sites_enabled(fake_laragon) / f"00-{SITE}.conf"
+    before = {path.name: path.read_bytes() for path in folder.iterdir()} | {vhost.name: vhost.read_bytes()}
+    real_replace = os.replace
+    swaps: list[str] = []
+
+    def second_swap_fails(source: str | Path, target: str | Path) -> None:
+        if str(source).endswith(".new"):
+            swaps.append(str(target))
+            if len(swaps) == 2:
+                raise PermissionError(13, "Access is denied", str(target))
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", second_swap_fails)
+    assert run_cert(tmp_path, fake_laragon, Restrict(), "--force") == 1
+    after = {path.name: path.read_bytes() for path in folder.iterdir()} | {vhost.name: vhost.read_bytes()}
+    assert after == before  # the key that was swapped in is undone, and every old file is back; no .new or .old
+    assert sorted(path.name for path in sites_enabled(fake_laragon).iterdir()) == [vhost.name]
+    assert "Nothing was changed." in capsys.readouterr().err
+
+
+def test_a_swap_that_cant_be_undone_says_to_run_force_again(
+    tmp_path: Path, fake_laragon: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_cert(tmp_path, fake_laragon, Restrict()) == 0
+    real_replace = os.replace
+    news: list[str] = []
+
+    def second_swap_and_undo_fail(source: str | Path, target: str | Path) -> None:
+        if str(source).endswith(".new"):
+            news.append(str(target))
+            if len(news) == 2:
+                raise PermissionError(13, "Access is denied", str(target))
+        if str(source).endswith(".old") and news:
+            raise PermissionError(13, "Access is denied", str(target))
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", second_swap_and_undo_fail)
+    assert run_cert(tmp_path, fake_laragon, Restrict(), "--force") == 1
+    assert "half replaced and couldn't be put back. Run cert --force again." in capsys.readouterr().err
+
+
+def test_cert_refuses_an_existing_folder_others_may_open(
+    tmp_path: Path, fake_laragon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "tls").mkdir()
+    restrict = Restrict()
+    assert run_cert(tmp_path, fake_laragon, restrict, private_folder=lambda _: "other accounts may open it") == 1
+    assert "already exists, but other accounts may open it" in capsys.readouterr().err
+    assert restrict.calls == []
+
+
+def test_cert_shows_the_expiry_in_local_time_with_the_zone(
+    tmp_path: Path, fake_laragon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_cert(tmp_path, fake_laragon, Restrict()) == 0
+    cert = x509.load_pem_x509_certificate((tmp_path / "tls" / f"{SITE}.crt").read_bytes())
+    local = cert.not_valid_after_utc.astimezone()
+    line = capsys.readouterr().out.splitlines()[0]
+    assert line == f"Made a certificate for {SITE}, valid until {local:%Y-%m-%d %H:%M} {local.tzname()}."
+    assert "(UTC)" not in line
 
 
 def test_the_certificate_is_valid_from_an_hour_ago_for_a_year() -> None:
@@ -749,6 +847,20 @@ def test_windows_the_key_file_is_limited_to_this_account(tmp_path: Path) -> None
     assert len(entries) == 1, entries
     assert entries[0].endswith(":(F)") and "(I)" not in entries[0]
     assert getpass.getuser().lower() in entries[0].lower()
+
+
+@pytest.mark.windows
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' security calls are Windows only")
+def test_windows_only_a_folder_limited_to_this_account_is_accepted(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()  # inherits the parent's entries (SYSTEM, Administrators and this account, at least)
+    assert laragon.folder_is_private(shared) == "other accounts may open it"
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    laragon.restrict_to_current_user(mine)
+    assert laragon.folder_is_private(mine) is None
+    owner, grantees = laragon.folder_access(mine)
+    assert owner.startswith("S-1-") and len(grantees) == 1 and grantees[0].startswith("S-1-5-21-")
 
 
 @pytest.mark.windows

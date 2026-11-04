@@ -54,6 +54,7 @@ class FakeStore:
     page_size: int = 5  # small, so listing pages
     authorization: str = field(default_factory=lambda: basic(RW_KEY, RW_SECRET))
     redirect_writes: bool = False
+    redirect_location: str = "https://store-a.example/wp-json/wc/v3/products"
     refuse_creates: bool = False
     tamper_on_read: int | None = None
 
@@ -97,7 +98,7 @@ class FakeStore:
         if request.headers.get("Authorization") != self.authorization:
             return json_answer(401, {"code": "woocommerce_rest_cannot_view", "message": "Sorry."})
         if self.redirect_writes and request.method != "GET":
-            return 302, {"Location": "https://store-a.example/wp-json/wc/v3/products"}, b""
+            return 302, {"Location": self.redirect_location}, b""
         body = json.loads(request.body) if request.body else {}
         query = {name: values[0] for name, values in parse_qs(request.target.partition("?")[2]).items()}
         path = request.path
@@ -370,6 +371,36 @@ def test_seed_never_follows_a_redirect(
     assert "to another address (store-a.example) (HTTP 302); seed never follows that" in err
 
 
+@pytest.mark.parametrize("location", ["http://[::1", "https://xn--a.test/", "https://user@:99999/"])
+def test_a_redirect_to_an_address_that_cant_be_read_names_no_host(
+    location: str, fake: tuple[RunningServer, FakeStore], cert_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server, store = fake
+    store.redirect_writes = True
+    store.redirect_location = location  # httpx raises InvalidURL, or the IDNA codec a ValueError, reading these
+    assert run(server.port, cert_file) == 1
+    assert len(writes(server)) == 1
+    expected = "to another address (HTTP 302); seed never follows that. Nothing more was written."
+    assert expected in capsys.readouterr().err
+
+
+def test_a_marked_product_with_another_slug_stops_seed_before_any_write(
+    fake: tuple[RunningServer, FakeStore], cert_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The marker alone isn't enough to delete or change a product: as for --reset, its slug must be the sample's."""
+    server, store = fake
+    renamed = store.add(
+        slug="renamed", type="variable", meta_data=[{"key": samples.MARKER_KEY, "value": "aurora"}]
+    )  # the wrong type too: seed would otherwise force-delete it
+    assert run(server.port, cert_file) == 1
+    assert writes(server) == []
+    assert renamed["id"] in store.products
+    assert (
+        f"Product #{renamed['id']} is marked as sample aurora, but its slug 'renamed' isn't the sample's ('aurora')"
+        in capsys.readouterr().err
+    )
+
+
 def test_a_refused_write_names_the_code_and_status(
     fake: tuple[RunningServer, FakeStore], cert_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -523,6 +554,51 @@ def test_seed_refuses_any_s3_but_the_local_server(value: str, capsys: pytest.Cap
         laragon.main(["seed", "--moto", value], secrets_factory=MemorySecretStore)
     assert raised.value.code == 2
     assert "use the local S3 server" in capsys.readouterr().err
+
+
+class RefusingS3:
+    """An S3 client whose bucket answers but which refuses the third upload, as a full disk or a policy would."""
+
+    def __init__(self) -> None:
+        self.puts = 0
+
+    def head_bucket(self, **_: Any) -> dict[str, Any]:
+        return {}
+
+    def put_object(self, **_: Any) -> dict[str, Any]:
+        from botocore.exceptions import ClientError
+
+        self.puts += 1
+        if self.puts == 3:
+            raise ClientError({"Error": {"Code": "InternalError", "Message": "Sorry."}}, "PutObject")
+        return {}
+
+    def head_object(self, **kwargs: Any) -> dict[str, Any]:
+        files = {f.key: f for f in samples.unique_files(samples.SAMPLES)}
+        return {"ContentLength": len(files[kwargs["Key"]].zip_bytes())}
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_refused_upload_is_worded_and_the_products_are_still_seeded(
+    fake: tuple[RunningServer, FakeStore],
+    cert_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server, store = fake
+    refusing = RefusingS3()
+    monkeypatch.setattr(moto_s3, "s3_client", lambda endpoint, region: refusing)
+    with socket.socket() as listening:  # something answers on the port, so the quick look passes
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        assert run(server.port, cert_file, moto=f"http://127.0.0.1:{listening.getsockname()[1]}") == 0
+    assert refusing.puts == 3
+    out = capsys.readouterr().out
+    assert "Uploaded 2 of 13 sample files, then the S3 server refused" in out
+    assert "(InternalError); the rest weren't uploaded. The products are still seeded." in out
+    assert len(store.marked()) == 13
 
 
 def test_seed_uploads_every_file_to_moto_on_every_run(

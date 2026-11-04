@@ -244,7 +244,7 @@ def cert_files(site: Site, cert_dir: Path, laragon: Path) -> CertFiles:
     `auto.<site>.conf` (Apache includes `sites-enabled/*.conf` in alphabetical order and the first matching
     `ServerName` wins). Laragon's docs name only the `auto.` files as its own, but Laragon also rewrites some other
     files: at an SSL off-and-on on 2026-11-05 it rewrote its `00-default.conf` too. Whether it ever removes or
-    rewrites this one isn't known; runbook §3.2 step 7 checks it, and `cert --force` puts it back."""
+    rewrites this one isn't known; runbook §3.2 step 5 checks it, and `cert --force` puts it back."""
     return CertFiles(
         cert_dir / f"{site.host}.crt",
         cert_dir / f"{site.host}.key",
@@ -311,6 +311,104 @@ def restrict_to_current_user(path: Path) -> None:
         raise HarnessError(f"Couldn't limit {path} to your account ({type(error).__name__}).") from None
 
 
+# Owns what an elevated administrator makes; an administrator can take any file anyway.
+ADMINISTRATORS_SID = "S-1-5-32-544"
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _Acl(ctypes.Structure):
+        _fields_ = (
+            ("AclRevision", ctypes.c_ubyte),
+            ("Sbz1", ctypes.c_ubyte),
+            ("AclSize", wintypes.WORD),
+            ("AceCount", wintypes.WORD),
+            ("Sbz2", wintypes.WORD),
+        )
+
+    class _AceHeader(ctypes.Structure):
+        _fields_ = (("AceType", ctypes.c_ubyte), ("AceFlags", ctypes.c_ubyte), ("AceSize", wintypes.WORD))
+
+    _ALLOWED, _DENIED = 0, 1  # ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE; their SID starts 8 bytes in
+
+    def _sid_text(advapi32: Any, kernel32: Any, sid: int) -> str:
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(ctypes.c_void_p(sid), ctypes.byref(text)):
+            raise HarnessError("Couldn't read who may open the certificate folder.")
+        try:
+            return str(text.value)
+        finally:
+            kernel32.LocalFree(text)
+
+    def folder_access(path: Path) -> tuple[str, list[str]]:
+        """The folder's owner and the accounts its permissions allow anything (SIDs; "?" for an entry of another
+        kind), read with Windows' own security calls (`GetNamedSecurityInfoW`; no package)."""
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+        get_info = advapi32.GetNamedSecurityInfoW
+        get_info.argtypes = (
+            wintypes.LPCWSTR,
+            ctypes.c_int,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        get_info.restype = wintypes.DWORD
+        advapi32.GetAce.argtypes = (ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p))
+        owner, dacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        # SE_FILE_OBJECT = 1; OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION = 1 | 4
+        if get_info(str(path), 1, 5, ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(descriptor)):
+            raise HarnessError(f"Couldn't read who may open {path}.")
+        try:
+            owner_sid = _sid_text(advapi32, kernel32, owner.value or 0)
+            if not dacl.value:
+                return owner_sid, ["?"]  # no list at all: everyone may open it
+            grantees: list[str] = []
+            for index in range(ctypes.cast(dacl, ctypes.POINTER(_Acl)).contents.AceCount):
+                ace = ctypes.c_void_p()
+                if not advapi32.GetAce(dacl, index, ctypes.byref(ace)) or not ace.value:
+                    grantees.append("?")
+                    continue
+                kind = ctypes.cast(ace, ctypes.POINTER(_AceHeader)).contents.AceType
+                if kind == _ALLOWED:
+                    grantees.append(_sid_text(advapi32, kernel32, ace.value + 8))
+                elif kind != _DENIED:  # a deny entry grants nothing; any other kind isn't one `cert` makes
+                    grantees.append("?")
+            return owner_sid, grantees
+        finally:
+            kernel32.LocalFree(descriptor)
+
+    def folder_is_private(path: Path) -> str | None:
+        """None when only this account may open `path` (as `restrict_to_current_user` leaves it), else why not."""
+        system32 = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32"
+        try:
+            me = _whoami_sid(system32)
+        except OSError, subprocess.SubprocessError:
+            raise HarnessError("Couldn't read your Windows account's ID (whoami).") from None
+        owner, grantees = folder_access(path)
+        if owner not in (me, ADMINISTRATORS_SID):
+            return "another account owns it"
+        if not grantees or any(grantee != me for grantee in grantees):
+            return "other accounts may open it"
+        return None
+
+else:
+
+    def folder_is_private(path: Path) -> str | None:
+        """None when only this account may open `path` (owner and mode 0700 or tighter), else why not."""
+        status = path.stat()
+        if status.st_uid != os.getuid():
+            return "another account owns it"
+        if status.st_mode & 0o077:
+            return "other accounts may open it"
+        return None
+
+
 def _write_private(path: Path, data: bytes, restrict: Callable[[Path], None]) -> None:
     """Create `path` empty (never over an existing file), limit it to this account, then write `data` into it."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
@@ -324,13 +422,46 @@ def _write_private(path: Path, data: bytes, restrict: Callable[[Path], None]) ->
         raise
 
 
-# Only certificate pairs (and their in-progress copies) may sit in the certificate folder: it is limited to this
-# account as a whole, which would be wrong for a folder holding anything else.
-_OUR_FILE = re.compile(r"[a-z0-9.-]+\.test\.(?:crt|key)(?:\.new)?")
+# Only certificate pairs (and their in-progress and set-aside copies) may sit in the certificate folder: it is limited
+# to this account as a whole, which would be wrong for a folder holding anything else.
+_OUR_FILE = re.compile(r"[a-z0-9.-]+\.test\.(?:crt|key)(?:\.new|\.old)?")
 
 
 def _temporary(path: Path) -> Path:
     return path.with_name(path.name + ".new")
+
+
+def _set_aside(path: Path) -> Path:
+    return path.with_name(path.name + ".old")
+
+
+def _swap_in(paths: Sequence[Path]) -> None:
+    """Put each `<name>.new` in place of `<name>`, all or none. The current files are first moved to `<name>.old`; if
+    any move fails, the ones made are undone and the old files go back, then the error is raised. Only if putting
+    them back fails too is the set left half replaced, and the message says to run `cert --force` again."""
+    aside: list[Path] = []
+    placed: list[Path] = []
+    try:
+        for path in paths:
+            _set_aside(path).unlink(missing_ok=True)
+            if path.exists():
+                os.replace(path, _set_aside(path))
+                aside.append(path)
+        for path in paths:
+            os.replace(_temporary(path), path)
+            placed.append(path)
+    except OSError:
+        try:
+            for path in placed:
+                path.unlink(missing_ok=True)
+            for path in aside:
+                os.replace(_set_aside(path), path)
+        except OSError:
+            raise HarnessError(
+                "The certificate files were half replaced and couldn't be put back. Run cert --force again."
+            ) from None
+        raise
+    _remove([_set_aside(path) for path in aside])
 
 
 def write_certificate(
@@ -340,11 +471,14 @@ def write_certificate(
     *,
     force: bool,
     restrict: Callable[[Path], None],
+    private_folder: Callable[[Path], str | None] = folder_is_private,
     now: datetime.datetime | None = None,
 ) -> tuple[CertFiles, SiteCertificate]:
-    """Write the key, the certificate and the Apache file. Each is first written under a `.new` name and the three are
-    swapped in only once all are written, so a failure never leaves a half-made set; the key is limited to this
-    account while still empty. Any file-system failure is a `HarnessError`."""
+    """Write the key, the certificate and the Apache file. Each is first written under a `.new` name, the key limited
+    to this account while still empty; then the three are swapped in together (`_swap_in`: the old ones are set aside
+    and put back if a swap fails), so a failure leaves the old set as it was. A folder that already exists is used
+    only if it holds nothing but certificate pairs and only this account may open it. Any file-system failure is a
+    `HarnessError`."""
     sites_enabled = laragon / "etc" / "apache2" / "sites-enabled"
     if not sites_enabled.is_dir():
         raise HarnessError(f"{laragon} doesn't look like Laragon's folder (no {sites_enabled}). Give --laragon.")
@@ -358,6 +492,12 @@ def write_certificate(
         if others:
             raise HarnessError(
                 f"{cert_dir} holds other files ({', '.join(others[:3])}). Give a new or empty folder with --dir."
+            )
+        why = private_folder(cert_dir)
+        if why is not None:
+            raise HarnessError(
+                f"{cert_dir} already exists, but {why}, so the certificate in it could be swapped. Delete the folder "
+                "(cert makes it again) or give another with --dir."
             )
     files = cert_files(site, cert_dir, laragon)
     existing = [path for path in files.all() if path.exists()]
@@ -374,13 +514,12 @@ def write_certificate(
         _write_private(_temporary(files.key), made.key_pem, restrict)
         _temporary(files.cert).write_bytes(made.cert_pem)
         _temporary(files.vhost).write_text(vhost_text(site, files, docroot), encoding="utf-8", newline="\n")
-        for path in (files.key, files.cert, files.vhost):
-            os.replace(_temporary(path), path)
+        _swap_in((files.key, files.cert, files.vhost))
     except OSError as error:
         _remove(temporaries)
         where = f" {error.filename}" if error.filename else ""
         reason = error.strerror or type(error).__name__
-        raise HarnessError(f"Couldn't write the certificate files ({reason}){where}.") from None
+        raise HarnessError(f"Couldn't write the certificate files ({reason}){where}. Nothing was changed.") from None
     except BaseException:
         _remove(temporaries)
         raise
@@ -507,7 +646,21 @@ _REASON_TEXT = {
     "keys_refused": "HTTP 401: the Shop Manager key was refused.",
     "forbidden": "HTTP 403: the key is valid but isn't allowed to read this. It needs the Shop Manager role.",
 }
-_NAMES_ITS_STATUS = frozenset({"rate_limited", "cloudflare_52x", "server_error", "keys_refused", "forbidden"})
+# Settings' REASONS_WITH_STATUS (frontend/src/lib/storesWording.ts): the sentence names the status already, or it would
+# read wrong.
+_NAMES_ITS_STATUS = frozenset(
+    {"rate_limited", "cloudflare_52x", "server_error", "keys_refused", "forbidden", "wc_too_old"}
+)
+
+
+def with_status(sentence: str, reason: str, status: int | None) -> str:
+    """Settings' `withStatus` (frontend/src/lib/storeHealth.ts): "(HTTP n)" goes before the first ". " (or the final
+    full stop), and only for a status of 300 or more on a reason whose sentence doesn't name one already."""
+    if status is None or status < 300 or reason in _NAMES_ITS_STATUS or reason == "redirected" or "HTTP" in sentence:
+        return sentence
+    end = sentence.find(". ")
+    cut = len(sentence) - 1 if end == -1 else end
+    return f"{sentence[:cut]} (HTTP {status}){sentence[cut:]}"
 
 
 def _products(count: int) -> str:
@@ -526,16 +679,16 @@ def describe(outcome: ReadOutcome) -> str:
         where = f" ({outcome.detail})" if outcome.detail else ""
         return f"The store sent the request to another address{where}. Update the store's address."
     if reason == "wc_too_old":
-        return f"WooCommerce {outcome.wc_version} is too old. ShelfSync needs 5.8 or newer."
+        if outcome.wc_version:
+            return f"WooCommerce {outcome.wc_version} is too old. ShelfSync needs 5.8 or newer."
+        return "The store's WooCommerce is too old. ShelfSync needs 5.8 or newer."
     if reason == "cloudflare_52x":
         text = "Cloudflare couldn't reach the store's server" + (f" (HTTP {status})." if status else ".")
     elif reason == "server_error":
         text = "The store had an error" + (f" (HTTP {status})." if status else ".")
     else:
         text = _REASON_TEXT.get(reason, "The test failed.")
-    if status and reason not in _NAMES_ITS_STATUS:
-        text += f" (HTTP {status})"
-    return text
+    return with_status(text, reason, status)
 
 
 TransportFactory = Callable[[ssl.SSLContext, str], httpx.BaseTransport]
@@ -550,7 +703,12 @@ def run_check(
         return 1
     context = tls_context(cert)
     with WooClient(site.url, pair[0], pair[1], transport=transport_factory(context, site.host)) as client:
-        outcome = run_read_test(client, SPACING_MS, STORE_CODE)
+        try:
+            outcome = run_read_test(client, SPACING_MS, STORE_CODE)
+        except ValueError:
+            # A 3xx whose `Location` the IDNA codec can't decode: httpx reads it to build `next_request` even with
+            # redirects off, and `WooClient` lets that error through (reported for the backend, run file m2.8 §3).
+            outcome = ReadOutcome("redirected")
     say(f"{site.url}: {describe(outcome)}")
     return 0 if outcome.ok else 1
 
@@ -600,6 +758,12 @@ def say(text: str, stream: Any = None) -> None:
     out.flush()
 
 
+def local_time(moment: datetime.datetime) -> str:
+    """A time shown as this PC's local time with the zone's name (CLAUDE.md: store UTC, show local time and zone)."""
+    local = moment.astimezone()
+    return f"{local:%Y-%m-%d %H:%M} {local.tzname() or ''}".rstrip()
+
+
 def default_cert(site: Site) -> Path:
     return DEFAULT_CERT_DIR / f"{site.host}.crt"
 
@@ -642,12 +806,15 @@ def main(
     prompt: Callable[[str], str] = hidden_prompt,
     transport_factory: TransportFactory = make_transport,
     restrict: Callable[[Path], None] = restrict_to_current_user,
+    private_folder: Callable[[Path], str | None] = folder_is_private,
 ) -> int:
     args = parse_args(argv)
     try:
         if args.command == "cert":
-            files, made = write_certificate(args.site, args.dir, args.laragon, force=args.force, restrict=restrict)
-            say(f"Made a certificate for {args.site.host}, valid until {made.not_after:%Y-%m-%d} (UTC).")
+            files, made = write_certificate(
+                args.site, args.dir, args.laragon, force=args.force, restrict=restrict, private_folder=private_folder
+            )
+            say(f"Made a certificate for {args.site.host}, valid until {local_time(made.not_after)}.")
             say(f"  SHA-256 fingerprint  {made.fingerprint}")
             say(f"  Certificate          {files.cert}")
             say(f"  Private key          {files.key} (only your account can open it)")
