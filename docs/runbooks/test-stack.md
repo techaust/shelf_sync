@@ -1,6 +1,6 @@
-# The test stack: moto S3 server, and Laragon (later)
+# The test stack: moto S3 server, and Laragon
 
-The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): a Laragon site with WooCommerce and your Amazon S3 Storage extension, whose "User defined" endpoint points at **moto server**, a local stand-in for Amazon S3 ($0). This page covers the moto half today; the Laragon half is added in m2.8 (last section).
+The test stack is where every write is proven before it reaches a real store ([07 §5](../07-testing.md), [04 §10](../04-architecture.md)): a Laragon site with WooCommerce and your Amazon S3 Storage extension, whose "User defined" endpoint points at **moto server**, a local stand-in for Amazon S3 ($0). This page covers the moto half (sections 1 and 2) and the Laragon half (section 3, being written in m2.8).
 
 Nothing here touches your real bucket, AWS account or stores.
 
@@ -80,6 +80,85 @@ The same check runs automatically in the tests (`tests/test_testenv_moto_s3.py`,
 
 ## 3. Laragon and the S3 extension (the owner's, m2.8)
 
-To be written in m2.8. What it will cover: making the Laragon site (`https://<site>.test`) with WordPress and WooCommerce, activating your Amazon S3 Storage extension on it (your licence allows it on the local test site, [11](../11-decisions.md) 2026-10-25; that row named LocalWP, so it's confirmed for Laragon before m2.8 activates it), setting its "User defined" provider to the endpoint, region, bucket and made-up keys above (04-A V6), and the one script that adds sample products.
+_Being written in m2.8._ This section has the site's certificate (§3.2) so far. Still to come in m2.8: WordPress, WooCommerce and its two keys, your Amazon S3 Storage extension (your licence allows it on the local test site, [11](../11-decisions.md) 2026-10-25; that row named LocalWP, so it's confirmed for Laragon before m2.8 activates it) set to the S3 server above (04-A V6), the sample products, and the check.
 
-**Decided 2026-11-05** ([11](../11-decisions.md), [runs/m2.0-plan.md](../runs/m2.0-plan.md) §3 Q3): the test site runs in **Laragon** (already installed at `C:\laragon`; its free tier is for non-commercial use only, and you made the call on its terms). ShelfSync signs in with Basic auth over Laragon's own HTTPS, and only the test harness is given Laragon's certificate file (`C:\laragon\etc\ssl\laragon.crt`): the app gets no new setting or package. Whether Python 3.15 accepts that certificate for a `.test` address is checked first in m2.8 (04-A V57).
+**Decided 2026-11-05** ([11](../11-decisions.md), [runs/m2.0-plan.md](../runs/m2.0-plan.md) §3 Q3):
+- The test site runs in **Laragon**, already installed at `C:\laragon`. Its free tier is for non-commercial use only, and you made the call on its terms.
+- The test harness (`testenv/laragon.py`) reaches the site over HTTPS with WooCommerce's Basic auth. Only the harness trusts the site's certificate: the ShelfSync app gets no new setting or package.
+
+**Why the site gets its own certificate** ([04-A V57](../04-architecture-appendix/A-stack-verification.md), [runs/m2.8](../runs/m2.8-laragon-test-stack.md) §2):
+- Python refuses Laragon's own certificate for `shelfsync-test.test`. Laragon's certificate covers `*.test`, and a wildcard that sits right under `.test` never matches a site name.
+- Laragon also rewrites that certificate itself. Adding the site's name to `C:\laragon\etc\ssl\auto.openssl.conf` did nothing. Turning SSL off and on rebuilt that file and the certificate, and dropped the added name (2026-11-05).
+- So the harness makes a certificate for exactly `shelfsync-test.test`, and the site uses it (§3.2). You chose this on 2026-11-05.
+
+### 3.1 Make the site (you)
+Full steps come later in m2.8. In short, from Laragon's own quick start (laragon.org/docs/quick-start):
+1. Open Laragon and click **Start All**.
+2. Click **Menu › Quick app › WordPress**.
+3. Name it `shelfsync-test`. Laragon makes the folder `C:\laragon\www\shelfsync-test`, downloads WordPress into it, and the site answers at `shelfsync-test.test`.
+4. Turn on HTTPS: **Menu › Apache › SSL › Enabled**.
+
+### 3.2 Give the site its own certificate (you, in Windows PowerShell)
+Do this after §3.1: the command checks that `C:\laragon\www\shelfsync-test` exists.
+
+**What it writes:**
+- `C:\ShelfSync-TestStack\tls\shelfsync-test.test.crt` (the certificate) and `C:\ShelfSync-TestStack\tls\shelfsync-test.test.key` (its private key; only your Windows account can open it). The folder is outside Laragon's own folders, outside the `shelf_sync` folder, and outside `AppData`.
+- `C:\laragon\etc\apache2\sites-enabled\00-shelfsync-test.test.conf`, a small Apache file that serves the site over HTTPS with that certificate.
+
+Nothing secret is printed. The key never leaves this PC and never goes into the `shelf_sync` folder.
+
+**Steps:**
+1. Open **Windows PowerShell**: click Start, type `PowerShell`, click **Windows PowerShell**. Use this, not the Claude app's terminal.
+2. Go to the `shelf_sync` folder:
+
+```powershell
+cd "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync"
+```
+
+3. Tell uv never to download a Python (this window only):
+
+```powershell
+$env:UV_PYTHON_DOWNLOADS='never'
+```
+
+4. Make the certificate:
+
+```powershell
+uv run python -m testenv.laragon cert
+```
+
+   It prints "Made a certificate for shelfsync-test.test, valid until <date> (UTC).", then its SHA-256 fingerprint and the three files above.
+   - If it says "Already there", the files exist from an earlier run; nothing was changed. Add `--force` to the command only if you mean to replace them.
+   - If it says "Make the site in Laragon first", do §3.1.
+5. Reload Apache with Laragon's own command (laragon.org/docs/cli):
+
+```powershell
+C:\laragon\laragon.exe reload apache
+```
+
+   Clicking **Stop**, then **Start All** in Laragon does the same.
+6. Claude runs `check` once the site's keys are saved (later in this section). It must say "Connected in <n> ms. WooCommerce <version>, …". A certificate problem shows as "The store's security certificate wasn't accepted."
+
+**Why Laragon shouldn't undo this, and what is only assumed:**
+- **Documented by Laragon** (laragon.org/docs/pretty-urls): Laragon writes each site's Apache file itself, named `C:\laragon\etc\apache2\sites-enabled\auto.<site>.test.conf`. The template for every one of them is `C:\laragon\usr\tpl\VirtualHost.tpl`. The `cert` command touches neither.
+- **Documented by Apache 2.4** (`Include` and name-based virtual hosts):
+  - The files in `sites-enabled` are read in alphabetical order. Laragon's `httpd.conf` reads them with `IncludeOptional "C:/laragon/etc/apache2/sites-enabled/*.conf"`, read on this PC on 2026-11-05.
+  - The first site whose `ServerName` matches answers.
+  - `00-shelfsync-test.test.conf` sorts before `auto.shelfsync-test.test.conf`, so it answers for `shelfsync-test.test` while Laragon's own file stays as Laragon wrote it.
+- **Not documented: that Laragon leaves a file without the `auto.` prefix alone.** Laragon's docs don't say so (checked 2026-11-05). Laragon's own `00-default.conf` is such a file. **Unverified until you've done step 7.**
+7. **Check that Laragon keeps it.** In Laragon:
+   - turn SSL off and on again (**Menu › Apache › SSL › Enabled**, twice: this is what rewrote Laragon's certificate on 2026-11-05);
+   - click **Stop**, then **Start All**;
+   - in File Explorer, open `C:\laragon\etc\apache2\sites-enabled`. `00-shelfsync-test.test.conf` must still be there. Tell Claude whether it is, and Claude runs `check` again.
+
+   If the file is gone, tell Claude: Laragon does rewrite it, and this part of the runbook changes.
+
+**Keep the files out of `C:\laragon\etc\ssl`.** Laragon rewrites its own certificate files there.
+
+**A browser warns about this certificate** if you open `https://shelfsync-test.test`. Windows doesn't trust it: only the harness does, by the 2026-11-05 decision. Use `http://shelfsync-test.test` for the WordPress admin pages. The harness alone uses `https`, where WooCommerce accepts its keys.
+
+**Renew or replace it:** the certificate is valid for a year (the date is printed). Run step 4 with `--force` (`uv run python -m testenv.laragon cert --force`), then step 5. `check` picks up the new file by itself.
+
+**Undo it:**
+1. Delete `C:\laragon\etc\apache2\sites-enabled\00-shelfsync-test.test.conf` and the folder `C:\ShelfSync-TestStack`.
+2. Run step 5. The site goes back to Laragon's own settings.

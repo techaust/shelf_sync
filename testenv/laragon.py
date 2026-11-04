@@ -541,7 +541,8 @@ def main(
             say(f"  Certificate          {files.cert}")
             say(f"  Private key          {files.key} (only your account can open it)")
             say(f"  Apache site file     {files.vhost}")
-            say("Next: restart Laragon's Apache (in Laragon: Stop, then Start All), then run the check command.")
+            say(f'Next: reload Apache with Laragon\'s own command, "{args.laragon / "laragon.exe"}" reload apache')
+            say("(or in Laragon: Stop, then Start All), then run the check command.")
             return 0
         secrets = secrets_factory()
         if args.command == "keys":
