@@ -8,7 +8,7 @@ metadata:
   modified: 2026-11-02T08:13:18.836Z
 ---
 
-Since 2026-10-29 the owner also works in Claude Code **cloud sessions**, in the `shelf_sync` environment, and may hand a day over to one ("I am continuing in the cloud session"). The first one started clean (Python 3.14.8, Node 24.19.0, uv 0.12.19 via `tools/cloud/setup.sh`).
+Since 2026-10-29 the owner also works in Claude Code **cloud sessions**, in the `shelf_sync` environment, and may hand a day over to one ("I am continuing in the cloud session"). The first one started clean (Python 3.14.8, Node 24.19.0, uv 0.12.19 via `tools/cloud/setup.sh`). From 2026-11-04 the script installs Python 3.15.2, and the environment keeps its own copy of the script, so the owner must upload it again whenever it changes.
 
 Non-obvious facts learned setting it up:
 - On the **Team plan** the screens differ from Anthropic's docs: the GitHub connector is an Owner switch (claude.ai/admin-settings/connectors), environments are made on the **Cloud environments** admin page, and network access offers **None / Limited / Full** (no "Trusted"). The owner chose Limited with seven allowed sites (runbooks/cloud-sessions.md §2.3).
