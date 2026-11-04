@@ -6,19 +6,20 @@
 | **Date** | 2026-10-25 |
 | **Rule** | CLAUDE.md hard rule 8: **every tool that fits a task is used automatically**, without the owner asking (§3). Using a tool never bypasses the approval rules: anything that writes to the live stores, S3 or GitHub, or installs a plugin, MCP server or package, still needs the owner's yes for that action. Models and effort: [12](12-models-and-usage.md) |
 
-## 1. This PC (checked 2026-10-25)
+## 1. This PC (checked 2026-10-25; rechecked 2026-11-04 after the fresh start)
 
 | Item | Found | Needed | Action |
 |---|---|---|---|
 | Windows | 11 Home Single Language | 10/11 | Home has no Windows Sandbox: the clean-account test uses a second local account ([07 §7](07-testing.md)) |
 | CPU / RAM | Intel i3-1115G4, 2 cores / 4 threads; 7.8 GB | — | At most 2 agents at once, at most 1 using a browser; heavy commands queued ([12 §4](12-models-and-usage.md)); the NFR-3 targets are set for this PC |
-| Free disk | C: 77.5 GB, D: 256.5 GB | ~5 GB for the test stack and the calibration cache | OK |
+| Free disk | C: 189.3 GB, D: 246.6 GB | ~5 GB for the test stack and the calibration cache | OK |
 | Python | 3.15.2 (installed by the owner after the 2026-11-04 format; the only Python in `AppData\Local\Programs\Python`) | 3.15 (owner, 2026-11-04; 3.14 from 2026-10-27) | OK |
-| Node / npm | 24.19.0 / 11.17.0 | For the UI and the hook scripts | OK |
-| git / GitHub CLI | 2.55.0 / 2.101.0, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; every push, merge and settings change needs the owner's yes |
-| NSIS | not installed | Release builds (CI); locally only for M1b testing | Installed at M1b with the owner's yes |
+| uv | 0.12.19 | Locked Python packages | OK; always with `UV_PYTHON_DOWNLOADS=never` |
+| Node / npm | 24.22.1 / 11.19.1 | For the UI and the hook scripts | OK |
+| git / GitHub CLI | 2.56.0 / 2.103.3, signed in as `techaust` | — | Repo `techaust/shelf_sync` created 2026-10-26, public during development; branch pushes and PR merges are automatic (owner, 2026-10-29), repo settings, tags and releases need the owner's yes |
+| NSIS | 3.13, in the shared `Applications\tools\nsis-3.13` folder | Release builds (CI, and the local release build before a push) | OK |
 | LocalWP | not checked | Test stack (M2) | Installed at M2 with the owner's yes |
-| moto | not installed | Test stack (M2) | A pip package in the dev dependencies |
+| moto | `moto[s3]` 5.2.4 in the dev dependencies | Tests and the test stack (M2) | OK |
 | Smart App Control state | **Off** (owner, 2026-10-25) | Re-recorded on the clean account at M1b | Owner checks (runbook `clean-account.md`); Claude never changes it |
 
 ## 2. Found in this environment (2026-10-26, Team plan)
@@ -89,7 +90,7 @@ Before starting a task, the lead (and each agent) loads every skill in its row a
 
 ## 7. Packages (added with the owner's yes at the milestone that needs them)
 - **Python, run time:** fastapi, uvicorn, python-multipart, httpx, boto3, keyring, cryptography, pystray, Pillow, windows-toasts.
-- **Python, dev:** uv (hash-locked dependencies), ruff, mypy, pytest, pytest-cov, pytest-benchmark, hypothesis, respx, moto[server], bandit, pip-audit.
+- **Python, dev:** uv (hash-locked dependencies), ruff, mypy, pytest, pytest-cov, pytest-benchmark, hypothesis, respx, moto[s3] (owner, 2026-11-02), bandit, pip-audit.
 - **UI, run time:** react, react-dom, react-router, @tanstack/react-query, @tanstack/react-virtual, @radix-ui/* (incl. Toast), lucide-react.
 - **UI, dev:** vite, typescript, tailwindcss, @biomejs/biome, vitest, @playwright/test, @axe-core/playwright, openapi-typescript.
 - **Build:** NSIS; the Python 3.15 embeddable package (SHA-256 pinned).
