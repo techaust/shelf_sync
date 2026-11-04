@@ -138,9 +138,16 @@ Nothing secret is printed. The key never leaves this PC and never goes into the 
 uv run python -m testenv.laragon cert
 ```
 
-   It prints "Made a certificate for shelfsync-test.test, valid until <date> (UTC).", then its SHA-256 fingerprint and the three files above.
-   - If it says "Already there", the files exist from an earlier run; nothing was changed. Add `--force` only if you mean to replace them. A replacement is written whole before it takes the old one's place.
+   It prints "Made a certificate for shelfsync-test.test, valid until <date> <time> <your time zone>.", then its SHA-256 fingerprint and the three files above.
+   - If it says "Already there", the files exist from an earlier run; nothing was changed. To replace them on purpose, use **the replace command** below instead.
    - If it says "Make the site in Laragon first", do §3.1.
+
+   **The replace command** (used in step 5 and under "Renew or replace it"): it makes a new certificate and key in place of the old ones. All three files are written first and swapped in together; if anything fails, the old ones are put back.
+
+```powershell
+uv run python -m testenv.laragon cert --force
+```
+
 3. **(you)** Reload Apache with Laragon's own command (laragon.org/docs/cli):
 
 ```powershell
@@ -166,14 +173,14 @@ C:\laragon\laragon.exe reload apache
    Tell Claude what you see; **(Claude)** then runs `check` again.
 
    **If the file is gone:**
-   1. **(you)** Put it back: run step 2 with `--force`, then step 3.
+   1. **(you)** Put it back: run **the replace command** (step 2), then step 3.
    2. **(Claude)** The runbook then needs a way Laragon can't undo, for example Laragon's documented template (`usr\tpl\VirtualHost.tpl`). Claude proposes one; nothing changes until you agree.
 
 **Keep the files out of `C:\laragon\etc\ssl`.** Laragon rewrites its own certificate files there.
 
 **A browser warns about this certificate** if you open `https://shelfsync-test.test`. Windows doesn't trust it: only the harness does, by the 2026-11-05 decision. Use `http://shelfsync-test.test` for the WordPress admin pages. The harness alone uses `https`, where WooCommerce accepts its keys.
 
-**Renew or replace it (you):** the certificate is valid for a year (the date is printed). Run step 2 with `--force` (`uv run python -m testenv.laragon cert --force`), then step 3. `check` picks up the new file by itself.
+**Renew or replace it (you):** the certificate is valid for a year (the date is printed). Run **the replace command** (step 2), then step 3. `check` picks up the new file by itself.
 
 **Undo it (you):**
 1. Delete `C:\laragon\etc\apache2\sites-enabled\00-shelfsync-test.test.conf` and the folder `C:\ShelfSync-TestStack`.
@@ -236,7 +243,7 @@ uv run python -m testenv.laragon seed
 uv run python -m testenv.laragon check
 ```
 
-   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 9 downloadable products." The count of 9 is **unverified** until it runs.
+   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 10 downloadable products." Settings counts every status except trash (draft, pending and private included), so: aurora, pixel-forms, northwind, harbor, quiet-cache, tidewater-seo, mosaic-gallery, mosaic-gallery-bundle, emberline and lantern. The variable product (its files are on its variations), the service and the trashed one aren't counted. **Unverified** until it runs.
 
 **The samples** (the full table is in [runs/m2.8](../runs/m2.8-laragon-test-stack.md) §3):
 - simple themes and plugins, and one product with two downloads;
