@@ -53,5 +53,6 @@ Follow CLAUDE.md's rules from the copy on GitHub. Check every download link and 
 | Old chat history | Not needed: the record and the memory notes carry on |
 | The leftover folders in `.claude\worktrees\` | Gone with the format |
 | The release signing key | None existed on 2026-11-03, so nothing is lost |
+| The Laragon test site, its certificate (`C:\ShelfSync-TestStack\tls\`) and its keys in Credential Manager | Test data only: install Laragon again and redo [test-stack.md](test-stack.md) §3 (the owner's steps, then Claude's `check` and `seed`) |
 
 **Windows security:** a freshly installed Windows may start with Smart App Control in Evaluation mode; before the format it was **Off** ([09 §1](../09-tooling.md)), and on 2026-11-04 it read **Off** again (`VerifiedAndReputablePolicyState` 0). That's your decision, and Claude never changes it (CLAUDE.md rule 12).
