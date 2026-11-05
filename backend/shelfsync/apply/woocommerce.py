@@ -4,7 +4,9 @@ Rules this module keeps:
 - HTTP Basic over HTTPS, nothing else: the consumer key and secret are in the `Authorization` header and **never** in a
   URL or a query string. A request to a non-HTTPS address is refused before it is built.
 - one client with `trust_env=False` (no proxy variable or `.netrc` file ever sees the keys), explicit timeouts and
-  **no redirects**: a 3xx is a result (`redirected`, naming the target host), and the keys never go there.
+  **no redirects**: a 3xx is a result (`redirected`, naming the target host), and the keys never go there. It is
+  refused in a response hook (`_refuse_redirect`), before httpx reads `Location` to build `next_request` (it does even
+  with redirects off, 04-A V58), so a `Location` httpx can't read is still `redirected`, with no host, never a crash.
 - the answer is streamed and read at most `MAX_BODY_BYTES` (1 MiB); more is a `bad_response`.
 - **GET only.** `WooClient` has no method for any other verb until M5, and `GetOnlyTransport` refuses one even if a
   later change reaches for it: the contract test builds a client and tries.
@@ -115,14 +117,24 @@ def _is_tls_error(error: BaseException) -> bool:
 
 
 def _redirect_host(location: str | None) -> str | None:
-    """The host a redirect points at, lowercased, or None. A relative target stays on the store's own host."""
+    """The host a redirect points at, lowercased, or None. A relative target stays on the store's own host; one that
+    can't be parsed (httpx raises `InvalidURL`, and the IDNA codec a `ValueError` subclass, `idna.IDNAError`) names
+    none."""
     if not location:
         return None
     try:
         host = httpx.URL(location).host.lower()
-    except httpx.InvalidURL:
+    except httpx.InvalidURL, ValueError:
         return None
     return host if _HOST.fullmatch(host) else None
+
+
+def _refuse_redirect(response: httpx.Response) -> None:
+    """The response hook: stop at a redirect status before httpx reads its `Location` (04-A V58). httpx runs the hooks
+    first, then builds `next_request` from `Location` even with redirects off, and that raises for one it can't read.
+    Raised here, the refusal reaches `WooClient.get` unchanged, with the answer closed."""
+    if response.status_code in _REDIRECTS:
+        raise ReadRefused("redirected", _redirect_host(response.headers.get("location")), response.status_code)
 
 
 class WooClient:
@@ -152,6 +164,7 @@ class WooClient:
             },
             follow_redirects=False,
             trust_env=False,
+            event_hooks={"response": [_refuse_redirect]},
         )
 
     def close(self) -> None:
@@ -165,7 +178,9 @@ class WooClient:
 
     def get(self, path: str, params: dict[str, str], deadline: float) -> WooResponse:
         """One GET. `deadline` is a time on this client's monotonic clock after which the whole test has run out.
-        Raises `ReadRefused` for a transport failure, a timeout, a redirect and an over-long body."""
+        Raises `ReadRefused` for a transport failure, a timeout, a redirect and an over-long body. A redirect status
+        (301, 302, 303, 307, 308) is refused in the response hook `_refuse_redirect`, before httpx reads `Location`;
+        that `ReadRefused` comes out of `stream` as it was raised."""
         if any(name.lower().startswith("consumer_") or "key" in name.lower() for name in params):
             raise ValueError("credentials never go in a query string")
         remaining = deadline - self._monotonic()
@@ -174,10 +189,6 @@ class WooClient:
         timeout = httpx.Timeout(min(READ_SECONDS, remaining), connect=min(CONNECT_SECONDS, remaining))
         try:
             with self._client.stream("GET", self._base + path, params=params, timeout=timeout) as response:
-                if response.status_code in _REDIRECTS:
-                    raise ReadRefused(
-                        "redirected", _redirect_host(response.headers.get("location")), response.status_code
-                    )
                 declared = response.headers.get("content-length", "")
                 if declared.isascii() and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read

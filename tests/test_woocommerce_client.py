@@ -5,13 +5,14 @@ never in a URL, no redirect followed, the 1 MiB cap, and GET only."""
 import base64
 import logging
 import ssl
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import httpx
 import pytest
 
 from shelfsync import __version__
 from shelfsync.apply.woocommerce import (
+    _REDIRECTS,
     MAX_BODY_BYTES,
     GetOnlyTransport,
     NonGetRefused,
@@ -210,6 +211,72 @@ def test_a_redirect_without_a_usable_target_still_reports_redirected_with_no_hos
     assert run(FakeWoo(status=httpx.Response(302))).detail is None
     assert run(FakeWoo(status=httpx.Response(302, headers={"Location": "/login"}))).detail is None
     assert run(FakeWoo(status=httpx.Response(302, headers={"Location": "https://bad host/"}))).detail is None
+
+
+# A `Location` httpx can't read: an IDNA label the codec refuses (`idna.IDNAError` from `URL.host`), a malformed URL
+# (`InvalidURL`, which httpx turns into `RemoteProtocolError` while it builds `next_request`), and an empty host with
+# a port out of range. The 3xx is refused in a response hook before httpx reads it (04-A V58).
+UNREADABLE_LOCATIONS = ["https://xn--a.test/", "http://[::1", "https://user@:99999/"]
+
+
+@pytest.mark.parametrize("location", UNREADABLE_LOCATIONS)
+@pytest.mark.parametrize("status", [301, 307])
+def test_a_redirect_to_an_unreadable_address_reads_as_redirected_with_no_host(location: str, status: int) -> None:
+    woo = FakeWoo(status=httpx.Response(status, headers={"Location": location}))
+    outcome = run(woo)
+    assert (outcome.reason, outcome.detail, outcome.http_status, outcome.health) == (
+        "redirected",
+        None,
+        status,
+        "unreachable",
+    )
+    assert len(woo.requests) == 1  # the target was never asked
+
+
+def test_an_unreadable_redirect_on_the_second_get_keeps_the_first_gets_versions() -> None:
+    woo = FakeWoo(products_answer=httpx.Response(302, headers={"Location": "https://xn--a.test/"}))
+    outcome = run(woo)
+    assert (outcome.reason, outcome.http_status, outcome.wc_version) == ("redirected", 302, "9.4.1")
+    assert [r.url.path for r in woo.requests] == [SYSTEM_STATUS, PRODUCTS]
+
+
+class _ClosingStream(httpx.SyncByteStream):
+    """A body that records whether it was closed."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield b"moved"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_get_raises_the_hooks_refusal_unwrapped_and_closes_the_answer() -> None:
+    stream = _ClosingStream()
+
+    def moved(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://xn--a.test/"}, stream=stream)
+
+    client = WooClient(STORE_URL, KEY, SECRET, transport=httpx.MockTransport(moved), monotonic=lambda: 1000.0)
+    with client, pytest.raises(ReadRefused) as refused:
+        client.get(SYSTEM_STATUS, {}, deadline=2000.0)
+    assert type(refused.value) is ReadRefused
+    assert (refused.value.reason, refused.value.detail, refused.value.status) == ("redirected", None, 302)
+    assert stream.closed
+
+
+def test_the_refused_redirect_statuses_are_exactly_httpxs() -> None:
+    """The hook refuses exactly the statuses httpx builds a `next_request` for (`Response.has_redirect_location`)."""
+    httpx_redirects = {s for s in range(300, 400) if httpx.Response(s, headers={"Location": "/"}).has_redirect_location}
+    assert httpx_redirects == _REDIRECTS
+
+
+@pytest.mark.parametrize("status", [300, 304])
+def test_a_3xx_httpx_does_not_follow_is_a_bad_response_even_with_an_unreadable_location(status: int) -> None:
+    outcome = run(FakeWoo(status=httpx.Response(status, headers={"Location": "https://xn--a.test/"})))
+    assert (outcome.reason, outcome.http_status) == ("bad_response", status)
 
 
 def test_a_body_over_one_mebibyte_is_refused() -> None:
