@@ -18,7 +18,7 @@ All merged on green under the automatic rule.
 **Seen 2026-11-05** after the owner's full restart of the Claude app: Sentry, Supabase, Upstash, Cloudflare and Playwright are hidden; the Claude Docs connector and `scheduled-tasks` still show, and the deny rules stop their tools (09 §2, [11](11-decisions.md)).
 
 ## In progress
-- **No agent is running.** The t8 side session ([runs/t8-woo-redirect.md](runs/t8-woo-redirect.md)) is done; the app's worktree for it, `.claude/worktrees/loving-khayyam-9dfca1`, goes when that session is archived.
+- **No agent is running.** The t8 side session ([runs/t8-woo-redirect.md](runs/t8-woo-redirect.md)) is done and deleted by the owner; its worktree and local branch are removed. No worktree is left.
 
 ## Next
 1. **The Laragon site (the owner's part, about 20 minutes):** [runbooks/test-stack.md](runbooks/test-stack.md) §3.1–§3.4: make the site, `cert`, reload Apache, check Laragon keeps the site file, WooCommerce and its two keys, the S3 extension pointed at the moto server.
@@ -34,8 +34,7 @@ All merged on green under the automatic rule.
    - still open from 2026-11-02: the moto package set, m2.7's L1–L13, T2 to T5.
 4. **Make the AWS keys again** (lost in the format), before the exit test.
 5. **Where the release signing key lives**, since the owner keeps no backups: decide before the key is made.
-6. **Archive the finished t8 side session** if wanted (its worktree goes with it).
-7. **Still open from before:**
+6. **Still open from before:**
    - 13's proposed strings (the Storage Test row, the region error);
    - T7's rehearsal outside Claude;
    - stopping `testenv/moto_s3.py` with Ctrl+C in a real console;
