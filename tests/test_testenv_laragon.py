@@ -674,6 +674,23 @@ def test_check_words_a_redirect_to_an_unreadable_address(
     )
 
 
+def test_check_reports_only_the_idna_error_as_a_redirect(
+    woo: tuple[RunningServer, FakeWoo],
+    site_cert: laragon.SiteCertificate,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-check finding: a `ValueError` that isn't the IDNA codec's `UnicodeError` surfaces, never as `redirected`."""
+    server, _ = woo
+
+    def broken(*_: object, **__: object) -> object:
+        raise ValueError("not a redirect")
+
+    monkeypatch.setattr(laragon, "run_read_test", broken)
+    with pytest.raises(ValueError, match="not a redirect"):
+        run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert))
+
+
 def test_check_with_another_certificate_is_a_tls_error(
     woo: tuple[RunningServer, FakeWoo], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

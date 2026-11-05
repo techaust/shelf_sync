@@ -705,9 +705,10 @@ def run_check(
     with WooClient(site.url, pair[0], pair[1], transport=transport_factory(context, site.host)) as client:
         try:
             outcome = run_read_test(client, SPACING_MS, STORE_CODE)
-        except ValueError:
-            # A 3xx whose `Location` the IDNA codec can't decode: httpx reads it to build `next_request` even with
-            # redirects off, and `WooClient` lets that error through (reported for the backend, run file m2.8 §3).
+        except UnicodeError:
+            # A 3xx whose `Location` the IDNA codec can't decode (`idna.IDNAError` is a `UnicodeError`): httpx reads
+            # it to build `next_request` even with redirects off, and `WooClient` lets that error through (reported
+            # for the backend, run file m2.8 §3). Any other error is not a redirect and is left to surface.
             outcome = ReadOutcome("redirected")
     say(f"{site.url}: {describe(outcome)}")
     return 0 if outcome.ok else 1
