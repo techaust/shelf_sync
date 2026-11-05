@@ -68,6 +68,79 @@ None.
 ## 2. Early check
 
 ## 3. Builder report
+_(builder, `claude-opus-5-5/high`, 2026-11-05; worktree branch `worktree-agent-a0f50490d86bca832`, cut from `6f7ea8c`; commits `758044d` fix and tests, `64ec046` V58 and 06, then this report)_
+
+**Done as §1 says.** A 3xx in `_REDIRECTS` is refused in the response hook `_refuse_redirect`, so all three unreadable addresses read as `redirected` with no host, and Test connection saves that health rather than answering 500. Every check passes: pytest 2801 passed, 19 skipped, 56 deselected; ruff; ruff format; mypy; mypy `--platform linux`; bandit 0 issues. **One difference from the brief:** `https://user@:99999/` was never a crash. The old code already read it as `redirected` with no host (details under "Pre-fix failures").
+
+### Skills and tools loaded
+- **Context7 `/encode/httpx/0.28.1`** (event hooks), loaded before writing:
+  - a `response` hook is called "after the response has been fetched from the network, but before it is returned to the caller";
+  - it runs "before determining if the response body should be read";
+  - a hook may raise (the `raise_for_status` example).
+  - The docs don't say whether hooks run before or after the redirect is built. I confirmed that order in the installed source (V58).
+- **The installed source** (`.venv`, httpx 0.28.1, idna 3.20): I re-checked every line number the brief cites, and they all match. I also read `_build_redirect_request` (475-492), the close-and-re-raise in `_send_handling_auth` (958-960) and in `send` (926-928), and `request_context` (`_exceptions.py` 367-379: it only attaches the request to a `RequestError`).
+- **Not loaded:**
+  - `aws-sdk-python-usage`: there's no S3 code here.
+  - `frontend-design`: there's no screen.
+  - `security-review` and `code-review` are the reviewer's (brief §1).
+
+### Files changed
+- `backend/shelfsync/apply/woocommerce.py`:
+  - **New `_refuse_redirect(response)`:** raises `ReadRefused("redirected", _redirect_host(location), status)` for a status in `_REDIRECTS`. It's wired in as `event_hooks={"response": [_refuse_redirect]}` in `WooClient.__init__`.
+  - **`_redirect_host`:** now catches `httpx.InvalidURL, ValueError`.
+  - **Removed:** the dead inline `_REDIRECTS` check in `get`.
+  - **Docstrings:** the module, `get`, `_redirect_host` and the hook now say a 3xx is refused in a response hook before httpx reads `Location` (04-A V58).
+  - `get` has no new `except`, and `store_service.py` is unchanged.
+- `testenv/laragon.py`: `run_check` calls `run_read_test` directly. The `try/except UnicodeError` is gone, and no `UnicodeError` catch is left in `testenv/` (checked with grep). `ReadOutcome` stays imported for `describe`.
+- `tests/test_woocommerce_client.py`: the five new tests listed in §1 (11 cases), plus a small `_ClosingStream` helper. The existing redirect tests are unchanged and now exercise the hook.
+- `tests/test_stores_api.py`: `test_a_redirect_to_an_unreadable_address_is_saved_as_redirected_not_a_500` (3 cases). It uses `signed_in_client(raise_server_exceptions=False)`, so a crash shows as the 500 the app would answer.
+- `tests/test_testenv_laragon.py`:
+  - `test_check_words_a_redirect_to_an_unreadable_address` keeps its assertion. Its docstring now says `WooClient` answers `redirected` with no host.
+  - `test_check_reports_only_the_idna_error_as_a_redirect` became `test_check_lets_an_unexpected_error_surface`, run with `ValueError` and with `UnicodeError`; both must raise.
+  - Both docstrings cite SET-01 and ERR-01, because this module's docstring cites no PRD IDs.
+- `docs/04-architecture-appendix/A-stack-verification.md`: new row V58, with the same columns as the other rows.
+- `docs/06-security.md`, line 41: after "redirects are never followed" it now adds that a 3xx is refused in a response hook before httpx reads its address, so a malformed one still reads as `redirected` (linked to 04-A V58).
+
+### Pre-fix failures (the new tests run against `6f7ea8c`'s code)
+Result: 9 failed and 8 passed.
+
+**Failed:**
+- `…reads_as_redirected_with_no_host`, `https://xn--a.test/`, with 301 and with 307: `idna.core.InvalidCodepoint` escaped (an `IDNAError`, from `_redirect_url` 532 → `URL.host` → `idna.decode`).
+- `…reads_as_redirected_with_no_host`, `http://[::1`, with 301 and with 307: wrong reason, `unreachable` where `redirected` was expected. `InvalidURL` became `RemoteProtocolError`.
+- `test_an_unreadable_redirect_on_the_second_get_keeps_the_first_gets_versions`: `InvalidCodepoint` escaped.
+- `test_get_raises_the_hooks_refusal_unwrapped_and_closes_the_answer`: `InvalidCodepoint` escaped, at `_client.py:532`.
+  - **A bug in my first draft of this test:** with no `monotonic=` given, it used the real clock against `deadline=2000.0` and failed as `timeout`. I fixed the test by giving the client `monotonic=lambda: 1000.0` and ran it again on the unfixed code, where it failed with the `InvalidCodepoint` above.
+- `test_a_redirect_to_an_unreadable_address_is_saved_as_redirected_not_a_500`:
+  - `https://xn--a.test/`: answered **500 `{"error":"internal"}`**.
+  - `http://[::1`: answered 200, but with `reason` `unreachable` and `http_status` None.
+- `test_check_lets_an_unexpected_error_surface[UnicodeError]`: DID NOT RAISE. The old `except UnicodeError` turned it into `redirected`.
+
+**Passed:**
+- **`https://user@:99999/`, with 301 and 307 in the client test and with 301 in the API test.** This differs from the brief, which treats it as unreadable. httpx 0.28.1 parses it with an empty host (`URL.host == ""`) and builds `next_request` without raising: `_redirect_url` copies the store's host into it. So the old code already gave `redirected` with no host. I kept the address in both tests as a regression case, and V58 records the measurement.
+- `test_the_refused_redirect_statuses_are_exactly_httpxs` and `test_a_3xx_httpx_does_not_follow…`, with 300 and with 304. These pin current behaviour, so they pass before and after the fix.
+- `test_check_words_a_redirect_to_an_unreadable_address`: the old workaround handled it.
+- `test_check_lets_an_unexpected_error_surface[ValueError]`: it raised before the fix too.
+
+### Commands and results
+- While working, without the queue: `uv run pytest --no-cov` on the four changed or related modules (`test_woocommerce_client`, `test_stores_api`, `test_testenv_laragon`, `test_testenv_seed`): 368 passed, 1 skipped (a non-Windows path), 4 deselected. `ruff check` and `ruff format --check` on the five changed Python files: clean.
+- Through `UV_PYTHON_DOWNLOADS=never bash tools/heavy.sh --log t8-<name> …`, all exit 0:
+  - `uv run pytest` (`t8-pytest`): **2801 passed, 19 skipped, 56 deselected** in 363 s. Coverage is 93 % in total and 99 % for `apply/woocommerce.py`. Its one missed line, 188 (`raise ReadRefused("timeout")` when the deadline has already passed before a GET), was there before and isn't touched by this change.
+  - `uv run mypy` (`t8-mypy`): no issues in 80 source files (`shelfsync` and `testenv`).
+  - `uv run mypy --platform linux` (`t8-mypy-linux`): no issues in 80 source files.
+  - `uv run bandit -r backend` (`t8-bandit`): 0 issues at every severity. 15 findings are suppressed by `nosec` comments that were there before.
+  - `uv run ruff check` (`t8-ruff`, the one full lint): all checks passed.
+  - `uv run ruff format --check` (`t8-ruff-format`): 184 files already formatted.
+
+### Not verified
+- **No real store and no Laragon site.** Every result comes from `MockTransport` fakes and the loopback fake server in `test_testenv_laragon.py`. The `check` command against the real Laragon site stays the lead's (m2.8).
+- **`release-build.ps1` not run:** the lead runs it at integration, as §1 Done says.
+- **Not run:** `uv run pytest -m windows` and pip-audit (this change adds no package).
+- The reviewer's `Set-Cookie` question (§1 "Out of scope": can `extract_cookies` raise a non-httpx error before the hooks run?) is not looked into.
+
+### Open questions
+None for the owner. For the lead:
+- **Should `https://user@:99999/` stay in the tests?** It never crashed. I kept it as a regression case; another address could replace it if a third crashing example is wanted.
+- **The 06 reference is a link,** `[04-A V58](…)`, like 06's other links to 04-A. Most of 06's V references are plain text, such as "(04-A V22)".
 
 ## 5. Review
 
