@@ -2,6 +2,12 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-05 [#61](https://github.com/techaust/shelf_sync/pull/61) fix(stores): an unreadable redirect Location reads as redirected, never a crash (t8) [SET-01, ERR-01]
+- 2026-11-05 [#60](https://github.com/techaust/shelf_sync/pull/60) feat(testenv): the Laragon half of the test stack (m2.8)
+- 2026-11-05 [#59](https://github.com/techaust/shelf_sync/pull/59) docs: m2.0 Q2, Q3 and Q5 answered; Laragon replaces LocalWP for the test stack
+- 2026-11-04 [#58](https://github.com/techaust/shelf_sync/pull/58) docs(tooling): the AWS MCP stays off until calibration prep
+- 2026-11-04 [#57](https://github.com/techaust/shelf_sync/pull/57) docs(tooling): recheck this PC's tools after the fresh start (09 §1)
+- 2026-11-04 [#56](https://github.com/techaust/shelf_sync/pull/56) docs: end of day 2026-11-04
 - 2026-11-04 [#55](https://github.com/techaust/shelf_sync/pull/55) chore(claude): turn off every tool ShelfSync doesn't use, for this project only
 - 2026-11-04 [#54](https://github.com/techaust/shelf_sync/pull/54) docs: new links for the plan page and the mockup after the fresh start
 - 2026-11-04 [#53](https://github.com/techaust/shelf_sync/pull/53) docs: py315-move merged; the owner's Windows checks pass outside Claude (V49, V55)

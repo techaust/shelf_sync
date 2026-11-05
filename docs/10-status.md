@@ -3,72 +3,66 @@
 _Replaced (never appended) at the end of every session._
 
 ## Date and time
-2026-11-04, 16:20 IST: the end of the day ("end the day"), in the PC session that started at about 01:40 IST. It was the first day on the newly formatted PC.
+2026-11-05, about 15:10 IST: the end of the day ("end the day"), in the PC session that started at about 03:10 IST. The m2.8 work ran overnight while the owner slept; t8 ran in a side session the owner started.
 
 ## Done
 All merged on green under the automatic rule.
 
 | PR | Task | What |
 |---|---|---|
-| [#51](https://github.com/techaust/shelf_sync/pull/51) | Fresh start | **The new folder layout:** `shelf_sync` in `D:\Business\2. GPL Projects\3. Other Assets\Applications\`, NSIS beside it, techaust_platform in `D:\Business\1. Parent Project\TecHaust Technologies\Application\`. Every path in the repo updated. OmniSync is back as read-only reference, and its `config.env` is blocked at the new path. The fresh-start runbook is rewritten from the real run |
-| [#52](https://github.com/techaust/shelf_sync/pull/52) | py315-move (Tier B) | **Python 3.15.2 replaces 3.14.8** (owner's choice):<br>- winrt 4.x forced under windows-toasts 1.3.1.<br>- PyYAML built as pure Python, with its build tools pinned.<br>- The installer embeds 3.15.2.<br>- CI comments, cloud scripts, 04, 04-A (new V55, V56) and the ADRs updated.<br>Reviews: builder, analyst GO, reviewer APPROVE, and a fix re-check APPROVE. Three local release builds passed |
-| [#53](https://github.com/techaust/shelf_sync/pull/53) | py315-move | The owner's `-m windows` run outside Claude passed (51 passed, 1 skipped; cold toast 0.46 s). The run file is closed |
-| [#54](https://github.com/techaust/shelf_sync/pull/54) | Pages | **New links** for the plan page (https://claude.ai/artifact/PznaCjWtR9afUfV1ho4vqN) and the mockup (https://claude.ai/artifact/UER2z6uQage6XFJuHtYCys): the old ones no longer open from the owner's account |
-| [#55](https://github.com/techaust/shelf_sync/pull/55) | Tools | **Everything ShelfSync doesn't use is turned off for this project:**<br>- Sentry, Supabase and Upstash plugins (`@inline`).<br>- The Claude Docs connector.<br>- The user-level Supabase, Upstash and duplicate AWS servers, and scheduled tasks (this PC's `disabledMcpServers`).<br>aws-core and the skills bundle stay on (owner) |
-| (this PR) | End of day | CLAUDE.md rule 8 (where the tool switches live), the 08 status cell, this page, CHANGELOG #53–#55, and two memory notes |
+| [#59](https://github.com/techaust/shelf_sync/pull/59) | m2.0 answers | The owner answered m2.0 §3:<br>- **Q2:** import only into a fresh install.<br>- **Q3:** Laragon (already at `C:\laragon`) replaces LocalWP; on its non-commercial free tier, the owner made the call on its terms.<br>- **Q5:** the owner reads bucket versioning in the S3 console.<br>LocalWP → Laragon across 02, 04, 04-A (new V57), 07, 08, 09 and the runbooks. The plan page was republished |
+| [#60](https://github.com/techaust/shelf_sync/pull/60) | m2.8, Laragon half (Tier B) | **The test harness for the Laragon site** `https://shelfsync-test.test`:<br>- `testenv/laragon.py`: `cert`, `keys`, `check`, `seed` (13 sample products, no SKU), every connection pinned to 127.0.0.1.<br>- The site gets the harness's own exact-name certificate: Python refuses Laragon's `*.test` wildcard, and Laragon rewrites its own certificate (owner's tries, 04-A V57).<br>- Runbook [test-stack.md](runbooks/test-stack.md) §3, click by click, each step marked (you) or (Claude).<br>Reviews: analyst CHANGE (9 fixed), reviewer APPROVE (11 fixed), re-check APPROVE (1 low fixed by the lead) |
+| [#61](https://github.com/techaust/shelf_sync/pull/61) | t8 (Tier A) | **Store client:** a 3xx whose `Location` httpx can't read now answers `redirected` on Test connection instead of crashing (found in m2.8's re-check). It also removed m2.8's stopgap. Analyst GO (4 lows fixed), reviewer APPROVE, 2804 tests passed, release build passed |
+| (this PR) | End of day | CLAUDE.md (Laragon is the owner's, the test-stack commands), 08, the run files closed, fresh-start (the Laragon site comes back by redoing the runbook), this page, CHANGELOG #56–#61 |
 
-**Set up on this PC** (machine-level, not in the repo):
-- **Python 3.15.2:** the owner installed it, outside Claude.
-- **uv 0.12.19** (SHA-256 checked) and **NSIS 3.13** (matches the pin).
-- **Plugins:** `security-guidance` and `aws-core` reinstalled with the owner's yes.
-- **Repo:** the downloaded copy was made into a clone, its git settings set, and the 14 memory notes restored.
-- **Packages:** `uv sync` and `npm ci` (frontend, brand).
+**Seen 2026-11-05** after the owner's full restart of the Claude app: Sentry, Supabase, Upstash, Cloudflare and Playwright are hidden; the Claude Docs connector and `scheduled-tasks` still show, and the deny rules stop their tools (09 §2, [11](11-decisions.md)).
 
 ## In progress
-- Nothing. No agent is running, and the builder's worktree and every finished branch are removed.
+- **No agent is running.** The t8 side session ([runs/t8-woo-redirect.md](runs/t8-woo-redirect.md)) is done and deleted by the owner; its worktree and local branch are removed. No worktree is left.
 
 ## Next
-1. **Check the tool switches** ("check the tools"): after the owner restarts the Claude app, a new session should show no Sentry, Supabase, Upstash or Claude Docs.
-2. **m2.8, the LocalWP half** (Tier B, with the analyst's early check), after the owner's answer to [runs/m2.0-plan.md](runs/m2.0-plan.md) §3 Q3. The 2026-11-03 answers to Q2, Q3 and Q5 were reverted, so all three are open.
-3. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through **Test connection**, and the test stack. The keys were lost in the format and must be made again first ([runbooks/keys-and-policies.md](runbooks/keys-and-policies.md)).
+1. **The Laragon site (the owner's part, about 20 minutes):** [runbooks/test-stack.md](runbooks/test-stack.md) §3.1–§3.4: make the site, `cert`, reload Apache, check Laragon keeps the site file, WooCommerce and its two keys, the S3 extension pointed at the moto server.
+2. **Then the lead:** `check` (closes V57 for Laragon) and `seed`; then the owner tries one download (§3.6, V6). Results go into [runs/m2.8](runs/m2.8-laragon-test-stack.md) §6 and 04-A.
+3. **M2 exit test (m2.9, the owner's):** the two stores (read test only), S3 with both keys through **Test connection**, and the test stack. The AWS keys must be made again first ([runbooks/keys-and-policies.md](runbooks/keys-and-policies.md)).
 
 ## Waits on the owner
-1. **Restart the Claude app.** After that, this session's tools see `uv` on the PATH, the aws-core plugin's AWS server can connect (once AWS keys exist), and the tool switches load.
+1. **The Laragon site setup** (Next 1).
 2. **Upload the new `tools/cloud/setup.sh`** to the `shelf_sync` cloud environment (claude.ai/admin-settings › Cloud environments › `shelf_sync` › Setup script › Choose file). Until then cloud sessions print a Python PROBLEM line.
 3. **Review the "Lead (proposed)" rows** in [11](11-decisions.md):
-   - today's: local Node 24.22.1, and the PyYAML build tools pinned by version only, without a hash or pip-audit;
+   - today's: the test-stack transport, m2.8's harness shape and rules (with the certificate's paths), t8's response-hook rule;
+   - from 2026-11-04: local Node 24.22.1, the PyYAML build tools pinned by version only;
    - still open from 2026-11-02: the moto package set, m2.7's L1–L13, T2 to T5.
-4. **Share the new pages** if anyone else should see them: both are private to the owner's account.
-5. **m2.0-plan §3 Q2, Q3 and Q5** (import rule, WooCommerce over HTTPS on LocalWP, bucket versioning).
-6. **Where the release signing key lives**, since the owner keeps no backups: decide before the key is made.
-7. **Still open from before:**
+4. **Make the AWS keys again** (lost in the format), before the exit test.
+5. **Where the release signing key lives**, since the owner keeps no backups: decide before the key is made.
+6. **Still open from before:**
    - 13's proposed strings (the Storage Test row, the region error);
    - T7's rehearsal outside Claude;
    - stopping `testenv/moto_s3.py` with Ctrl+C in a real console;
    - the Edge check;
    - the M1b exit test;
-   - the optional "Automatically delete head branches" setting.
+   - the optional "Automatically delete head branches" setting;
+   - sharing the plan and mockup pages, if anyone else should see them.
 
 ## Not verified
-- **The tool switches:** they load at session start, so they were set and documented but not yet seen in a new session. Of them, only `claude mcp list` was checked: the three user-level servers show "Disabled for this project".
-- **Toasts under the registered AUMID** from an installed copy on winrt 4.x. The owner's `-m windows` run used the default notifier.
-- **`setup.sh` on a real cloud VM** with Python 3.15.2. The script's SHA-256 matches three sources.
-- **The Python 3.15.2 installer's SHA-256:** the file was gone before it could be checked, so the PSF signature on `python.exe` was checked instead.
-- **The stores' TLS chains:** Python 3.15 rejects certain eMudhra intermediate certificates. Checking the stores needs the owner's go-ahead; it's due before M6.
-- **The new artifact pages on claude.ai and on a phone:** they were built from the repo and published, but not looked at.
+- **Anything against the real Laragon site:** that Laragon leaves `sites-enabled\00-shelfsync-test.test.conf` alone; that Apache reads the certificate's key, which is locked to the owner's account; WooCommerce's Basic auth over that HTTPS; V57's real request; the seed; V6 (the S3 extension against moto). All wait for the owner's runbook steps.
+- **t8 against a real store:** proven with mocked responses and a fuzz test only.
+- **Toasts under the registered AUMID** from an installed copy on winrt 4.x.
+- **`setup.sh` on a real cloud VM** with Python 3.15.2.
+- **The stores' TLS chains** under Python 3.15 (certain eMudhra intermediates are rejected). Checking needs the owner's go-ahead; due before M6.
+- **The artifact pages on a phone:** published, not looked at.
 - **Unchanged from before:**
   - anything against real AWS or a store;
-  - V6 (the S3 extension against moto);
   - Playwright with axe (CI only), Windows High Contrast, a screen reader;
   - a second Windows user (V33), IPv6 listeners, the cross-port parts of V32, 2× full-page shots;
   - a daily backup at a real 02:00 and across DST.
 
 ## Open follow-ups
-- **New today:**
-  - The console code-page low from the py315 re-check: the signature check's `[Console]::OutputEncoding` leaves the shared console on UTF-8 for the rest of a release build. Cosmetic.
-  - 3 moderate npm vulnerabilities in the frontend packages; seen at `npm ci` and not looked at.
-  - The GitHub plugin's connection failed earlier today, then connected; `gh` covers everything either way.
-  - The plugin's AWS server needs AWS keys and `uv` on the PATH.
+- **New today, from t8** ([runs/t8-woo-redirect.md](runs/t8-woo-redirect.md) §6), each its own task:
+  - **F1 (Tier A):** refuse a store host httpx can't decode, at save, in the backup import, and in `testenv/laragon.py`.
+  - **F2 (Tier A, low):** the updater's same httpx exposure in `update/github.py` (its hosts are allowlisted GitHub).
+  - **F3 (low):** one shared `_redirect_host` for the client and `seed`.
+  - A store's cookie text can reach the app log through a `http.cookiejar` warning.
+- **From 2026-11-04:** the console code-page low from the py315 re-check; 3 moderate npm vulnerabilities in the frontend packages (not looked at); the plugin's AWS server needs AWS keys.
 - **The updater in a suffixed (rehearsal) build** must refuse to check or install, before `release_key.PUBLIC_KEY` is set (T6).
 - **T7 review lows 1, 3, 4 and 5**, then one more real rehearsal run.
 - **m2.7:** L1's known limit; review N2 (watch for flaky tests); one isolated Session per Test (M5 client cache).
@@ -76,11 +70,6 @@ All merged on green under the automatic rule.
 - **OmniSync's research scripts** can't run: there's no venv and no keys, and making a venv would change OmniSync.
 
 ## Usage
-- **The 5-hour window:**
-  - 3 % at the start (about 01:50 IST); 19 % at the peak of the py315 task (about 03:45 IST).
-  - After the reset: 11 % now (16:16 IST); it resets at 20:10 IST.
-  - Weekly, all models: 39 %.
-- **Model audit** (`node tools/model-audit.mjs 2026-11-04`): every run Opus 5.5 at high.
-  - 2 flagged "no skill loaded": the builder and the analyst, for whom no 09 §3 row fits.
-  - The 2 `general-purpose` runs are the read-only helpers that `code-review` starts (the allowed exception, 12 §3).
-- **Agents today:** the builder (twice resumed), the analyst, and two reviewers. At most two ran at once.
+- **The 5-hour window:** 16 % at the m2.8 brief (about 03:40 IST); about 60 % at the end of m2.8 (about 05:45 IST); after the 06:10 IST reset, 5 → 13 % for t8; 14 % now (15:10 IST), resetting at 16:10 IST. Weekly, all models: 2 %.
+- **Model audit** (`node tools/model-audit.mjs 2026-11-05`): every run Opus 5.5 at high, within the plan. The one `general-purpose` run in each task is the read-only helper that `code-review` starts (the allowed exception, 12 §3); t8's "no skill loaded" flags are the analysts and the builder, for whom no 09 §3 skill fits.
+- **Agents today:** m2.8: builder (three parts), analyst, reviewer (twice). t8: analyst (twice), builder, reviewer. At most two ran at once.

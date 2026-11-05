@@ -1,4 +1,4 @@
-Status: open
+Status: merged as [#61](https://github.com/techaust/shelf_sync/pull/61) (2026-11-05)
 Tier: A (12 §2: `apply/`, the store client)
 Usage: lead `claude-opus-5-5/high` [start-session] (PC, side session started by the m2.8 lead): 5-h 5 → 13 %; analyst `claude-opus-5-5/high` [none] (brief: Context7 isn't in its tools, so it read httpx 0.28.1 and idna 3.20 from `.venv`): 5 → 6 %; builder `claude-opus-5-5/high` [none; Context7 for httpx, a tool, not a skill] (build, then the early-check lows): 6 → 12 %; analyst `claude-opus-5-5/high` [none] (early check): 11 → 12 %; reviewer `claude-opus-5-5/high` [security-review, code-review] (+ its built-in read-only `general-purpose` helper, Opus 5.5 high): 12 → 13 %. From `node tools/model-audit.mjs 2026-11-05`: every run Opus 5.5 at high; the three "no skill loaded" flags are the analysts and the builder, for whom no 09 §3 skill fits
 
@@ -178,3 +178,5 @@ Not verified by the reviewer: a real store or Laragon site; the full suite, `myp
 
 ## 7. Handover
 _(lead, 2026-11-05)_ Built, early-checked (GO, four lows fixed), reviewed (APPROVE, three lows: one fixed, one folded into F3, one met by the PR title), full checks and the release build passed. **Next:** the PR merges under the automatic rule; then the run file's Status becomes merged. F1–F3 and the cookie-log question wait for their own tasks.
+
+_(lead of m2.8, 2026-11-05, end of day)_ Merged as #61 on green (09:10 UTC). F1–F3 and the cookie-log question are in 10-status's open follow-ups, each for its own task.
