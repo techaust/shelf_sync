@@ -4,9 +4,10 @@ Rules this module keeps:
 - HTTP Basic over HTTPS, nothing else: the consumer key and secret are in the `Authorization` header and **never** in a
   URL or a query string. A request to a non-HTTPS address is refused before it is built.
 - one client with `trust_env=False` (no proxy variable or `.netrc` file ever sees the keys), explicit timeouts and
-  **no redirects**: a 3xx is a result (`redirected`, naming the target host), and the keys never go there. It is
-  refused in a response hook (`_refuse_redirect`), before httpx reads `Location` to build `next_request` (it does even
-  with redirects off, 04-A V58), so a `Location` httpx can't read is still `redirected`, with no host, never a crash.
+  **no redirects**: a redirect status (301, 302, 303, 307 or 308) is a result (`redirected`, naming the target host),
+  and the keys never go there. It is refused in a response hook (`_refuse_redirect`), before httpx reads `Location` to
+  build `next_request` (it does even with redirects off, 04-A V58), so a `Location` httpx can't read is still
+  `redirected`, with no host, never a crash. Any other 3xx (300, 304…) is a `bad_response` with its status.
 - the answer is streamed and read at most `MAX_BODY_BYTES` (1 MiB); more is a `bad_response`.
 - **GET only.** `WooClient` has no method for any other verb until M5, and `GetOnlyTransport` refuses one even if a
   later change reaches for it: the contract test builds a client and tries.

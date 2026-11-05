@@ -213,13 +213,15 @@ def test_a_redirect_without_a_usable_target_still_reports_redirected_with_no_hos
     assert run(FakeWoo(status=httpx.Response(302, headers={"Location": "https://bad host/"}))).detail is None
 
 
-# A `Location` httpx can't read: an IDNA label the codec refuses (`idna.IDNAError` from `URL.host`), a malformed URL
-# (`InvalidURL`, which httpx turns into `RemoteProtocolError` while it builds `next_request`), and an empty host with
-# a port out of range. The 3xx is refused in a response hook before httpx reads it (04-A V58).
-UNREADABLE_LOCATIONS = ["https://xn--a.test/", "http://[::1", "https://user@:99999/"]
+# `Location`s httpx can't read when it builds `next_request`: an IDNA label the codec refuses (`idna.IDNAError` from
+# `URL.host`), the same label protocol-relative (it fails later, in `_redirect_headers`' same-origin check), and a
+# malformed URL (`InvalidURL`, which httpx turns into `RemoteProtocolError`); and a regression case httpx reads with an
+# empty host, filling in the store's (04-A V58, measured). A redirect status is refused in a response hook before
+# httpx reads any of them (04-A V58).
+ODD_LOCATIONS = ["https://xn--a.test/", "//xn--a.test/", "http://[::1", "https://user@:99999/"]
 
 
-@pytest.mark.parametrize("location", UNREADABLE_LOCATIONS)
+@pytest.mark.parametrize("location", ODD_LOCATIONS)
 @pytest.mark.parametrize("status", [301, 307])
 def test_a_redirect_to_an_unreadable_address_reads_as_redirected_with_no_host(location: str, status: int) -> None:
     woo = FakeWoo(status=httpx.Response(status, headers={"Location": location}))

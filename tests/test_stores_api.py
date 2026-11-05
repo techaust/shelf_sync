@@ -583,7 +583,9 @@ def test_a_redirect_names_the_host_it_pointed_at() -> None:
     assert (body["reason"], body["detail"], body["state"]) == ("redirected", "new-home.example", "unreachable")
 
 
-@pytest.mark.parametrize("location", ["https://xn--a.test/", "http://[::1", "https://user@:99999/"])
+# Three `Location`s httpx can't read, and a regression case it reads with an empty host (as in
+# test_woocommerce_client.py; 04-A V58, measured).
+@pytest.mark.parametrize("location", ["https://xn--a.test/", "//xn--a.test/", "http://[::1", "https://user@:99999/"])
 def test_a_redirect_to_an_unreadable_address_is_saved_as_redirected_not_a_500(location: str) -> None:
     moved = httpx.Response(301, headers={"Location": location})
     rig = make_store_rig(woo=FakeWoo(status=moved))
