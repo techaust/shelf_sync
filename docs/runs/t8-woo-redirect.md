@@ -67,6 +67,17 @@ None.
 
 ## 2. Early check
 
+### Analyst: GO (on `6f7ea8c..8e860cc`)
+The hook covers both GETs (it's client-wide), raises before `_build_redirect_request`, and its `ReadRefused` reaches `get` unwrapped with the stream closed (`_client.py:998`). Nothing new catches a programming error. The 27 t8 tests pass (`.logs/t8-analyst-tests.log`); V58's line numbers match the installed httpx 0.28.1. `https://user@:99999/` confirmed: httpx builds `next_request` without raising (kept as a regression case).
+
+Findings, all taken by the lead and sent back to the builder:
+1. **Low:** the tests call `https://user@:99999/` unreadable (`UNREADABLE_LOCATIONS`); httpx reads it. Word it as a regression case.
+2. **Low:** add `//xn--a.test/` (protocol-relative IDNA). Measured without the hook: it crashes on another path (`_redirect_headers:552` → `_same_origin:89` → `URL.host:191`, `InvalidCodepoint`), so it proves the hook isn't tied to line 532. A clause in V58.
+3. **Low:** V58 suggested `send`'s and `_send_handling_auth`'s close-and-re-raise blocks apply; the calls at 914, 942 and 868 sit outside them, so the exception passes unchanged.
+4. **Nit:** "a 3xx is refused" (06 line 41, the module docstring) is broader than the code: a redirect status (301, 302, 303, 307, 308); 300 and 304 are `bad_response`.
+
+**The `Set-Cookie` question:** nothing found. `extract_cookies` runs before the hooks, outside the close blocks, but Python 3.15.2's `http/cookiejar.py` `make_cookies` wraps the header parsing in `except Exception` (a warning instead); 20 hostile headers and 30,000 random ones through `WooClient.get` raised no non-httpx error (evidence, not proof). Side note, not t8: such a warning reaches the app log through `logging.captureWarnings`, with the store's cookie text.
+
 ## 3. Builder report
 _(builder, `claude-opus-5-5/high`, 2026-11-05; worktree branch `worktree-agent-a0f50490d86bca832`, cut from `6f7ea8c`; commits `758044d` fix and tests, `64ec046` V58 and 06, then this report)_
 
