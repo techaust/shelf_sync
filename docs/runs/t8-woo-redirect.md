@@ -1,6 +1,6 @@
 Status: open
 Tier: A (12 §2: `apply/`, the store client)
-Usage: lead `claude-opus-5-5/high` (PC, side session started by the m2.8 lead): 5-h 5 % at the start; analyst `claude-opus-5-5/high` [none] (brief: Context7 isn't in its tools, so it read httpx 0.28.1 and idna 3.20 from `.venv`)
+Usage: lead `claude-opus-5-5/high` [start-session] (PC, side session started by the m2.8 lead): 5-h 5 → 13 %; analyst `claude-opus-5-5/high` [none] (brief: Context7 isn't in its tools, so it read httpx 0.28.1 and idna 3.20 from `.venv`): 5 → 6 %; builder `claude-opus-5-5/high` [none; Context7 for httpx, a tool, not a skill] (build, then the early-check lows): 6 → 12 %; analyst `claude-opus-5-5/high` [none] (early check): 11 → 12 %; reviewer `claude-opus-5-5/high` [security-review, code-review] (+ its built-in read-only `general-purpose` helper, Opus 5.5 high): 12 → 13 %. From `node tools/model-audit.mjs 2026-11-05`: every run Opus 5.5 at high; the three "no skill loaded" flags are the analysts and the builder, for whom no 09 §3 skill fits
 
 # t8-woo-redirect: an unreadable redirect `Location` reads as `redirected`, never as a crash
 
@@ -155,6 +155,26 @@ None for the owner. For the lead:
 
 ## 5. Review
 
+### Review 1: APPROVE (`07ee302..14647dc`)
+Skills: `security-review` (no vulnerability at 8/10 confidence or more; its passes run by the reviewer itself, as its Agent tool wasn't available) and `code-review` at high. No screens.
+
+Verified: V58's order of operations and every line number in the installed httpx 0.28.1; 06 line 41. A fuzz of 20,000 random `Location` values (IDNA labels, brackets, `@`, `%`, NUL, `\xff`, non-UTF-8 bytes, protocol-relative, bad ports) with each of 301, 302, 303, 307 and 308 through a real `WooClient.get`: every one `ReadRefused("redirected", …, status)`, nothing else escaped, exactly one request each (the keys never reach a redirect target). The hook fires only on `_REDIRECTS`, the same set as the old inline check; `store_service.py` unchanged, so a real bug is still a 500. The builder's pre-fix run shows the tests catch removing the hook. Targeted tests: 371 passed, 1 skipped (`.logs/t8-review-tests.log`).
+
+Findings (all low):
+1. **Low:** the module docstring said any other 3xx "is a `bad_response`", but `classify` answers `not_woocommerce` for a `rest_no_route` body. **Fixed by the lead** (docstring only: "goes to `classify` (normally `bad_response` with its status)"). A one-line docstring change, so no further re-check (12 §4).
+2. **Low, before t8:** `_redirect_host` reads `URL.host`, which IDNA-decodes, so a valid punycode target (`xn--bcher-kva.example`) is never named; and `_HOST` accepts junk like `..` or `--` as a host (React escapes it; cosmetic). **Folded into follow-up F3:** read `raw_host`, require a letter or digit label, one helper shared with seed.
+3. **Low:** `docs(runs)` commits cite no PRD ID. The squash-merge keeps only the PR title, which cites `[SET-01, ERR-01]`.
+
+Out of scope, as the reviewer sees the severities: F1 low-to-medium (the owner's own saved address; a 500, nothing lost); it also covers `testenv/laragon.py:705`'s `WooClient(site.url, …)`, which would now show a traceback for such a host, so F1's tests should include it. F2 low. The cookie-warning side note (§2) is a logging question for its own follow-up.
+
+Not verified by the reviewer: a real store or Laragon site; the full suite, `mypy --platform linux`, bandit and `release-build.ps1` (the lead's, §6). The fuzz is evidence, not proof.
+
 ## 6. Integration notes
+- The builder's commits came onto `fix/t8-woo-redirect` by fast-forward (`758044d`, `64ec046`, `8e860cc`) and one cherry-pick (the early-check lows, `14647dc`); the lead added the brief, §2, §5, this section, review low 1 (docstring) and the 11 row. The builder's worktree and branch are removed.
+- **Full checks on the final tree**, each through `UV_PYTHON_DOWNLOADS=never bash tools/heavy.sh --log t8-final-<name>`, all exit 0: `uv run pytest` 2804 passed, 19 skipped, 56 deselected; `ruff check` clean; `ruff format --check` 184 files formatted; `mypy` and `mypy --platform linux` no issues in 80 files; `bandit -r backend` no issues.
+- **Release build** (`backend/shelfsync` ships): `npm ci` and `npm run build` in `frontend/`, then `packaging/release-build.ps1 … -Work C:\Users\r4rup\AppData\Local\Temp\ssrb8 -Suffix -rehearsal`: passed (build, smoke test, installer checks, manifest; `.logs/t8-release-build.log`).
+- Not run: `pytest -m windows` (nothing Windows-specific changed) and pip-audit (no package changed).
+- **Follow-ups** (each its own task): F1 (Tier A) refuse a store host httpx can't decode, at save, in the backup import, and for `testenv/laragon.py`'s `WooClient(site.url, …)`; F2 (Tier A, low) the updater's same httpx exposure in `update/github.py`; F3 (low) one `_redirect_host` shared with seed, reading `raw_host` so a punycode target is named, and refusing junk like `..` (review low 2); a store's cookie text can reach the app log through a `http.cookiejar` warning (`logging.captureWarnings`; §2 side note).
 
 ## 7. Handover
+_(lead, 2026-11-05)_ Built, early-checked (GO, four lows fixed), reviewed (APPROVE, three lows: one fixed, one folded into F3, one met by the PR title), full checks and the release build passed. **Next:** the PR merges under the automatic rule; then the run file's Status becomes merged. F1–F3 and the cookie-log question wait for their own tasks.

@@ -7,7 +7,8 @@ Rules this module keeps:
   **no redirects**: a redirect status (301, 302, 303, 307 or 308) is a result (`redirected`, naming the target host),
   and the keys never go there. It is refused in a response hook (`_refuse_redirect`), before httpx reads `Location` to
   build `next_request` (it does even with redirects off, 04-A V58), so a `Location` httpx can't read is still
-  `redirected`, with no host, never a crash. Any other 3xx (300, 304…) is a `bad_response` with its status.
+  `redirected`, with no host, never a crash. Any other 3xx (300, 304…) goes to `classify` (normally `bad_response`
+  with its status).
 - the answer is streamed and read at most `MAX_BODY_BYTES` (1 MiB); more is a `bad_response`.
 - **GET only.** `WooClient` has no method for any other verb until M5, and `GetOnlyTransport` refuses one even if a
   later change reaches for it: the contract test builds a client and tries.
