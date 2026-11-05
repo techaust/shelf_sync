@@ -583,6 +583,28 @@ def test_a_redirect_names_the_host_it_pointed_at() -> None:
     assert (body["reason"], body["detail"], body["state"]) == ("redirected", "new-home.example", "unreachable")
 
 
+# Three `Location`s httpx can't read, and a regression case it reads with an empty host (as in
+# test_woocommerce_client.py; 04-A V58, measured).
+@pytest.mark.parametrize("location", ["https://xn--a.test/", "//xn--a.test/", "http://[::1", "https://user@:99999/"])
+def test_a_redirect_to_an_unreadable_address_is_saved_as_redirected_not_a_500(location: str) -> None:
+    moved = httpx.Response(301, headers={"Location": location})
+    rig = make_store_rig(woo=FakeWoo(status=moved))
+    client = rig.harness.signed_in_client(raise_server_exceptions=False)  # a crash shows as the 500 it would answer
+    add(client)
+    response = client.post("/api/stores/1/test", headers=WRITE_HEADERS)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["ok"], body["reason"], body["detail"], body["state"], body["http_status"]) == (
+        False,
+        "redirected",
+        None,
+        "unreachable",
+        301,
+    )
+    health = client.get("/api/stores").json()["stores"][0]["health"]
+    assert (health["state"], health["reason"], health["http_status"]) == ("unreachable", "redirected", 301)
+
+
 def test_a_store_with_no_downloadable_products_is_ok_with_a_warning() -> None:
     client = signed_in(make_store_rig(woo=FakeWoo(products_answer=products(total=0, body=[]))))
     add(client)

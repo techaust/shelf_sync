@@ -665,7 +665,8 @@ def test_check_words_a_redirect_to_an_unreadable_address(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """httpx can't decode this `Location` and `WooClient` lets the error through; the harness words it instead."""
+    """httpx can't decode this `Location`; `WooClient` refuses the 3xx before httpx reads it and answers `redirected`
+    with no host, which the harness words as Settings does (SET-01, ERR-01)."""
     server, app = woo
     app.redirect_to = "https://xn--a.test/"
     assert run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert)) == 1
@@ -674,20 +675,23 @@ def test_check_words_a_redirect_to_an_unreadable_address(
     )
 
 
-def test_check_reports_only_the_idna_error_as_a_redirect(
+@pytest.mark.parametrize("error", [ValueError, UnicodeError])
+def test_check_lets_an_unexpected_error_surface(
+    error: type[Exception],
     woo: tuple[RunningServer, FakeWoo],
     site_cert: laragon.SiteCertificate,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Re-check finding: a `ValueError` that isn't the IDNA codec's `UnicodeError` surfaces, never as `redirected`."""
+    """`check` catches nothing around the read test: an error that isn't one of `WooClient`'s results (even a
+    `UnicodeError`, which an unreadable redirect no longer raises) surfaces, never as `redirected` (SET-01, ERR-01)."""
     server, _ = woo
 
     def broken(*_: object, **__: object) -> object:
-        raise ValueError("not a redirect")
+        raise error("not a redirect")
 
     monkeypatch.setattr(laragon, "run_read_test", broken)
-    with pytest.raises(ValueError, match="not a redirect"):
+    with pytest.raises(error, match="not a redirect"):
         run_check(store_with_keys(), server.port, write_site_cert(tmp_path / "trust", site_cert))
 
 

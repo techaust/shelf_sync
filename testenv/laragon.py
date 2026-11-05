@@ -703,13 +703,7 @@ def run_check(
         return 1
     context = tls_context(cert)
     with WooClient(site.url, pair[0], pair[1], transport=transport_factory(context, site.host)) as client:
-        try:
-            outcome = run_read_test(client, SPACING_MS, STORE_CODE)
-        except UnicodeError:
-            # A 3xx whose `Location` the IDNA codec can't decode (`idna.IDNAError` is a `UnicodeError`): httpx reads
-            # it to build `next_request` even with redirects off, and `WooClient` lets that error through (reported
-            # for the backend, run file m2.8 §3). Any other error is not a redirect and is left to surface.
-            outcome = ReadOutcome("redirected")
+        outcome = run_read_test(client, SPACING_MS, STORE_CODE)
     say(f"{site.url}: {describe(outcome)}")
     return 0 if outcome.ok else 1
 
