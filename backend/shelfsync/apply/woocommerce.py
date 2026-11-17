@@ -42,6 +42,8 @@ MAX_BODY_BYTES = 1024 * 1024
 TOTAL_SECONDS = 60.0
 CONNECT_SECONDS = 10.0
 READ_SECONDS = 30.0
+# L1 only (t9, the lead's decision): `WooClient(read_seconds=)` accepts 30 to 120 s; every app caller keeps 30.
+READ_SECONDS_RANGE = (30.0, 120.0)
 MIN_WC_VERSION = (5, 8)
 SYSTEM_STATUS_PATH = "/wp-json/wc/v3/system_status"
 PRODUCTS_PATH = "/wp-json/wc/v3/products"
@@ -167,7 +169,8 @@ def _refuse_redirect(response: httpx.Response) -> None:
 
 
 class WooClient:
-    """GET requests to one store. `transport` is for tests (httpx.MockTransport)."""
+    """GET requests to one store. `transport` is for tests (httpx.MockTransport) and for L1's `FactsTransport`.
+    `read_seconds` (30 to 120) is the read timeout: 30 for the app, which never sets it; L1's `--read-seconds` only."""
 
     def __init__(
         self,
@@ -177,12 +180,16 @@ class WooClient:
         *,
         transport: httpx.BaseTransport | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        read_seconds: float = READ_SECONDS,
     ) -> None:
         url = httpx.URL(base_url)
         if url.scheme != "https" or not url.host:
             raise ValueError("a store address must be https")
+        if not READ_SECONDS_RANGE[0] <= read_seconds <= READ_SECONDS_RANGE[1]:
+            raise ValueError("read_seconds must be 30 to 120")
         self._base = base_url.rstrip("/")
         self._monotonic = monotonic
+        self._read_seconds = read_seconds
         self._client = httpx.Client(
             transport=GetOnlyTransport(transport if transport is not None else httpx.HTTPTransport()),
             auth=httpx.BasicAuth(consumer_key, consumer_secret),
@@ -219,7 +226,7 @@ class WooClient:
         remaining = deadline - self._monotonic()
         if remaining <= 0:
             raise ReadRefused("timeout")
-        timeout = httpx.Timeout(min(READ_SECONDS, remaining), connect=min(CONNECT_SECONDS, remaining))
+        timeout = httpx.Timeout(min(self._read_seconds, remaining), connect=min(CONNECT_SECONDS, remaining))
         answered: int | None = None  # the status, once the answer's headers have arrived
         size = 0
         try:

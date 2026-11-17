@@ -35,14 +35,17 @@ Rules this module keeps:
 For the L1 dry read only (t9, to tell why a store stalls; the app's runner never sets any of these, and with their
 defaults nothing changes: the same requests, the same results):
 - **`observe`** is called once per attempt (the first try and each retry) with an `Attempt`: what was asked (and the
-  page), the attempt number, the outcome (`ok`, `past_the_end` or the fixed reason), the HTTP status, the time it took,
-  the body bytes, whether the answer's headers had arrived, and the `ResponseFacts` when `facts` is given.
+  page), the attempt number, the outcome (`ok`, `past_the_end` or the fixed reason), the HTTP status, the time it took
+  and the wait before it, the body bytes, whether the answer's headers had arrived, for a timeout which limit ended
+  it, and the `Wire` when `facts` is given.
 - **`facts`**, a `FactsTransport`, is the transport the caller builds its `WooClient` on. `WooClient` wraps it in
   `GetOnlyTransport`, so it sees each answer's headers **before** `GetOnlyTransport` drops `Set-Cookie`: it keeps only
-  fixed words from them (`response_facts`), never a value, and hands the answer on unchanged. The cookie drop stays as
-  it is, so no cookie is kept, parsed or sent back.
+  fixed words from them (`response_facts`), never a value. It also times the request's stages through httpcore's
+  `trace` extension (the event names only, never their `info`) and counts and times the body as it comes (`Wire`).
+  The cookie drop stays as it is, so no cookie is kept, parsed or sent back.
 - **`meta=False`** asks for the products without `meta_data` (no `latest_version` data, no error); **`per_page`**
   (25 to 100) and **`max_pages`** (at most 4,000 rows in all, as with 40 pages of 100) change the listing's pages.
+- **`attempt_seconds`** bounds one attempt (the store's bound still holds): `client.get` gets the earlier of the two.
 """
 
 import html
@@ -50,8 +53,8 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from itertools import pairwise
@@ -135,10 +138,11 @@ def listing_params(page: int, *, per_page: int = PER_PAGE, meta: bool = True) ->
     }
 
 
-# ---- L1's diagnostics (t9): fixed words about each answer and each attempt, never a value ---------------------------
+# ---- L1's diagnostics (t9): fixed words and numbers about each answer and each attempt, never a value --------------
 
 SERVER_WORDS = ("cloudflare", "nginx", "apache", "litespeed", "openresty")  # else `other`, or `none` when absent
 CACHE_WORDS = ("hit", "miss", "dynamic", "bypass", "expired")  # `cf-cache-status`; else `other`, or `none`
+CONTENT_WORDS = ("json", "html")  # `content-type`; else `other`, or `none`
 COOKIE_WORDS = (
     "__cf_bm",
     "cf_clearance",
@@ -148,24 +152,76 @@ COOKIE_WORDS = (
     "wordpress_sec",
     "wp-settings",
 )
+# Origin hints: only whether each of these header names is there, never its value.
+HINT_HEADERS = (
+    "x-litespeed-cache",
+    "x-turbo-charged-by",
+    "x-sucuri-id",
+    "x-sucuri-cache",
+    "x-cache",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+)
 # WordPress names these with a suffix (`wordpress_logged_in_<hash of the site address>`, `wp-settings-1`,
 # `wp-settings-time-1`): the family's word is kept, never the suffix (it would identify the store).
 _COOKIE_FAMILIES = (("wordpress_logged_in", "_"), ("wordpress_sec", "_"), ("wp-settings", "-"))
 _COOKIE_EXACT = frozenset({"__cf_bm", "cf_clearance", "_cfuvid", "PHPSESSID"})
 _SERVER_TOKEN = re.compile(r"[^/\s(,;]*")
 
+STAGES = ("connect", "tls", "send", "headers", "body", "done")
+# httpcore's trace events (`<prefix>.<name>.started|complete|failed`; httpcore 1.0.9 `_trace.py`,
+# `_sync/connection.py`, `_sync/http11.py`): the name decides the stage, and nothing else of the event is kept.
+_TRACE_STAGES = {
+    "connection.connect_tcp": "connect",
+    "connection.start_tls": "tls",
+    "http11.send_request_headers": "send",
+    "http11.send_request_body": "send",
+    "http11.receive_response_headers": "headers",
+    "http11.receive_response_body": "body",
+}
+_TRACE_PHASES = frozenset({"started", "complete", "failed"})
+ERROR_WORDS = (
+    "connect_timeout",
+    "read_timeout",
+    "write_timeout",
+    "pool_timeout",
+    "connect_error",
+    "read_error",
+    "protocol_error",
+    "other",
+)
+_ERROR_CLASSES: tuple[tuple[type[Exception], str], ...] = (
+    (httpx.ConnectTimeout, "connect_timeout"),
+    (httpx.ReadTimeout, "read_timeout"),
+    (httpx.WriteTimeout, "write_timeout"),
+    (httpx.PoolTimeout, "pool_timeout"),
+    (httpx.ConnectError, "connect_error"),
+    (httpx.ReadError, "read_error"),
+    (httpx.ProtocolError, "protocol_error"),
+)
+ENDED_WORDS = ("read_timeout", "attempt_bound", "store_bound")
+# A read timeout cut short by a bound fires at the bound, give or take the system timer; within this of the bound it
+# is labelled by the bound (Lead (proposed)).
+BOUND_SLACK_SECONDS = 0.25
+
 
 @dataclass(frozen=True)
 class ResponseFacts:
     """What one answer's headers say, in fixed words only: `cf-ray` present, the `server` header's product
     (`SERVER_WORDS`, `other` or `none`), `cf-cache-status` (`CACHE_WORDS`, `other` or `none`), the names of the
-    cookies the store set that are in `COOKIE_WORDS` (each once, in that order), and how many others it set."""
+    cookies the store set that are in `COOKIE_WORDS` (each once, in that order), how many others it set, the
+    `content-type` (`CONTENT_WORDS`, `other` or `none`), whether `cf-mitigated` and `retry-after` are there, and which
+    of `HINT_HEADERS` are there (in that order)."""
 
     cf_ray: bool
     server: str
     cache: str
     cookies: tuple[str, ...]
     other_cookies: int
+    content: str = "none"
+    cf_mitigated: bool = False
+    retry_after: bool = False
+    hints: tuple[str, ...] = ()
 
 
 def _word_of(value: str | None, words: tuple[str, ...]) -> str:
@@ -189,9 +245,20 @@ def _cookie_word(header: str) -> str | None:
     return None
 
 
+def _content_word(value: str | None) -> str:
+    """`json` for `application/json` or an `application/…+json` type, `html` for `text/html`, else `other` (`none`:
+    no header)."""
+    if value is None:
+        return "none"
+    media = value.partition(";")[0].strip().lower()
+    if media == "application/json" or (media.startswith("application/") and media.endswith("+json")):
+        return "json"
+    return "html" if media == "text/html" else "other"
+
+
 def response_facts(headers: httpx.Headers) -> ResponseFacts:
     """The facts of one answer's headers, `Set-Cookie` and `Set-Cookie2` included (so this must see them before
-    `GetOnlyTransport` drops them). Nothing from a header is kept but a fixed word or a count."""
+    `GetOnlyTransport` drops them). Nothing from a header is kept but a fixed word, a yes or no, or a count."""
     server = headers.get("server")
     token = _SERVER_TOKEN.match(server.strip().lower()) if server is not None else None
     found: set[str] = set()
@@ -208,33 +275,174 @@ def response_facts(headers: httpx.Headers) -> ResponseFacts:
         cache=_word_of(headers.get("cf-cache-status"), CACHE_WORDS),
         cookies=tuple(word for word in COOKIE_WORDS if word in found),
         other_cookies=others,
+        content=_content_word(headers.get("content-type")),
+        cf_mitigated="cf-mitigated" in headers,
+        retry_after="retry-after" in headers,
+        hints=tuple(name for name in HINT_HEADERS if name in headers),
     )
+
+
+def error_word(error: BaseException) -> str:
+    """The fixed word for the exception that ended a request (`ERROR_WORDS`), from its class only."""
+    for kind, word in _ERROR_CLASSES:
+        if isinstance(error, kind):
+            return word
+    return "other"
+
+
+def _declared(value: str | None) -> int | None:
+    """`Content-Length` as a number, or None (absent, as for a chunked answer, or not a plain number)."""
+    if value is None:
+        return None
+    value = value.strip()
+    return int(value) if value.isascii() and value.isdigit() and len(value) <= 15 else None
+
+
+@dataclass(frozen=True)
+class Wire:
+    """What `FactsTransport` saw of one request, numbers and fixed words only. `facts` is None when no answer's
+    headers arrived. `stage` is the last stage httpcore started (or the one that failed; `done` once the body was read
+    to its end), from `STAGES`, None when no trace event came (a test transport). `new_connection`: a TCP connection
+    was opened for it (else a kept-alive one was used, or no trace event came). The times are milliseconds from the
+    request's start: `headers_ms` when the headers were in, `first_byte_ms` the first body byte, `longest_gap_ms` the
+    longest wait for the body after its first byte (between two chunks, or from the last chunk to the body's end or
+    failure). `received` is every body byte that came, even on a connection that then dropped; `declared_bytes` the
+    `Content-Length`; `error` the `ERROR_WORDS` word of the exception that ended it, if one did."""
+
+    facts: ResponseFacts | None = None
+    stage: str | None = None
+    new_connection: bool = False
+    headers_ms: int | None = None
+    first_byte_ms: int | None = None
+    longest_gap_ms: int | None = None
+    received: int = 0
+    declared_bytes: int | None = None
+    error: str | None = None
+
+
+class _WireRecorder:
+    """One request's `Wire`, built as it goes. `trace` is httpcore's `trace` extension callback: it keeps the event's
+    name, through `_TRACE_STAGES` only, and the time; its `info` (which holds the request, with its address and
+    `Authorization`) is never looked at or kept."""
+
+    def __init__(self, monotonic: Callable[[], float]) -> None:
+        self._monotonic = monotonic
+        self._started = monotonic()
+        self._last_byte: float | None = None
+        self.wire = Wire()
+
+    def _ms(self, moment: float) -> int:
+        return max(0, round((moment - self._started) * 1000))
+
+    def trace(self, name: str, info: object) -> None:  # `info` is never read: it holds the request
+        base, _, phase = name.rpartition(".")
+        stage = _TRACE_STAGES.get(base)
+        if stage is None or phase not in _TRACE_PHASES:
+            return
+        if phase != "complete":
+            self.wire = replace(self.wire, stage=stage)
+            if base == "connection.connect_tcp" and phase == "started":
+                self.wire = replace(self.wire, new_connection=True)
+        elif stage == "headers":
+            self.wire = replace(self.wire, headers_ms=self._ms(self._monotonic()))
+        elif stage == "body":
+            self.wire = replace(self.wire, stage="done")
+
+    def answered(self, headers: httpx.Headers) -> None:
+        """The headers are in (`handle_request` returned): their facts, the declared length, and their time when no
+        trace event gave it."""
+        headers_ms = self.wire.headers_ms
+        self.wire = replace(
+            self.wire,
+            facts=response_facts(headers),
+            declared_bytes=_declared(headers.get("content-length")),
+            headers_ms=headers_ms if headers_ms is not None else self._ms(self._monotonic()),
+        )
+
+    def failed(self, error: Exception) -> None:
+        self.wire = replace(self.wire, error=error_word(error))
+
+    def chunk(self, size: int) -> None:
+        if size <= 0:
+            return
+        moment = self._monotonic()
+        if self._last_byte is None:
+            self.wire = replace(self.wire, first_byte_ms=self._ms(moment))
+        else:
+            self._gap(self._last_byte, moment)
+        self._last_byte = moment
+        self.wire = replace(self.wire, received=self.wire.received + size)
+
+    def body_ended(self, error: Exception | None) -> None:
+        if self._last_byte is not None:
+            self._gap(self._last_byte, self._monotonic())
+        if error is not None:
+            self.failed(error)
+
+    def _gap(self, since: float, moment: float) -> None:
+        gap = max(0, round((moment - since) * 1000))
+        if self.wire.longest_gap_ms is None or gap > self.wire.longest_gap_ms:
+            self.wire = replace(self.wire, longest_gap_ms=gap)
+
+
+class _CountingStream(httpx.SyncByteStream):
+    """The answer's body, passed on chunk by chunk as it is, counted and timed for its `Wire`."""
+
+    def __init__(self, inner: httpx.SyncByteStream, recorder: _WireRecorder) -> None:
+        self._inner = inner
+        self._recorder = recorder
+
+    def __iter__(self) -> Iterator[bytes]:
+        try:
+            for chunk in self._inner:
+                self._recorder.chunk(len(chunk))
+                yield chunk
+        except Exception as error:
+            self._recorder.body_ended(error)
+            raise
+        self._recorder.body_ended(None)
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 class FactsTransport(httpx.BaseTransport):
     """L1's transport (t9): the caller builds its `WooClient` on it, and `WooClient` wraps it in `GetOnlyTransport`
     (`GetOnlyTransport(FactsTransport(real))`). So each answer comes through here first, with its headers and before
-    `GetOnlyTransport` drops its cookies: this keeps `response_facts` of it and hands the answer on unchanged (the
-    body isn't read here). It never sees a request but a GET (`GetOnlyTransport` refuses any other before calling
-    it). `take` returns the facts of the last answer, once."""
+    `GetOnlyTransport` drops its cookies (httpx 0.28.1 runs `handle_request`, then extracts cookies, then the response
+    hooks). It keeps a `Wire` of each request, fixed words and numbers only, and hands the answer on unchanged but for
+    its body stream, which is wrapped to count and time it (httpx's own client wraps it the same way next,
+    `BoundSyncStream`). It gives the request httpcore's `trace` extension (`_WireRecorder.trace`), and refuses any
+    request but a GET itself (as `GetOnlyTransport` does before it). `take` returns the last request's `Wire`, once."""
 
-    def __init__(self, inner: httpx.BaseTransport) -> None:
+    def __init__(self, inner: httpx.BaseTransport, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._inner = inner
-        self._last: ResponseFacts | None = None
+        self._monotonic = monotonic
+        self._recorder: _WireRecorder | None = None
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        self._last = None
-        response = self._inner.handle_request(request)
-        self._last = response_facts(response.headers)
+        if request.method != "GET":
+            raise NonGetRefused("only GET requests are sent to a store")
+        recorder = self._recorder = _WireRecorder(self._monotonic)
+        request.extensions["trace"] = recorder.trace
+        try:
+            response = self._inner.handle_request(request)
+        except Exception as error:
+            recorder.failed(error)
+            raise
+        recorder.answered(response.headers)
+        if isinstance(response.stream, httpx.SyncByteStream):
+            response.stream = _CountingStream(response.stream, recorder)
         return response
 
     def seen(self) -> bool:
-        """Whether an answer's headers came through since the last request started."""
-        return self._last is not None
+        """Whether an answer's headers came through for the last request."""
+        return self._recorder is not None and self._recorder.wire.facts is not None
 
-    def take(self) -> ResponseFacts | None:
-        last, self._last = self._last, None
-        return last
+    def take(self) -> Wire | None:
+        """The last request's `Wire` (None when no request went through since the last `take`)."""
+        recorder, self._recorder = self._recorder, None
+        return recorder.wire if recorder is not None else None
 
     def close(self) -> None:
         self._inner.close()
@@ -246,8 +454,10 @@ class Attempt:
     number); `attempt` 1 to 4; `outcome` `ok` (an answer the reader takes), `past_the_end` (a 400 on page 2 or later)
     or the fixed reason; `http_status` when an answer arrived. `headers`: True when the answer's headers arrived,
     False when nothing came, None when that isn't known (a connection that failed with no `facts` transport).
-    `body_bytes`: the body read (for a timeout, what came before it ended), None when not known. `facts` when the read
-    has a `FactsTransport` and an answer arrived."""
+    `body_bytes`: the body bytes that came (for a timeout, or with a `facts` transport a dropped connection, what came
+    before it ended), None when not known. `elapsed_ms` is the request alone; `waited_ms` the wait before it (the
+    spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: `read_timeout` (no bound was reached),
+    `attempt_bound` or `store_bound`. `wire` when the read has a `FactsTransport` (and `facts`, its `Wire.facts`)."""
 
     what: str
     page: int | None
@@ -258,6 +468,9 @@ class Attempt:
     body_bytes: int | None
     headers: bool | None
     facts: ResponseFacts | None = None
+    wire: Wire | None = None
+    waited_ms: int = 0
+    ended: str | None = None
 
 
 Observe = Callable[[Attempt], None]
@@ -373,6 +586,18 @@ def is_retried(reason: str, status: int | None) -> bool:
     return reason in RETRIED_REASONS or (reason == "blocked" and status == 503)
 
 
+@dataclass(frozen=True)
+class _Try:
+    """One attempt as the observer sees it: the products page (None: `system_status`), its number (1 to 4), the wait
+    before it, when it started, and the deadline `client.get` was given."""
+
+    page: int | None
+    number: int
+    waited_ms: int
+    started: float
+    deadline: float
+
+
 class _Session:
     """The requests of one store's read: spacing, retries, the failure count, the time bound and the stop."""
 
@@ -388,6 +613,7 @@ class _Session:
         deadline: float,
         observe: Observe | None = None,
         facts: FactsTransport | None = None,
+        attempt_seconds: float | None = None,
     ) -> None:
         self._client = client
         self._spacing = spacing_seconds
@@ -398,6 +624,7 @@ class _Session:
         self._deadline = deadline
         self._observe = observe
         self._facts = facts
+        self._attempt_seconds = attempt_seconds
         self._sent = False
         self.requests = 0
         self.last_failure_status: int | None = None
@@ -411,51 +638,68 @@ class _Session:
         if self._stop.wait(seconds):
             raise _End("stopped")
 
-    def _note_answer(self, page: int | None, attempt: int, started: float, outcome: str, response: WooResponse) -> None:
+    def _note_answer(self, tried: _Try | None, outcome: str, response: WooResponse) -> None:
         """An answer came (headers and body): hand the attempt to `observe`, when there is one."""
-        if (observe := self._observe) is not None:
-            self._emit(observe, page, attempt, started, outcome, response.status, len(response.body), True)
+        if tried is not None and (observe := self._observe) is not None:
+            self._emit(observe, tried, outcome, response.status, len(response.body), True)
 
-    def _note_refused(self, page: int | None, attempt: int, started: float, refused: ReadRefused) -> None:
+    def _note_refused(self, tried: _Try | None, refused: ReadRefused) -> None:
         """No usable answer: hand the attempt to `observe`, when there is one. A timeout says whether the headers had
-        arrived (`ReadRefused.headers_status`) and the bytes read before it ended; a redirect, and an over-long or
-        unreadable body (`bad_response`), are refused only once the headers are in; for a failed connection it is
-        known only through the `facts` transport (it saw an answer or it didn't), else None."""
-        if (observe := self._observe) is None:
+        arrived (`ReadRefused.headers_status`), the bytes read before it ended, and which limit ended it; a redirect,
+        and an over-long or unreadable body (`bad_response`), are refused only once the headers are in; for a failed
+        connection it is known only through the `facts` transport (`_emit`), else None."""
+        if tried is None or (observe := self._observe) is None:
             return
         status = refused.status if refused.status is not None else refused.headers_status
         body_bytes: int | None = None
-        headers: bool | None
+        headers: bool | None = None
+        ended: str | None = None
         if refused.reason == "timeout":
-            headers, body_bytes = refused.headers_status is not None, refused.received
+            headers, body_bytes, ended = refused.headers_status is not None, refused.received, self._ended(tried)
         elif refused.reason in ("redirected", "bad_response"):
             headers = True
-        else:
-            headers = None if self._facts is None else self._facts.seen()
-        self._emit(observe, page, attempt, started, refused.reason, status, body_bytes, headers)
+        self._emit(observe, tried, refused.reason, status, body_bytes, headers, ended)
+
+    def _ended(self, tried: _Try) -> str:
+        """Which limit ended a timed-out attempt: the store's bound, the attempt's, or neither (`read_timeout`: httpx's
+        own timeout, read or connect, fired first). Read from the clock against the deadline `client.get` was given,
+        with `BOUND_SLACK_SECONDS` for a timer that wakes a little early."""
+        moment = self._monotonic() + BOUND_SLACK_SECONDS
+        if moment >= self._deadline:
+            return "store_bound"
+        if tried.deadline < self._deadline and moment >= tried.deadline:
+            return "attempt_bound"
+        return "read_timeout"
 
     def _emit(
         self,
         observe: Observe,
-        page: int | None,
-        attempt: int,
-        started: float,
+        tried: _Try,
         outcome: str,
         status: int | None,
         body_bytes: int | None,
         headers: bool | None,
+        ended: str | None = None,
     ) -> None:
+        """Build the `Attempt` and hand it on. With a `facts` transport its `Wire` gives the body bytes (every byte
+        that came, a dropped connection's too) and whether headers arrived."""
+        wire = self._facts.take() if self._facts is not None else None
+        if wire is not None:
+            body_bytes, headers = wire.received, wire.facts is not None
         observe(
             Attempt(
-                what="products" if page is not None else "system_status",
-                page=page,
-                attempt=attempt + 1,
+                what="products" if tried.page is not None else "system_status",
+                page=tried.page,
+                attempt=tried.number,
                 outcome=outcome,
                 http_status=status,
-                elapsed_ms=max(0, round((self._monotonic() - started) * 1000)),
+                elapsed_ms=max(0, round((self._monotonic() - tried.started) * 1000)),
                 body_bytes=body_bytes,
                 headers=headers,
-                facts=self._facts.take() if self._facts is not None else None,
+                facts=wire.facts if wire is not None else None,
+                wire=wire,
+                waited_ms=tried.waited_ms,
+                ended=ended,
             )
         )
 
@@ -493,6 +737,7 @@ class _Session:
         delay = self._spacing if self._sent else 0.0
         attempt = 0
         while True:
+            before = self._monotonic() if self._observe is not None else 0.0
             self._pause(delay)
             if self._stop.is_set():
                 raise _End("stopped")
@@ -501,19 +746,28 @@ class _Session:
             self._sent = True
             self.requests += 1
             headers: httpx.Headers | None = None
-            started = self._monotonic() if self._observe is not None else 0.0
+            # Without an observer or an attempt bound (the app), no clock is read here and `client.get` gets the
+            # store's deadline, as always.
+            timed = self._observe is not None or self._attempt_seconds is not None
+            started = self._monotonic() if timed else 0.0
+            deadline = self._deadline
+            if self._attempt_seconds is not None:
+                deadline = min(deadline, started + self._attempt_seconds)
+            tried = None
+            if self._observe is not None:
+                tried = _Try(page, attempt + 1, max(0, round((started - before) * 1000)), started, deadline)
             try:
-                response = self._client.get(path, params, self._deadline, max_bytes=max_bytes)
+                response = self._client.get(path, params, deadline, max_bytes=max_bytes)
             except ReadRefused as refused:
                 reason = refused.reason
                 status = refused.status
-                self._note_refused(page, attempt, started, refused)
+                self._note_refused(tried, refused)
             else:
                 if past_the_end and response.status == 400:
-                    self._note_answer(page, attempt, started, "past_the_end", response)
+                    self._note_answer(tried, "past_the_end", response)
                     return response
                 answered = None if page is not None and response.status == 200 else classify(response)
-                self._note_answer(page, attempt, started, answered or "ok", response)
+                self._note_answer(tried, answered or "ok", response)
                 if answered is None:
                     return response  # the caller resets the count once the answer proved usable
                 reason, status, headers = answered, response.status, response.headers
@@ -544,12 +798,15 @@ def read_catalog(
     meta: bool = True,
     per_page: int = PER_PAGE,
     max_pages: int = MAX_PAGES,
+    attempt_seconds: float | None = None,
 ) -> CatalogRead:
     """Read one store's catalog (the module text says how). Never raises for anything the store answers.
-    `observe`, `facts`, `meta`, `per_page` and `max_pages` are L1's (t9; the module text): the app leaves them as
-    they are. A `per_page` outside 25 to 100, or a `max_pages` below 1 or past 4,000 rows, is a `ValueError` before
-    anything is sent."""
-    shape = _Shape(per_page, max_pages, meta)
+    `observe`, `facts`, `meta`, `per_page`, `max_pages` and `attempt_seconds` are L1's (t9; the module text): the
+    app leaves them as they are. A `per_page` outside 25 to 100, a `max_pages` below 1 or past 4,000 rows, or an
+    `attempt_seconds` that isn't above 0, is a `ValueError` before anything is sent."""
+    shape = ListingShape(per_page, max_pages, meta)
+    if attempt_seconds is not None and not attempt_seconds > 0:
+        raise ValueError("attempt_seconds must be above 0")
     session = _Session(
         client,
         spacing_seconds=spacing_ms / 1000,
@@ -560,6 +817,7 @@ def read_catalog(
         deadline=monotonic() + store_seconds,
         observe=observe,
         facts=facts,
+        attempt_seconds=attempt_seconds,
     )
     wc_version: str | None = None
     state = _Listing()
@@ -643,9 +901,10 @@ def _check_version(session: _Session) -> str:
 
 
 @dataclass(frozen=True)
-class _Shape:
+class ListingShape:
     """The listing's pages: `per_page` rows each, at most `max_pages`, with or without `meta_data` (L1's options;
-    the app's are 100, 40 and with)."""
+    the app's are 100, 40 and with). L1 builds one to show its request list (`params`); the reader builds its own from
+    the same values."""
 
     per_page: int = PER_PAGE
     max_pages: int = MAX_PAGES
@@ -675,7 +934,7 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
-    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int, shape: _Shape) -> None:
+    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int, shape: ListingShape) -> None:
         self.pages = page
         self.largest = max(self.largest, len(body))
         self.size += len(body)
@@ -699,7 +958,7 @@ def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
 def _read_listing(
     session: _Session,
     listing: _Listing,
-    shape: _Shape,
+    shape: ListingShape,
     page_max_bytes: int,
     listing_max_bytes: int,
     progress: Progress | None,
