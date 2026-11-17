@@ -2,11 +2,17 @@
 another, links by slug, progress, paused and auto-paused stores skipped, the failure count across runs, resume, the
 stop at shutdown changing nothing, and the client factory seam."""
 
+import logging
+import sqlite3
 import threading
+from contextlib import closing
 
 import httpx
+import pytest
 
+from shelfsync.catalog import runner as runner_module
 from shelfsync.catalog.runner import KeysMissing, SyncRunner
+from shelfsync.db.catalog import clear_address_guard
 from tests.catalog_support import CatalogRig, FakeCatalogStore, make_catalog_rig, raw_product, wait_for
 from tests.store_support import system_status
 
@@ -225,3 +231,84 @@ def test_a_store_page_never_carries_a_key_in_the_url() -> None:
     rig.run()
     assert all("consumer" not in str(request.url) and "ck_" not in str(request.url) for request in rig.sites.requests)
     assert isinstance(rig.sites.stores["GF"], FakeCatalogStore)
+
+
+# ---- the analyst's findings (m3.1 early check) ---------------------------------------------------------------------
+
+
+def test_a_store_whose_address_changed_is_refused_before_any_request_and_keeps_its_catalog() -> None:
+    """Finding 2: links are keyed by (store, WooCommerce id), so another shop's products would take the old ones'
+    places. Refused with `address_changed` until the guard is cleared (a later task decides how)."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1, "alpha")])
+    rig.run()
+    before = rig.db.rows("SELECT * FROM store_product")
+    with closing(rig.db.connect()) as connection:
+        connection.execute("UPDATE store SET url = 'https://store-pw.example' WHERE id = ?", (gf,))
+    rig.sites.stores["PW"] = FakeCatalogStore(rows=[raw_product(1, "other-shops-product")])
+    sent = len(rig.sites.requests)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "address_changed"}
+    assert len(rig.sites.requests) == sent  # nothing was asked of the new address
+    assert rig.db.rows("SELECT * FROM store_product") == before
+    assert rig.db.rows("SELECT read_reason FROM sync_state") == [("address_changed",)]
+    with closing(rig.db.connect()) as connection:
+        clear_address_guard(connection, gf)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None}
+
+
+def test_an_address_changed_during_a_read_saves_nothing() -> None:
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1, "alpha")])
+
+    def move(page: int) -> None:
+        with closing(rig.db.connect()) as connection:
+            connection.execute("UPDATE store SET url = 'https://moved.example' WHERE id = ?", (gf,))
+
+    rig.sites.stores["GF"].before_page = move
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "address_changed"}
+    assert rig.db.rows("SELECT COUNT(*) FROM store_product") == [(0,)]
+    assert rig.db.rows("SELECT read_reason FROM sync_state") == [("address_changed",)]
+
+
+def test_a_database_error_during_the_save_is_recorded_on_a_fresh_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Finding 1 (c): the outcome reaches `sync_state` even though the read's own connection failed."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+
+    def broken(*_: object, **__: object) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(runner_module, "save_store_read", broken)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "database_error"}
+    assert rig.db.rows("SELECT read_reason FROM sync_state") == [("database_error",)]
+
+
+def test_an_outcome_that_cannot_be_recorded_at_all_is_only_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+
+    def broken(*_: object, **__: object) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(runner_module, "save_store_read", broken)
+    monkeypatch.setattr(runner_module, "record_read_failed", broken)
+    caplog.set_level(logging.ERROR, logger="shelfsync.catalog")
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "internal"}
+    assert any("couldn't be recorded (RuntimeError)" in record.getMessage() for record in caplog.records)
+    assert all("a bug" not in record.getMessage() for record in caplog.records)
+
+
+def test_after_stop_no_run_starts() -> None:
+    """Finding 6: a `POST /api/sync` after the shutdown must not start a run."""
+    rig = make_catalog_rig()
+    rig.add_store("GF", [raw_product(1)])
+    rig.service.stop()
+    assert not rig.service.start_sync()
+    assert rig.sites.requests == []

@@ -1144,6 +1144,8 @@ export interface components {
         WizardResponse: {
             /** Current */
             current: ("stores" | "storage" | "test" | "catalog") | null;
+            /** Finished */
+            finished: boolean;
             /** Steps */
             steps: components["schemas"]["WizardStepModel"][];
         };
@@ -2492,7 +2494,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                step: "stores" | "storage" | "test" | "catalog";
+                step: "stores" | "storage" | "test" | "catalog" | "finished";
             };
             cookie?: never;
         };

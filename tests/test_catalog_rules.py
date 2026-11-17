@@ -9,7 +9,13 @@ from hypothesis import strategies as st
 
 from shelfsync.catalog.linking import KnownLink, NearMiss, Placed, near_misses, plan_links
 from shelfsync.catalog.model import Download
-from shelfsync.catalog.names import edit_distance, is_linkable_slug, normalise_title, wp_suffix_pair
+from shelfsync.catalog.names import (
+    edit_distance,
+    is_canonical_slug,
+    is_linkable_slug,
+    normalise_title,
+    wp_suffix_pair,
+)
 from shelfsync.catalog.slots import SlotRef, main_download, plan_slots
 from tests.catalog_support import NEAR_MISS_PAIRS, product
 
@@ -115,6 +121,23 @@ def test_an_item_already_on_this_store_is_not_joined_and_the_new_item_gets_no_ta
     plan = plan_links(2, [product(21, "alpha")], known, {"alpha"})
     assert [item.canonical_slug for item in plan.new_items] == [None]
     assert plan.links[0].new_item == 0
+
+
+def test_only_a_present_product_on_this_store_stops_a_join() -> None:
+    """Analyst finding 3: a gone link on this store doesn't block; a present one does."""
+    known = [KnownLink(1, 1, 10, "foo", False), KnownLink(1, 2, 20, "foo", True)]
+    assert plan_links(1, [product(11, "foo")], known, {"foo"}).links[0].item_id == 1
+    blocked = [KnownLink(1, 1, 10, "foo", True), KnownLink(1, 2, 20, "foo", True)]
+    assert plan_links(1, [product(11, "foo")], blocked, {"foo"}).links[0].item_id is None
+
+
+@given(st.text(max_size=12))
+def test_only_a_slug_in_the_canonical_pattern_becomes_a_canonical_slug(slug: str) -> None:
+    """Analyst finding 5: the same rule as the slug edit and 0003's CHECK."""
+    plan = plan_links(1, [product(1, slug)], [], set())
+    canonical = plan.new_items[0].canonical_slug
+    assert canonical == (slug if is_canonical_slug(slug) and is_linkable_slug(slug) else None)
+    assert is_canonical_slug("a-b-1") and not is_canonical_slug("%e2%9c%93") and not is_canonical_slug("A")
 
 
 def test_a_gone_product_on_another_store_is_not_joined() -> None:

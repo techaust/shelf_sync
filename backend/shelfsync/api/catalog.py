@@ -17,11 +17,12 @@ from fastapi import APIRouter, Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from shelfsync.api.errors import ApiError, ErrorResponse
+from shelfsync.catalog.names import CANONICAL_SLUG_PATTERN
 from shelfsync.catalog.service import CatalogService, ItemSummary
 from shelfsync.db.catalog import LinkRow, SlugTaken
 
 CATALOG_PATH = "/api/catalog"
-SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$"
+SLUG_PATTERN = CANONICAL_SLUG_PATTERN
 ItemId = Annotated[int, Path(ge=1, le=2**63 - 1)]
 
 

@@ -4,10 +4,12 @@
 owner's slug edits and later decisions survive every re-read, and a product whose slug changes later keeps its link
 (m3.3 reports the change). A product not linked yet:
 1. joins the item that already has a **present** product with the **same URL slug on another store** and has **no
-   link at all on this store** (the lowest item id when several qualify, so the result never depends on order);
-2. otherwise gets a new item whose canonical slug is its slug; when another item already holds that canonical slug (the
-   owner gave it to an item by an edit, or two products on one store share a slug) the new item gets **no** canonical
-   slug (NULL) rather than a made-up one, and the owner can give it one (Lead (proposed), m3.1);
+   present product on this store** (a gone one doesn't block it: a product deleted and made again joins its old item);
+   the lowest item id when several qualify, so the result never depends on order;
+2. otherwise gets a new item whose canonical slug is its slug, when the slug fits the canonical pattern
+   (`names.CANONICAL_SLUG_PATTERN`; a percent-encoded slug doesn't) and no other item holds it (the owner gave it to an
+   item by an edit, or two products on one store share a slug); otherwise the new item gets **no** canonical slug
+   (NULL) rather than a made-up one, and the owner can give it one (Lead (proposed), m3.1);
 3. an empty slug (a draft) or a trashed slug (`<slug>__trashed`) is never linked by slug: such a product gets a new item
    with no canonical slug.
 Products are taken in WooCommerce id order.
@@ -23,7 +25,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 from shelfsync.catalog.model import Product
-from shelfsync.catalog.names import edit_distance, is_linkable_slug, normalise_title, wp_suffix_pair
+from shelfsync.catalog.names import (
+    edit_distance,
+    is_canonical_slug,
+    is_linkable_slug,
+    normalise_title,
+    wp_suffix_pair,
+)
 
 NEAR_MISS_DISTANCE = 2
 
@@ -67,11 +75,13 @@ def plan_links(
     """The links to add after one store's full read. `products` are the store's present products; `known` every link
     on every store that isn't removed; `taken_slugs` every canonical slug in use."""
     linked_here = {link.wc_id for link in known if link.store_id == store_id}
-    stores_of: dict[int, set[int]] = defaultdict(set)
+    present_on: dict[int, set[int]] = defaultdict(set)  # item -> the stores where it has a present product
     by_slug: dict[str, set[int]] = defaultdict(set)
     for link in known:
-        stores_of[link.item_id].add(link.store_id)
-        if link.present and link.store_id != store_id and is_linkable_slug(link.slug):
+        if not link.present:
+            continue
+        present_on[link.item_id].add(link.store_id)
+        if link.store_id != store_id and is_linkable_slug(link.slug):
             by_slug[link.slug].add(link.item_id)
     taken = set(taken_slugs)
     new_items: list[NewItem] = []
@@ -81,12 +91,13 @@ def plan_links(
             continue
         linked_here.add(product.wc_id)
         if is_linkable_slug(product.slug):
-            joinable = sorted(item for item in by_slug.get(product.slug, ()) if store_id not in stores_of[item])
+            joinable = sorted(item for item in by_slug.get(product.slug, ()) if store_id not in present_on[item])
             if joinable:
-                stores_of[joinable[0]].add(store_id)
+                present_on[joinable[0]].add(store_id)
                 links.append(PlannedLink(product.wc_id, item_id=joinable[0]))
                 continue
-            canonical: str | None = product.slug if product.slug not in taken else None
+            usable = is_canonical_slug(product.slug) and product.slug not in taken
+            canonical: str | None = product.slug if usable else None
             if canonical is not None:
                 taken.add(canonical)
         else:

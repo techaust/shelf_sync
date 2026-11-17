@@ -21,15 +21,16 @@ def store() -> Db:
 
 
 def save(rig: Db, store_id: int, products: list[Product], at: str = AT) -> db.SaveSummary:
+    [(url,)] = rig.rows("SELECT url FROM store WHERE id = ?", store_id)
     with closing(rig.connect()) as connection:
-        return db.save_store_read(connection, store_id, products, total=len(products), pages=1, at=at)
+        return db.save_store_read(connection, store_id, products, total=len(products), pages=1, at=at, read_url=url)
 
 
 def links(rig: Db) -> list[tuple[int, int, int]]:
     return rig.rows("SELECT catalog_item_id, store_id, wc_id FROM item_link ORDER BY store_id, wc_id")
 
 
-# ---- the schema ------------------------------------------------------------------------------------------------------
+# ---- the schema ----------------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -94,7 +95,7 @@ def test_two_items_may_have_no_slug_but_never_the_same_one(store: Db) -> None:
             )
 
 
-# ---- saving a read ---------------------------------------------------------------------------------------------------
+# ---- saving a read -------------------------------------------------------------------------------------------------
 
 
 def test_the_first_store_makes_one_item_per_product_with_its_slug(store: Db) -> None:
@@ -259,7 +260,7 @@ def test_the_mirror_keeps_only_the_fields_fetched(store: Db) -> None:
     ]
 
 
-# ---- the sync state and the failure count ----------------------------------------------------------------------------
+# ---- the sync state and the failure count --------------------------------------------------------------------------
 
 
 def test_ten_failures_in_a_row_auto_pause_and_resume_clears_it(store: Db) -> None:
@@ -304,3 +305,103 @@ def test_the_wizard_marks_are_saved_and_a_damaged_one_reads_as_not_done(store: D
         set_mark(connection, "storage", True)
         connection.execute("INSERT INTO wizard (step, state_json) VALUES ('catalog', '[1]')")
         assert marks(connection) == {"test": False, "storage": True, "catalog": False}
+
+
+# ---- the analyst's findings (m3.1 early check) ---------------------------------------------------------------------
+
+
+def test_a_gone_link_does_not_stop_a_new_product_on_that_store_joining_the_item(store: Db) -> None:
+    """Finding 3: GF 10 `foo` is gone, GF 11 `foo` is new, PW has `foo`: 11 joins PW's item."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    save(store, gf, [product(10, "foo")])
+    save(store, pw, [product(20, "foo")])
+    save(store, gf, [product(11, "foo")], at=LATER)
+    assert links(store) == [(1, gf, 10), (1, gf, 11), (1, pw, 20)]
+    assert store.rows("SELECT COUNT(*) FROM catalog_item") == [(1,)]
+
+
+def test_two_present_products_of_one_item_on_one_store_fill_its_slots_once_and_are_counted(store: Db) -> None:
+    """Finding 4: GF 10 comes back after GF 11 joined its item: the lowest id fills the slots, the other is counted,
+    and the save doesn't break on slot_download's (slot, store) key."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    ten = product(10, "foo", downloads=(Download("ten", "Download", "f10"),))
+    eleven = product(11, "foo", downloads=(Download("eleven", "Download", "f11"),))
+    save(store, gf, [ten])
+    save(store, pw, [product(20, "foo")])
+    save(store, gf, [eleven], at=LATER)
+    summary = save(store, gf, [ten, eleven], at="2026-11-17T14:00:00.000000Z")
+    assert summary.duplicates_on_store == 1
+    assert store.rows("SELECT wc_download_id FROM slot_download WHERE store_id = ?", gf) == [("ten",)]
+
+
+def test_a_store_slug_outside_the_canonical_pattern_gives_an_item_with_no_canonical_slug(store: Db) -> None:
+    """Finding 5: a percent-encoded (or upper-case) store slug still links by slug, but never becomes a canonical
+    slug."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    save(store, gf, [product(1, "%d8%a7%d9%84"), product(2, "Upper"), product(3, "fine-slug")])
+    save(store, pw, [product(9, "%d8%a7%d9%84")])
+    assert store.rows("SELECT id, canonical_slug FROM catalog_item ORDER BY id") == [
+        (1, None),
+        (2, None),
+        (3, "fine-slug"),
+    ]
+    assert (1, pw, 9) in links(store)
+
+
+@pytest.mark.parametrize("slug", ["Upper", "%d8%a7", "-a", "a-", "a_b", "a b", "é", "a" * 201, ""])
+def test_the_canonical_slug_check_refuses_what_the_pattern_refuses(store: Db, slug: str) -> None:
+    with closing(store.connect()) as connection, pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO catalog_item (canonical_slug, title, type, created_at) VALUES (?, 'A', 'simple', ?)",
+            (slug, AT),
+        )
+
+
+def test_an_items_title_and_type_follow_its_product_on_the_lowest_store(store: Db) -> None:
+    """Finding 8."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    save(store, pw, [product(20, "foo", "Title on PW")])
+    save(store, gf, [product(10, "foo", "Title on GF")])
+    assert store.rows("SELECT title FROM catalog_item") == [("Title on GF",)]
+    save(store, gf, [product(10, "foo", "Renamed on GF")], at=LATER)
+    assert store.rows("SELECT title FROM catalog_item") == [("Renamed on GF",)]
+    save(store, gf, [], at="2026-11-17T14:00:00.000000Z")  # gone from GF: PW's title from PW's next save
+    save(store, pw, [product(20, "foo", "Title on PW")], at="2026-11-17T14:00:01.000000Z")
+    assert store.rows("SELECT title FROM catalog_item") == [("Title on PW",)]
+
+
+def test_slot_download_rows_are_kept_across_reads_and_only_the_ones_no_longer_produced_go(store: Db) -> None:
+    """Finding 11 (04 section 4: kept across updates, APL-04): a row's identity survives a re-read; a download that
+    went is removed."""
+    gf = store.add_store("GF")
+    two = (Download("m", "Download", "f"), Download("x", "Extra", "g"))
+    save(store, gf, [product(1, "a", downloads=two)])
+    before = store.rows("SELECT rowid, slot_id, wc_download_id FROM slot_download ORDER BY slot_id")
+    save(store, gf, [product(1, "a", downloads=(Download("m", "Download", "f2"),))], at=LATER)
+    after = store.rows("SELECT rowid, slot_id, wc_download_id, file_url FROM slot_download ORDER BY slot_id")
+    assert after == [(before[0][0], before[0][1], "m", "f2")]
+
+
+def test_the_save_keeps_the_addresss_hash_and_refuses_a_store_whose_address_moved_meanwhile(store: Db) -> None:
+    """Finding 2: `sync_state` keeps a SHA-256 of the address read (never the address); a save for a read made before
+    the address changed is refused and saves nothing; `address_changed` and `clear_address_guard`."""
+    gf = store.add_store("GF")
+    save(store, gf, [product(1, "a")])
+    [(url,)] = store.rows("SELECT url FROM store WHERE id = ?", gf)
+    assert store.rows("SELECT address_sha256 FROM sync_state") == [(db.address_sha256(url),)]
+    assert url not in str(store.rows("SELECT * FROM sync_state"))
+    with closing(store.connect()) as connection:
+        connection.execute("UPDATE store SET url = 'https://other-shop.example' WHERE id = ?", (gf,))
+        assert db.address_changed(connection, gf, "https://other-shop.example")
+        with pytest.raises(db.AddressMoved):
+            db.save_store_read(connection, gf, [product(2, "b")], total=1, pages=1, at=LATER, read_url=url)
+        assert not connection.in_transaction
+        db.clear_address_guard(connection, gf)
+        assert not db.address_changed(connection, gf, "https://other-shop.example")
+    assert store.rows("SELECT wc_id FROM store_product") == [(1,)]
+
+
+def test_a_store_with_no_catalog_is_never_held_by_the_address_guard(store: Db) -> None:
+    gf = store.add_store("GF")
+    with closing(store.connect()) as connection:
+        assert not db.address_changed(connection, gf, "https://anything.example")

@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
+import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Path, Response
 from pydantic import BaseModel
 
@@ -102,7 +103,9 @@ def make_sync_router(service: CatalogService) -> APIRouter:
         try:
             yield
         finally:
-            service.stop()  # the app is shutting down: a running read stops and saves nothing
+            # the app is shutting down: no run starts from now on, a running read stops and saves nothing. The stop
+            # waits up to 2 s for the run, so it runs on a worker thread, never on the event loop.
+            await anyio.to_thread.run_sync(service.stop)
 
     router = APIRouter(lifespan=lifespan)
     errors: dict[int | str, dict[str, Any]] = {409: {"model": ErrorResponse}}

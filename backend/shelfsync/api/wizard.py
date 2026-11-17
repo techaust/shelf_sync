@@ -4,11 +4,12 @@ Behind the guard in `secure/middleware.py` (a session, and Origin plus `X-ShelfS
 
     GET /api/wizard          200 WizardResponse: each step, whether it is done, and the step to start at
     PUT /api/wizard/{step}   200 WizardResponse; 409 wizard_step_from_state (that step's state comes from the data);
-                             422 invalid_request (an unknown step or body)
+                             422 invalid_request (an unknown step or body). `{step}` is a step or `finished`
 
 The steps up to the catalog are `stores`, `storage`, `test` and `catalog`; `catalog/service.py` says how each one's
 "done" is decided. Only `test` is the owner's mark; the screen sets it when both tests passed, or when the owner skips
-the S3 test (it costs a few requests).
+the S3 test (it costs a few requests). `PUT /api/wizard/finished` is the screen's mark on leaving the catalog step
+(Lead (proposed)): from then on `current` is null whatever changes.
 """
 
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from shelfsync.catalog.service import WizardService, WizardState
 
 WIZARD_PATH = "/api/wizard"
 Step = Literal["stores", "storage", "test", "catalog"]
+MarkPath = Literal["stores", "storage", "test", "catalog", "finished"]
 
 
 class WizardStepModel(BaseModel):
@@ -33,7 +35,8 @@ class WizardStepModel(BaseModel):
 
 class WizardResponse(BaseModel):
     steps: list[WizardStepModel]
-    current: Step | None  # the first step not done; null when every step up to the catalog is done
+    current: Step | None  # the first step not done; null when every step up to the catalog is done, or finished
+    finished: bool  # the owner left the catalog step (`PUT /api/wizard/finished`)
 
 
 class WizardMarkRequest(BaseModel):
@@ -46,6 +49,7 @@ def wizard_response(state: WizardState) -> WizardResponse:
         {
             "steps": [{"step": s.step, "done": s.done, "from_state": s.from_state} for s in state.steps],
             "current": state.current,
+            "finished": state.finished,
         }
     )
 
@@ -75,7 +79,7 @@ def make_wizard_router(service: WizardService) -> APIRouter:
         response_model=WizardResponse,
         responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
     )
-    def put_wizard(step: Step, body: WizardMarkRequest) -> WizardResponse:
+    def put_wizard(step: MarkPath, body: WizardMarkRequest) -> WizardResponse:
         try:
             state = service.mark(step, body.done)
         except ValueError:

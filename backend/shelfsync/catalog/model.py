@@ -2,6 +2,7 @@
 reader asks a store for, each within the limits below (the same limits as migration 0003's CHECKs, so a checked
 product always fits its table)."""
 
+import json
 from dataclasses import dataclass
 
 # The limits a store's answer must keep (Lead (proposed), m3.1; L1 measures the real data). A longer value fails the
@@ -17,6 +18,10 @@ META_KEY_MAX = 255  # WordPress's `meta_key` is varchar(255)
 META_VALUE_MAX = 200
 META_KEPT_MAX = 50  # `latest_version*` entries kept on one product
 META_PREFIX = "latest_version"
+# The stored JSON texts' lengths (characters), the same numbers as migration 0003's CHECKs: the reader checks the
+# serialised form (`downloads_json`, `meta_json`), since a control character takes six characters once escaped.
+DOWNLOADS_JSON_MAX = 262144
+META_JSON_MAX = 65536
 
 
 @dataclass(frozen=True)
@@ -42,3 +47,17 @@ class Product:
     modified_gmt: str | None
     downloads: tuple[Download, ...]
     meta: tuple[tuple[str, str], ...]
+
+
+def downloads_json(downloads: tuple[Download, ...]) -> str:
+    """What `store_product.downloads_json` holds: each download's id, name and file."""
+    return json.dumps(
+        [{"id": item.id, "name": item.name, "file": item.file} for item in downloads],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def meta_json(meta: tuple[tuple[str, str], ...]) -> str:
+    """What `store_product.meta_json` holds: the kept `latest_version*` entries as [key, value] pairs."""
+    return json.dumps([[key, value] for key, value in meta], ensure_ascii=False, separators=(",", ":"))

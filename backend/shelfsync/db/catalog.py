@@ -2,25 +2,40 @@
 needs. Plain `sqlite3`; the rules themselves are the pure functions in `catalog/`.
 
 **One store's read is saved in one transaction** (`save_store_read`), after it fully succeeded: its rows are upserted,
-rows it no longer returned get `gone_at` (never deleted), new products are linked (`catalog.linking.plan_links`), its
-slot downloads are rebuilt (`catalog.slots.plan_slots`) and its `sync_state` records the read. Any failure rolls all of
-it back, so a failed or stopped read changes nothing for that store. The failure count is the one thing written while
-a read runs (`record_failure`, `record_success`): it must survive the read failing.
+rows it no longer returned get `gone_at` (never deleted), new products are linked (`catalog.linking.plan_links`), the
+title and type of the items it touches are refreshed, its slot downloads are upserted (`catalog.slots.plan_slots`; a
+row the read no longer produces is deleted, the others are kept, APL-04), and its `sync_state` records the read and
+the SHA-256 of the address it was read from. Any failure rolls all of it back, so a failed or stopped read changes
+nothing for that store. The failure count is the one thing written while a read runs (`record_failure`,
+`record_success`): it must survive the read failing.
+
+**One product per item and store fills the slots:** links never move, so an item can have two present products on one
+store (a product made again after its first was gone, and then the first one back). The lowest WooCommerce id fills
+the slots; the others are counted (`SaveSummary.duplicates_on_store`, for m3.3 to report).
 """
 
-import json
+import hashlib
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from shelfsync.catalog.linking import KnownLink, Placed, plan_links
-from shelfsync.catalog.model import Product
+from shelfsync.catalog.model import Product, downloads_json, meta_json
 from shelfsync.catalog.slots import SlotRef, plan_slots
+
+
+def address_sha256(url: str) -> str:
+    """The SHA-256 (hex) of a store's normalised address: what `sync_state` keeps, never the address itself."""
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 class SlugTaken(Exception):
     """Another item already has this canonical slug."""
+
+
+class AddressMoved(Exception):
+    """The store's address changed while it was being read: the read is not saved."""
 
 
 def _begin(connection: sqlite3.Connection) -> None:
@@ -49,11 +64,12 @@ class SyncStateRow:
     failures_in_row: int
     auto_paused_at: str | None
     auto_pause_reason: str | None
+    address_sha256: str | None
 
 
 _STATE_COLUMNS = (
     "store_id, read_started_at, read_finished_at, read_reason, read_http_status, read_pages, read_rows, read_total, "
-    "last_ok_at, failures_in_row, auto_paused_at, auto_pause_reason"
+    "last_ok_at, failures_in_row, auto_paused_at, auto_pause_reason, address_sha256"
 )
 
 
@@ -150,6 +166,27 @@ def resume_store(connection: sqlite3.Connection, store_id: int) -> None:
     )
 
 
+def has_catalog(connection: sqlite3.Connection, store_id: int) -> bool:
+    """Whether any product of this store has ever been saved."""
+    row = connection.execute("SELECT 1 FROM store_product WHERE store_id = ? LIMIT 1", (store_id,)).fetchone()
+    return row is not None
+
+
+def address_changed(connection: sqlite3.Connection, store_id: int, url: str) -> bool:
+    """True when the store has a saved catalog that was read from another address than `url`: its products would
+    belong to another shop, so the runner refuses it (`address_changed`) until `clear_address_guard`."""
+    state = sync_state(connection, store_id)
+    if state is None or state.address_sha256 is None:
+        return False
+    return state.address_sha256 != address_sha256(url) and has_catalog(connection, store_id)
+
+
+def clear_address_guard(connection: sqlite3.Connection, store_id: int) -> None:
+    """Forget the address the catalog was read from, so the next read goes ahead and records the current one. For the
+    task that decides how the owner resolves an address change (m3.3 or later); there is no route to it in m3.1."""
+    connection.execute("UPDATE sync_state SET address_sha256 = NULL WHERE store_id = ?", (store_id,))
+
+
 # ---- saving a read -----------------------------------------------------------------------------------------------
 
 
@@ -161,18 +198,7 @@ class SaveSummary:
     new_links: int
     main_by_single: int  # products whose main slot came from the one-download rule
     unslotted: int  # downloads not put in a slot (a repeated name on one product)
-
-
-def _downloads_json(product: Product) -> str:
-    return json.dumps(
-        [{"id": item.id, "name": item.name, "file": item.file} for item in product.downloads],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-
-
-def _meta_json(product: Product) -> str:
-    return json.dumps([[key, value] for key, value in product.meta], ensure_ascii=False, separators=(",", ":"))
+    duplicates_on_store: int  # present products of an item on this store besides the one that fills its slots
 
 
 def known_links(connection: sqlite3.Connection) -> list[KnownLink]:
@@ -209,20 +235,25 @@ def save_store_read(
     total: int | None,
     pages: int,
     at: str,
+    read_url: str,
 ) -> SaveSummary:
     """Save one store's successful full read in one transaction (the module text says what that does). The main
-    slot's name is the store's `main_button` as it is when the read is saved."""
+    slot's name is the store's `main_button` as it is when the read is saved. `read_url` is the address the read
+    went to: `AddressMoved` (and nothing saved) when the store's address is another one by now."""
     _begin(connection)
     try:
-        row = connection.execute("SELECT main_button FROM store WHERE id = ?", (store_id,)).fetchone()
+        row = connection.execute("SELECT main_button, url FROM store WHERE id = ?", (store_id,)).fetchone()
         if row is None:
             raise sqlite3.IntegrityError("no such store")
-        summary = _save(connection, store_id, products, row[0], at)
+        main_button, url = row
+        if url != read_url:
+            raise AddressMoved
+        summary = _save(connection, store_id, products, main_button, at)
         _ensure_state(connection, store_id)
         connection.execute(
             "UPDATE sync_state SET read_finished_at = ?, read_reason = NULL, read_http_status = NULL, read_pages = ?, "
-            "read_rows = ?, read_total = ?, last_ok_at = ? WHERE store_id = ?",
-            (at, pages, len(products), total, at, store_id),
+            "read_rows = ?, read_total = ?, last_ok_at = ?, address_sha256 = ? WHERE store_id = ?",
+            (at, pages, len(products), total, at, address_sha256(url), store_id),
         )
         connection.execute("COMMIT")
     except BaseException:
@@ -256,8 +287,8 @@ def _save(
                 product.type,
                 product.status,
                 product.modified_gmt,
-                _downloads_json(product),
-                _meta_json(product),
+                downloads_json(product.downloads),
+                meta_json(product.meta),
                 at,
             )
             for product in products
@@ -293,12 +324,19 @@ def _save(
             "SELECT catalog_item_id, wc_id FROM item_link WHERE store_id = ?", (store_id,)
         )
     }
-    slots = _slots_of(connection, (item_of[product.wc_id] for product in products))
-    connection.execute("DELETE FROM slot_download WHERE store_id = ?", (store_id,))
+    filling: dict[int, Product] = {}  # item -> its present product on this store with the lowest WooCommerce id
+    duplicates = 0
+    for product in sorted(products, key=lambda row: row.wc_id):
+        if item_of[product.wc_id] in filling:
+            duplicates += 1
+        else:
+            filling[item_of[product.wc_id]] = product
+    _refresh_titles(connection, filling)
+    slots = _slots_of(connection, filling)
+    kept: set[int] = set()  # the slots this read fills on this store
     main_by_single = 0
     unslotted = 0
-    for product in products:
-        item_id = item_of[product.wc_id]
+    for item_id, product in filling.items():
         slot_plan = plan_slots(product.downloads, main_button, slots[item_id])
         main_by_single += slot_plan.main_by_single
         unslotted += slot_plan.unslotted
@@ -312,19 +350,49 @@ def _save(
                 raise sqlite3.DatabaseError("the insert gave no row id")
             new_slot_ids.append(cursor.lastrowid)
             slots[item_id].append(SlotRef(cursor.lastrowid, new_slot.name, new_slot.is_main))
+        rows = [
+            (
+                assignment.slot_id if assignment.slot_id is not None else new_slot_ids[assignment.new_slot or 0],
+                store_id,
+                assignment.download.id,
+                assignment.download.file,
+            )
+            for assignment in slot_plan.assignments
+        ]
+        kept.update(row[0] for row in rows)
         connection.executemany(
-            "INSERT INTO slot_download (slot_id, store_id, wc_download_id, file_url) VALUES (?, ?, ?, ?)",
-            [
-                (
-                    assignment.slot_id if assignment.slot_id is not None else new_slot_ids[assignment.new_slot or 0],
-                    store_id,
-                    assignment.download.id,
-                    assignment.download.file,
-                )
-                for assignment in slot_plan.assignments
-            ],
+            "INSERT INTO slot_download (slot_id, store_id, wc_download_id, file_url) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (slot_id, store_id) DO UPDATE SET wc_download_id = excluded.wc_download_id, "
+            "file_url = excluded.file_url",
+            rows,
         )
-    return SaveSummary(len(products), len(gone), len(plan.new_items), len(plan.links), main_by_single, unslotted)
+    stale = [
+        (slot_id, store_id)
+        for (slot_id,) in connection.execute("SELECT slot_id FROM slot_download WHERE store_id = ?", (store_id,))
+        if slot_id not in kept
+    ]
+    connection.executemany("DELETE FROM slot_download WHERE slot_id = ? AND store_id = ?", stale)
+    return SaveSummary(
+        len(products), len(gone), len(plan.new_items), len(plan.links), main_by_single, unslotted, duplicates
+    )
+
+
+def _refresh_titles(connection: sqlite3.Connection, items: Iterable[int]) -> None:
+    """Each item this read touches takes the title and type of its present product on the lowest store id (stores
+    that aren't removed; the lowest WooCommerce id there)."""
+    wanted = set(items)
+    best: dict[int, tuple[int, int, str, str]] = {}
+    for item_id, store, wc_id, title, kind in connection.execute(
+        "SELECT l.catalog_item_id, l.store_id, l.wc_id, p.title, p.type FROM item_link l "
+        "JOIN store_product p ON p.store_id = l.store_id AND p.wc_id = l.wc_id "
+        "JOIN store s ON s.id = l.store_id WHERE s.removed_at IS NULL AND p.gone_at IS NULL"
+    ):
+        if item_id in wanted and (item_id not in best or (store, wc_id) < best[item_id][:2]):
+            best[item_id] = (store, wc_id, title, kind)
+    connection.executemany(
+        "UPDATE catalog_item SET title = ?, type = ? WHERE id = ? AND (title <> ? OR type <> ?)",
+        [(title, kind, item_id, title, kind) for item_id, (_, _, title, kind) in best.items()],
+    )
 
 
 # ---- what the API reads ------------------------------------------------------------------------------------------

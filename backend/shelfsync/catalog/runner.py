@@ -9,7 +9,12 @@ never two at once, and never inside a request (`POST /api/sync` only starts it).
 - Progress (the store, page of pages, rows) is kept for `GET /api/sync`.
 - **Stop:** `stop()` (the app's shutdown) is seen between requests and during every wait; the store being read is left
   exactly as it was (nothing of a stopped read is saved) and no later store is started.
-- A read that worked is saved in one transaction (`db/catalog.py`); a failed one records only its outcome.
+- A read that worked is saved in one transaction (`db/catalog.py`); a failed one records only its outcome, and an
+  outcome the read's own connection couldn't record (`database_error`, `internal`) is recorded on a fresh one.
+- **The address guard:** a store whose address changed since its saved catalog was read is refused before any
+  request (`address_changed`), and so is a save when the address changed during the read: links are keyed by the
+  store and the WooCommerce id, so another shop's products would silently take the old ones' places. Resolving it is a
+  later task (`db.catalog.clear_address_guard`).
 """
 
 import logging
@@ -26,6 +31,8 @@ from shelfsync.apply.catalog_read import FAILURES_TO_PAUSE, CatalogRead, log_rea
 from shelfsync.apply.woocommerce import WooClient
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db.catalog import (
+    AddressMoved,
+    address_changed,
     record_failure,
     record_read_failed,
     record_read_started,
@@ -112,15 +119,17 @@ class SyncRunner:
         self._lock = threading.Lock()
         self._state = RunState()
         self._thread: threading.Thread | None = None
+        self._closed = False
 
     def state(self) -> RunState:
         with self._lock:
             return replace(self._state, outcomes=dict(self._state.outcomes))
 
     def start(self) -> bool:
-        """Start a run on its own thread. False when one is running (or a stopped one hasn't ended yet)."""
+        """Start a run on its own thread. False when one is running (or a stopped one hasn't ended yet), and always
+        after `stop()`: the app is shutting down, so no run may begin."""
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._closed or (self._thread is not None and self._thread.is_alive()):
                 return False
             self._stop = self._make_stop()
             self._state = RunState(running=True, started_at=to_iso(self._now()))
@@ -129,8 +138,10 @@ class SyncRunner:
             return True
 
     def stop(self, wait_seconds: float = STOP_WAIT_SECONDS) -> None:
-        """Ask the run to stop and wait a bounded time. A request in flight ends within its own timeouts; the run is a
-        daemon thread, so it never holds the process."""
+        """Close the runner (no run starts after this), ask a running one to stop and wait a bounded time. A request
+        in flight ends within its own timeouts; the run is a daemon thread, so it never holds the process."""
+        with self._lock:
+            self._closed = True
         self._stop.set()
         thread = self._thread
         if thread is not None:
@@ -182,13 +193,31 @@ class SyncRunner:
                     _log.info("Store %s catalog read: auto_paused (skipped)", row.code)
                     return "auto_paused"
                 record_read_started(connection, row.id, to_iso(self._now()))
+                if address_changed(connection, row.id, row.url):
+                    return self._failed(connection, row, CatalogRead("address_changed"))  # no request is sent
                 return self._read_and_save(connection, row)
+        except AddressMoved:
+            return self._record_on_fresh_connection(row, "address_changed")
         except sqlite3.Error as error:
             _log.error("Store %s catalog read: database_error (%s)", row.code, type(error).__name__)
-            return "database_error"
+            return self._record_on_fresh_connection(row, "database_error")
         except Exception as error:  # a bug must not stop the other stores; its type is logged, never its text
             _log.error("Store %s catalog read: internal (%s)", row.code, type(error).__name__)
-            return "internal"
+            return self._record_on_fresh_connection(row, "internal")
+
+    def _record_on_fresh_connection(self, row: StoreRow, reason: str) -> str:
+        """Record an outcome the read's own connection may not be able to (it failed on that connection). A second
+        failure is only logged: the outcome is still reported in `GET /api/sync`'s `this_run`."""
+        try:
+            with closing(self._open()) as connection:
+                record_read_failed(
+                    connection, row.id, reason=reason, http_status=None, pages=0, total=None, at=to_iso(self._now())
+                )
+        except Exception as error:
+            _log.error("Store %s: the outcome couldn't be recorded (%s)", row.code, type(error).__name__)
+        if reason == "address_changed":
+            log_read(row.code, CatalogRead(reason))
+        return reason
 
     def _read_and_save(self, connection: sqlite3.Connection, row: StoreRow) -> str | None:
         try:
@@ -212,7 +241,13 @@ class SyncRunner:
         if not result.ok:
             return self._failed(connection, row, result)
         save_store_read(
-            connection, row.id, result.products, total=result.total, pages=result.pages, at=to_iso(self._now())
+            connection,
+            row.id,
+            result.products,
+            total=result.total,
+            pages=result.pages,
+            at=to_iso(self._now()),
+            read_url=row.url,
         )
         log_read(row.code, result)
         return None

@@ -296,6 +296,29 @@ def test_a_body_of_exactly_one_mebibyte_is_read() -> None:
     assert run(FakeWoo(status=status)).ok
 
 
+DEEP = b"[" * 100_000  # `json` raises RecursionError (not a ValueError) for this; `_json` reads it as not JSON
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason", "requests"),
+    [
+        ({"status": httpx.Response(200, content=DEEP)}, "not_woocommerce", 1),
+        ({"status": httpx.Response(500, content=DEEP)}, "server_error", 1),
+        ({"products_answer": products(body=None, total=3)}, None, 2),  # the control: a good second answer
+        ({"products_answer": httpx.Response(200, headers={"X-WP-Total": "3"}, content=DEEP)}, "not_woocommerce", 2),
+        ({"products_answer": httpx.Response(502, content=DEEP)}, "server_error", 2),
+    ],
+    ids=["first 200", "first 500", "control", "second 200", "second 502"],
+)
+def test_a_body_nested_too_deep_for_json_never_crashes_the_read_test(
+    arguments: dict[str, object], reason: str | None, requests: int
+) -> None:
+    """Test connection answers a reason for a deep nest on either of its two requests, never a RecursionError."""
+    woo = FakeWoo(**arguments)  # type: ignore[arg-type]
+    outcome = run(woo)
+    assert outcome.reason == reason and len(woo.requests) == requests
+
+
 def test_the_whole_test_gives_up_after_sixty_seconds() -> None:
     woo = FakeWoo()
     woo.status = lambda request: (setattr(woo.time, "now", woo.time.now + 61.0), system_status())[1]  # type: ignore[assignment]

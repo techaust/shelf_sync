@@ -258,10 +258,11 @@ class ReadOutcome:
 
 
 def _json(body: bytes) -> Any:
-    """The parsed body, or the `_NOT_JSON` marker."""
+    """The parsed body, or the `_NOT_JSON` marker. A body nested too deep for `json` raises `RecursionError` (not a
+    `ValueError`), so it is caught too: a store's answer must never crash the caller."""
     try:
         return json.loads(body.decode("utf-8"))
-    except ValueError:  # includes UnicodeDecodeError and JSONDecodeError
+    except ValueError, RecursionError:  # ValueError includes UnicodeDecodeError and JSONDecodeError
         return _NOT_JSON
 
 

@@ -16,13 +16,16 @@ Rules this module keeps:
   runner keeps in `sync_state` across runs); at 10 the store is auto-paused and the read ends.
 - **The count check:** the rows read must equal page 1's `X-WP-Total`, with no id seen twice and the ids ascending
   across the pages. If not, the whole listing is read once more; if it still doesn't match, `count_mismatch`.
-- **Bounds:** 10 minutes for one store's whole read (`timeout`); 8 MiB per page (`PAGE_MAX_BYTES`, Lead (proposed));
-  the field limits of `catalog/model.py`. A hostile answer ends the read with `bad_response`: a page that isn't a JSON
-  list, more than 100 rows on a page, a row without an integer `id`, a wrong type, an over-long field, or a bad
-  `X-WP-Total` / `X-WP-TotalPages`. A failed or stopped read returns no products: the caller saves nothing.
+- **Bounds:** 10 minutes for one store's whole read (`timeout`); 8 MiB per page (`PAGE_MAX_BYTES`) and 64 MiB per
+  listing (`LISTING_MAX_BYTES`), both Lead (proposed); the field limits of `catalog/model.py`. A hostile answer ends
+  the read with `bad_response`: a page that isn't a JSON list, more than 100 rows on a page, a row without an integer
+  `id`, a wrong type, an over-long field, a text with a NUL or a lone surrogate, a download or meta list whose stored
+  JSON would pass its limit, or a bad `X-WP-Total` / `X-WP-TotalPages`. The result names the failing field (a fixed
+  identifier from this code, never a value) and the page. A failed or stopped read returns no products: the caller
+  saves nothing.
 - **Stop:** the read stops between requests and during every wait when asked (`stopped`).
-- **Logs:** one line per store per read: its code, the outcome, pages, rows and the HTTP status of the last failure.
-  Never an address, key, cookie, query string, header or body.
+- **Logs:** one line per store per read: its code, the outcome, pages, rows, the HTTP status of the last failure, and
+  for `bad_response` the field and page. Never an address, key, cookie, query string, header or body.
 """
 
 import html
@@ -56,7 +59,9 @@ from shelfsync.catalog.model import (
     DOWNLOAD_FILE_MAX,
     DOWNLOAD_ID_MAX,
     DOWNLOAD_NAME_MAX,
+    DOWNLOADS_JSON_MAX,
     DOWNLOADS_MAX,
+    META_JSON_MAX,
     META_KEPT_MAX,
     META_KEY_MAX,
     META_PREFIX,
@@ -65,12 +70,15 @@ from shelfsync.catalog.model import (
     TITLE_MAX,
     Download,
     Product,
+    downloads_json,
+    meta_json,
 )
 from shelfsync.clock import utc_now
 
 _log = logging.getLogger("shelfsync.catalog")
 
 PAGE_MAX_BYTES = 8 * 1024 * 1024  # one products page (Lead (proposed); L1 measures the real size)
+LISTING_MAX_BYTES = 64 * 1024 * 1024  # one whole listing, every page together (Lead (proposed))
 PER_PAGE = 100
 MAX_PAGES = 40
 RETRIES = 3
@@ -150,7 +158,9 @@ Progress = Callable[[int, int, int], None]  # (page, pages, rows so far)
 @dataclass(frozen=True)
 class CatalogRead:
     """One store's read. `reason` is None when it worked; then `products` holds every row, in id order. A failed
-    read has no products. `http_status` is the status of the last failed request (when one answered)."""
+    read has no products. `http_status` is the status of the last failed request (when one answered). For a
+    `bad_response`, `bad_field` names what was wrong (a fixed identifier such as `name` or `downloads.file`, never a
+    value) and `bad_page` the products page (None: `system_status`)."""
 
     reason: str | None
     products: tuple[Product, ...] = ()
@@ -161,6 +171,8 @@ class CatalogRead:
     largest_page_bytes: int = 0
     requests: int = 0
     auto_paused: bool = False
+    bad_field: str | None = None
+    bad_page: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -168,15 +180,22 @@ class CatalogRead:
 
 
 class BadAnswer(Exception):
-    """The store's answer isn't what the reader accepts: the read ends with `bad_response`."""
+    """The store's answer isn't what the reader accepts: the read ends with `bad_response`. `field` is a fixed
+    identifier from this code (never a value from the answer)."""
+
+    def __init__(self, field: str) -> None:
+        super().__init__(field)
+        self.field = field
 
 
 class _End(Exception):
-    """The read ends here with `reason`."""
+    """The read ends here with `reason` (and, for a `bad_response`, the field and the page)."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, field: str | None = None, page: int | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.field = field
+        self.page = page
 
 
 def retry_delay(headers: httpx.Headers | None, attempt: int, now: datetime) -> float:
@@ -198,22 +217,6 @@ def retry_delay(headers: httpx.Headers | None, attempt: int, now: datetime) -> f
             moment = moment.replace(tzinfo=UTC)  # RFC 9110: an HTTP date is always GMT
         seconds = (moment - now).total_seconds()
     return min(max(seconds, 0.0), RETRY_AFTER_MAX_SECONDS)
-
-
-def _classify(response: WooResponse) -> str | None:
-    """`classify`, with a body nested too deep for `json` (a `RecursionError`, not a `ValueError`) read as a
-    `bad_response` rather than a crash."""
-    try:
-        return classify(response)
-    except RecursionError:
-        return "bad_response"
-
-
-def _parsed(body: bytes) -> Any:
-    try:
-        return _json(body)
-    except RecursionError:
-        return None
 
 
 def is_retried(reason: str, status: int | None) -> bool:
@@ -280,7 +283,7 @@ class _Session:
                 reason = refused.reason
                 status = refused.status
             else:
-                answered = None if page and response.status == 200 else _classify(response)
+                answered = None if page and response.status == 200 else classify(response)
                 if answered is None:
                     self._failures.succeeded()
                     return response
@@ -306,6 +309,7 @@ def read_catalog(
     now: Callable[[], datetime] = utc_now,
     store_seconds: float = STORE_SECONDS,
     page_max_bytes: int = PAGE_MAX_BYTES,
+    listing_max_bytes: int = LISTING_MAX_BYTES,
 ) -> CatalogRead:
     """Read one store's catalog (the module text says how). Never raises for anything the store answers."""
     session = _Session(
@@ -322,7 +326,8 @@ def read_catalog(
     try:
         wc_version = _check_version(session)
         for _attempt in range(2):
-            state = _read_listing(session, page_max_bytes, progress)
+            state = _Listing()
+            _read_listing(session, state, page_max_bytes, listing_max_bytes, progress)
             if state.consistent():
                 return CatalogRead(
                     None,
@@ -346,6 +351,8 @@ def read_catalog(
             state.largest,
             session.requests,
             session.auto_paused,
+            end.field,
+            end.page,
         )
 
 
@@ -356,30 +363,40 @@ def read_store_catalog(client: WooClient, code: str, **options: Any) -> CatalogR
     return result
 
 
+def describe_bad(result: CatalogRead) -> str:
+    """`; field <name> on page <n>` for a `bad_response` that named one (the page is `system_status` for the first
+    request), else nothing."""
+    if result.bad_field is None:
+        return ""
+    where = "system_status" if result.bad_page is None else f"page {result.bad_page}"
+    return f"; field {result.bad_field} on {where}"
+
+
 def log_read(code: str, result: CatalogRead) -> None:
     level = logging.INFO if result.ok else logging.WARNING
     _log.log(
         level,
-        "Store %s catalog read: %s (pages %d, rows %d, last failure HTTP %s)%s",
+        "Store %s catalog read: %s (pages %d, rows %d, last failure HTTP %s%s)%s",
         code,
         result.reason or "ok",
         result.pages,
         len(result.products),
         result.http_status,
+        describe_bad(result),
         "; the store's sync is now auto-paused" if result.auto_paused else "",
     )
 
 
 def _check_version(session: _Session) -> str:
     response = session.request("GET", SYSTEM_STATUS_PATH, {"_fields": "environment"}, 1024 * 1024)
-    data = _parsed(response.body)
+    data = _json(response.body)
     environment = data.get("environment") if isinstance(data, dict) else None
     if not isinstance(environment, dict):
-        raise _End("bad_response")
+        raise _End("bad_response", "environment")
     version = _clean_version(environment.get("version"))
     parsed = _version_tuple(version) if version else None
     if version is None or parsed is None:
-        raise _End("bad_response")
+        raise _End("bad_response", "version")
     if parsed < MIN_WC_VERSION:
         raise _End("wc_too_old")
     return version
@@ -391,6 +408,7 @@ class _Listing:
     total: int | None = None
     pages: int = 0
     largest: int = 0
+    size: int = 0  # every page's bytes together
 
     def consistent(self) -> bool:
         """As many rows as page 1's `X-WP-Total`, every id once, ascending across the pages."""
@@ -398,41 +416,43 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
+    def add_page(self, page: int, body: bytes, listing_max_bytes: int) -> None:
+        self.pages = page
+        self.largest = max(self.largest, len(body))
+        self.size += len(body)
+        if self.size > listing_max_bytes:
+            raise _End("bad_response", "listing_bytes", page)
+        try:
+            self.rows.extend(parse_page(body))
+        except BadAnswer as bad:
+            raise _End("bad_response", bad.field, page) from None
+
 
 def _count(headers: httpx.Headers, name: str) -> int:
     value = headers.get(name)
     if value is None or _COUNT.fullmatch(value) is None:
-        raise _End("bad_response")
+        raise _End("bad_response", name, 1)
     return int(value)
 
 
-def _read_listing(session: _Session, page_max_bytes: int, progress: Progress | None) -> _Listing:
+def _read_listing(
+    session: _Session, listing: _Listing, page_max_bytes: int, listing_max_bytes: int, progress: Progress | None
+) -> None:
     first = session.request("GET", PRODUCTS_PATH, listing_params(1), page_max_bytes, page=True)
-    total = _count(first.headers, "x-wp-total")
+    listing.total = _count(first.headers, "x-wp-total")
     pages = _count(first.headers, "x-wp-totalpages")
     if pages > MAX_PAGES:
         raise _End("too_many_pages")
-    listing = _Listing([], total, 1, len(first.body))
-    listing.rows.extend(_page(first.body))
-    if total == 0 and not listing.rows:
+    listing.add_page(1, first.body, listing_max_bytes)
+    if listing.total == 0 and not listing.rows:
         raise _End("no_products")
     if progress is not None:
         progress(1, max(pages, 1), len(listing.rows))
     for page in range(2, pages + 1):
         response = session.request("GET", PRODUCTS_PATH, listing_params(page), page_max_bytes, page=True)
-        listing.pages = page
-        listing.largest = max(listing.largest, len(response.body))
-        listing.rows.extend(_page(response.body))
+        listing.add_page(page, response.body, listing_max_bytes)
         if progress is not None:
             progress(page, pages, len(listing.rows))
-    return listing
-
-
-def _page(body: bytes) -> list[Product]:
-    try:
-        return parse_page(body)
-    except BadAnswer:
-        raise _End("bad_response") from None
 
 
 def parse_page(body: bytes) -> list[Product]:
@@ -440,17 +460,29 @@ def parse_page(body: bytes) -> list[Product]:
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError, RecursionError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors; a deep nest recurses
-        raise BadAnswer("not JSON") from None
+        raise BadAnswer("json") from None
     if not isinstance(data, list) or len(data) > PER_PAGE:
-        raise BadAnswer("not a page")
+        raise BadAnswer("page")
     return [parse_product(raw) for raw in data]
 
 
-def _text(raw: dict[str, Any], key: str, longest: int, shortest: int = 0) -> str:
+def _clean(value: str, name: str) -> str:
+    """A text the database can hold as it is: no NUL and no lone surrogate (JSON's `\\ud800` escape makes one, and
+    UTF-8 can't encode it)."""
+    if "\x00" in value:
+        raise BadAnswer(name)
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise BadAnswer(name) from None
+    return value
+
+
+def _text(raw: dict[str, Any], key: str, longest: int, shortest: int = 0, name: str | None = None) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not shortest <= len(value) <= longest:
-        raise BadAnswer(key)
-    return value
+        raise BadAnswer(name or key)
+    return _clean(value, name or key)
 
 
 def _word(raw: dict[str, Any], key: str) -> str:
@@ -463,12 +495,12 @@ def _word(raw: dict[str, Any], key: str) -> str:
 def parse_product(raw: Any) -> Product:
     """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value)."""
     if not isinstance(raw, dict):
-        raise BadAnswer("not an object")
+        raise BadAnswer("row")
     wc_id = raw.get("id")
     if type(wc_id) is not int or not 1 <= wc_id <= WC_ID_MAX:
         raise BadAnswer("id")
     slug = _text(raw, "slug", SLUG_MAX)
-    title = html.unescape(_text(raw, "name", TITLE_MAX))
+    title = _clean(html.unescape(_text(raw, "name", TITLE_MAX)), "name")
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
     if "date_modified_gmt" not in raw:
@@ -497,12 +529,15 @@ def _downloads(value: Any) -> tuple[Download, ...]:
             raise BadAnswer("downloads")
         found.append(
             Download(
-                id=_text(raw, "id", DOWNLOAD_ID_MAX, 1),
-                name=_text(raw, "name", DOWNLOAD_NAME_MAX),
-                file=_text(raw, "file", DOWNLOAD_FILE_MAX),
+                id=_text(raw, "id", DOWNLOAD_ID_MAX, 1, "downloads.id"),
+                name=_text(raw, "name", DOWNLOAD_NAME_MAX, name="downloads.name"),
+                file=_text(raw, "file", DOWNLOAD_FILE_MAX, name="downloads.file"),
             )
         )
-    return tuple(found)
+    downloads = tuple(found)
+    if len(downloads_json(downloads)) > DOWNLOADS_JSON_MAX:  # escaped control characters take six characters each
+        raise BadAnswer("downloads_json")
+    return downloads
 
 
 def _meta(value: Any) -> tuple[tuple[str, str], ...]:
@@ -518,6 +553,9 @@ def _meta(value: Any) -> tuple[tuple[str, str], ...]:
         if not key.startswith(META_PREFIX):
             continue
         if len(key) > META_KEY_MAX or len(kept) >= META_KEPT_MAX:
-            raise BadAnswer("meta_data")
-        kept.append((key, _text(raw, "value", META_VALUE_MAX)))
-    return tuple(kept)
+            raise BadAnswer("meta_data.key")
+        kept.append((_clean(key, "meta_data.key"), _text(raw, "value", META_VALUE_MAX, name="meta_data.value")))
+    meta = tuple(kept)
+    if len(meta_json(meta)) > META_JSON_MAX:
+        raise BadAnswer("meta_json")
+    return meta

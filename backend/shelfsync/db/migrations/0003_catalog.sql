@@ -13,6 +13,7 @@ CREATE TABLE store_product (
     type           TEXT NOT NULL CHECK (length(type) BETWEEN 1 AND 40),
     status         TEXT NOT NULL CHECK (length(status) BETWEEN 1 AND 40),
     modified_gmt   TEXT CHECK (modified_gmt IS NULL OR length(modified_gmt) = 19),
+    -- the two lengths are catalog/model.py's DOWNLOADS_JSON_MAX and META_JSON_MAX, which the reader checks first
     downloads_json TEXT NOT NULL CHECK (length(downloads_json) <= 262144 AND json_valid(downloads_json)),
     meta_json      TEXT NOT NULL CHECK (length(meta_json) <= 65536 AND json_valid(meta_json)),
     seen_at        TEXT NOT NULL,
@@ -23,10 +24,18 @@ CREATE TABLE store_product (
 CREATE INDEX store_product_slug ON store_product (store_id, slug);
 
 -- One real product. `canonical_slug` is NULL for an item that has no slug (a draft with an empty slug, a trashed slug,
--- or a slug another item already holds as its canonical slug): it is never linked by slug.
+-- a slug outside the canonical pattern, or one another item already holds): it is never linked by slug. The pattern
+-- is `catalog/names.py`'s CANONICAL_SLUG_PATTERN: lowercase a-z, 0-9 and -, 1 to 200, no leading or trailing -.
 CREATE TABLE catalog_item (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    canonical_slug TEXT UNIQUE CHECK (canonical_slug IS NULL OR length(canonical_slug) BETWEEN 1 AND 200),
+    canonical_slug TEXT UNIQUE CHECK (
+        canonical_slug IS NULL OR (
+            length(canonical_slug) BETWEEN 1 AND 200
+            AND canonical_slug NOT GLOB '*[^a-z0-9-]*'
+            AND canonical_slug NOT GLOB '-*'
+            AND canonical_slug NOT GLOB '*-'
+        )
+    ),
     title          TEXT NOT NULL CHECK (length(title) <= 1000),
     type           TEXT NOT NULL CHECK (length(type) BETWEEN 1 AND 40),
     created_at     TEXT NOT NULL
@@ -70,8 +79,12 @@ CREATE INDEX slot_download_store ON slot_download (store_id);
 
 -- One row per store: its last full read and the failures-in-a-row count (APL-12), kept across runs. An auto-paused
 -- store's reads are skipped until the owner resumes it; it doesn't change `store.state` (the owner's pause).
+-- `address_sha256` is the SHA-256 (hex) of the store address the saved catalog was read from (never the address): a
+-- store whose address changed since is refused (`address_changed`) until that is resolved (`clear_address_guard`).
 CREATE TABLE sync_state (
     store_id          INTEGER PRIMARY KEY REFERENCES store (id),
+    address_sha256    TEXT CHECK (address_sha256 IS NULL OR (length(address_sha256) = 64
+                                  AND address_sha256 NOT GLOB '*[^0-9a-f]*')),
     read_started_at   TEXT,
     read_finished_at  TEXT,
     read_reason       TEXT CHECK (read_reason IS NULL OR length(read_reason) BETWEEN 1 AND 40),  -- NULL: it worked

@@ -6,6 +6,11 @@ import re
 import unicodedata
 
 TRASHED_SUFFIX = "__trashed"  # WordPress renames a trashed post's slug to `<slug>__trashed`
+# A canonical slug (CAT-04): lowercase a-z, 0-9 and -, 1 to 200 characters, no leading or trailing -. The slug edit
+# (`api/catalog.py`) and migration 0003's CHECK hold the same rule; a store slug outside it (a percent-encoded one, say)
+# never becomes a canonical slug.
+CANONICAL_SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$"
+_CANONICAL = re.compile(CANONICAL_SLUG_PATTERN)
 _WP_SUFFIX = re.compile(r"-([2-9]|[1-9][0-9]+)")  # WordPress's `-2`, `-3`, ... for a slug already taken
 _SPACES = re.compile(r"\s+")
 
@@ -13,6 +18,11 @@ _SPACES = re.compile(r"\s+")
 def is_linkable_slug(slug: str) -> bool:
     """A slug that may link products across stores: not empty (a draft can have none) and not a trashed one."""
     return bool(slug) and not slug.endswith(TRASHED_SUFFIX)
+
+
+def is_canonical_slug(slug: str) -> bool:
+    """Whether `slug` may be a canonical slug (`CANONICAL_SLUG_PATTERN`)."""
+    return _CANONICAL.fullmatch(slug) is not None
 
 
 def edit_distance(first: str, second: str, limit: int | None = None) -> int:

@@ -271,6 +271,32 @@ def test_the_wizards_data_steps_cannot_be_marked_and_odd_requests_are_refused(ap
         assert (response.status_code, response.json()) == (422, {"error": "invalid_request"})
 
 
+def test_the_finished_mark_ends_the_wizard_whatever_changes_later(api: ApiRig) -> None:
+    """Analyst finding 9 (Lead (proposed)): the screen sets `finished` on leaving the catalog step."""
+    assert _wizard(api)["finished"] is False
+    api.rig.add_store("GF", [raw_product(1)])
+    api.storage["ready"] = True
+    api.client.put("/api/wizard/test", headers=WRITE_HEADERS, json={"done": True})
+    run_sync(api)
+    done = api.client.put("/api/wizard/finished", headers=WRITE_HEADERS, json={"done": True})
+    assert done.status_code == 200 and done.json()["finished"] is True and done.json()["current"] is None
+    api.rig.add_store("PW", [raw_product(2)])  # a new store with no catalog yet
+    api.client.put("/api/wizard/test", headers=WRITE_HEADERS, json={"done": False})
+    body = _wizard(api)
+    assert body["current"] is None and body["finished"] is True
+    assert [s["step"] for s in body["steps"]] == ["stores", "storage", "test", "catalog"]
+
+
+def test_an_item_whose_only_links_are_on_removed_stores_is_left_out(api: ApiRig) -> None:
+    """Analyst finding 14."""
+    gf = api.rig.add_store("GF", [raw_product(1, "alpha")])
+    api.rig.add_store("PW", [raw_product(2, "beta")])
+    run_sync(api)
+    with closing(api.rig.db.connect()) as connection:
+        connection.execute("UPDATE store SET removed_at = '2026-11-17T13:00:00.000000Z' WHERE id = ?", (gf,))
+    assert [item["canonical_slug"] for item in api.client.get("/api/catalog").json()["items"]] == ["beta"]
+
+
 # ---- the shutdown --------------------------------------------------------------------------------------------------
 
 

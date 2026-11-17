@@ -154,10 +154,19 @@ def test_an_unreadable_system_status_is_a_bad_response(environment: Any) -> None
 
 
 @pytest.mark.parametrize("status", [200, 500])
-def test_a_body_nested_too_deep_for_json_is_a_bad_response_not_a_crash(status: int) -> None:
-    """`json` raises RecursionError (not a ValueError) for 100,000 open brackets."""
+def test_a_body_nested_too_deep_for_json_is_read_as_not_json_not_a_crash(status: int) -> None:
+    """`json` raises RecursionError (not a ValueError) for 100,000 open brackets; `woocommerce._json` reads it as not
+    JSON: a 200 is `not_woocommerce` (as in Test connection), a 500 a `server_error` (retried, then given up)."""
     store = FakeCatalogStore(rows=rows(1), status_answer=httpx.Response(status, content=b"[" * 100_000))
-    assert read(store).reason == "bad_response"
+    assert read(store).reason == ("not_woocommerce" if status == 200 else "server_error")
+
+
+def test_a_products_page_nested_too_deep_is_a_bad_response_naming_the_page() -> None:
+    store = FakeCatalogStore(rows=rows(150))
+    deep = httpx.Response(200, headers={"X-WP-Total": "150", "X-WP-TotalPages": "2"}, content=b"[" * 100_000)
+    store.before_page = lambda page: store.answers.append(deep) if page == 1 else None
+    result = read(store)
+    assert (result.reason, result.bad_field, result.bad_page) == ("bad_response", "json", 2)
 
 
 # ---- retries (APL-12) ----------------------------------------------------------------------------------------------
@@ -436,6 +445,62 @@ def test_a_hostile_answer_ends_the_read_with_bad_response_and_saves_nothing(resp
     assert len(store.product_requests()) == 1  # not retried
 
 
+TEXT_PROBES: list[tuple[str, dict[str, Any], str]] = [
+    # (id, the row's changes, the field named): the analyst's three probes first
+    ("lone surrogate title", {"name": "Bad \ud800 title"}, "name"),
+    (
+        "control characters in downloads",
+        {"downloads": [{"id": f"{n:032x}", "name": "\x01" * 200, "file": "\x01" * 2048} for n in range(50)]},
+        "downloads_json",
+    ),
+    (
+        "control characters in meta",
+        {"meta_data": [{"key": "latest_version" + "\x01" * 200 + str(n), "value": "\x01" * 200} for n in range(50)]},
+        "meta_json",
+    ),
+    ("NUL in a slug", {"slug": "a\x00b"}, "slug"),
+    ("NUL in a title by entity", {"name": "a&#0;b\x00"}, "name"),
+    ("lone surrogate in a file", {"downloads": [{"id": "a", "name": "Download", "file": "\udfff"}]}, "downloads.file"),
+    ("NUL in a download id", {"downloads": [{"id": "a\x00", "name": "Download", "file": "f"}]}, "downloads.id"),
+    ("NUL in a meta key", {"meta_data": [{"key": "latest_version\x00", "value": "1"}]}, "meta_data.key"),
+    ("surrogate in a meta value", {"meta_data": [{"key": "latest_version", "value": "\ud83d"}]}, "meta_data.value"),
+]
+
+
+@pytest.mark.parametrize(("changes", "field_name"), [p[1:] for p in TEXT_PROBES], ids=[p[0] for p in TEXT_PROBES])
+def test_text_the_database_could_not_hold_is_a_bad_response_naming_its_field(
+    changes: dict[str, Any], field_name: str
+) -> None:
+    """Analyst finding 1: a NUL, a lone surrogate, or a download or meta list whose stored JSON would pass its CHECK
+    (control characters take six characters once escaped) fail in the reader, not in the save."""
+    raw = raw_product(1)
+    raw.update(changes)
+    result = read(FakeCatalogStore(rows=[raw]))
+    assert (result.reason, result.products, result.bad_field, result.bad_page) == ("bad_response", (), field_name, 1)
+
+
+def test_the_largest_lists_that_fit_their_limits_are_read() -> None:
+    downloads = [{"id": f"{n:032x}", "name": "n" * 200, "file": "f" * 2048} for n in range(50)]
+    meta = [{"key": "latest_version" + "k" * 239 + f"{n:02d}", "value": "v" * 200} for n in range(50)]
+    [found] = read(FakeCatalogStore(rows=[raw_product(1, downloads=downloads, meta=meta)])).products
+    assert len(found.downloads) == 50 and len(found.meta) == 50
+
+
+def test_a_whole_listing_over_its_byte_cap_is_a_bad_response() -> None:
+    """Analyst finding 7 (Lead (proposed): 64 MiB); here with a small cap."""
+    store = FakeCatalogStore(rows=rows(250))
+    result = read(store, listing_max_bytes=60_000)
+    assert (result.reason, result.bad_field) == ("bad_response", "listing_bytes")
+    assert result.bad_page is not None and result.bad_page > 1
+
+
+def test_a_bad_header_names_itself_and_page_one() -> None:
+    result = read(FakeCatalogStore(rows=rows(1), total_header="many"))
+    assert (result.reason, result.bad_field, result.bad_page) == ("bad_response", "x-wp-total", 1)
+    result = read(FakeCatalogStore(rows=rows(1), status_answer=httpx.Response(200, json={"environment": {}})))
+    assert (result.reason, result.bad_field, result.bad_page) == ("bad_response", "version", None)
+
+
 def test_an_empty_slug_a_trashed_slug_and_no_downloads_are_read_as_they_are() -> None:
     raws = [raw_product(1, "", status="draft"), raw_product(2, "old-slider__trashed"), raw_product(3, downloads=[])]
     result = read(FakeCatalogStore(rows=raws))
@@ -469,11 +534,15 @@ def test_a_stop_asked_before_the_read_sends_nothing() -> None:
 def test_one_line_per_read_with_the_code_outcome_counts_and_last_status_and_nothing_else(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # The catalog logger's own level is set here, so the result doesn't hang on what an earlier test or import left.
     caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="shelfsync.catalog")
     leaky = [raw_product(1, "secret-slug", f"Title {KEY}", downloads=[download(key="bucket-object-key.zip")])]
+    hostile = [raw_product(1, "secret-slug", f"Title {KEY}\x00", downloads=[download(key="bucket-object-key.zip")])]
     for store in (
         FakeCatalogStore(rows=leaky, answers=[answer(524)]),
         FakeCatalogStore(rows=leaky, answers=[wp_error(401, f"woocommerce_rest_cannot_view {KEY}:{SECRET}")]),
+        FakeCatalogStore(rows=hostile),
     ):
         with WooClient(STORE_URL, KEY, SECRET, transport=store.transport, monotonic=store.time.monotonic) as client:
             read_store_catalog(
@@ -489,6 +558,7 @@ def test_one_line_per_read_with_the_code_outcome_counts_and_last_status_and_noth
     assert lines == [
         "Store GF catalog read: ok (pages 1, rows 1, last failure HTTP 524)",
         "Store GF catalog read: keys_refused (pages 0, rows 0, last failure HTTP 401)",
+        "Store GF catalog read: bad_response (pages 1, rows 0, last failure HTTP None; field name on page 1)",
     ]
     everything = "\n".join(record.getMessage() for record in caplog.records)
     for forbidden in ("store-a.example", KEY, SECRET, "secret-slug", "bucket-object-key", "downloadable", "Basic"):

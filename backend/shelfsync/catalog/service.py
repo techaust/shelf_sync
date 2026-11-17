@@ -8,6 +8,8 @@ wizard step's "done" from real state where it can:
 - **test:** the owner's mark (`PUT /api/wizard/test`): nothing in the data says the owner has seen both tests pass;
 - **catalog:** every active store has a full read that worked, and there is at least one active store.
 The first step not done is where the wizard starts; an install that already has stores and storage starts at `test`.
+**`finished`** (Lead (proposed)) is the owner's mark the screen sets on leaving the catalog step: once it is set the
+wizard is done (`current` stays null) whatever changes later (a store added, a read that failed).
 """
 
 import sqlite3
@@ -162,9 +164,9 @@ class CatalogService:
             counts = db.slot_counts(connection)
             active = db.active_store_ids(connection)
         by_item: dict[int, list[db.LinkRow]] = {}
-        for link in links:
+        for link in links:  # links on removed stores aren't here, so an item only they held is left out
             by_item.setdefault(link.item_id, []).append(link)
-        return [self._summary(row, by_item.get(row.id, []), counts.get(row.id, 0), active) for row in rows]
+        return [self._summary(row, by_item[row.id], counts.get(row.id, 0), active) for row in rows if row.id in by_item]
 
     @staticmethod
     def _summary(row: db.ItemRow, links: list[db.LinkRow], slots: int, active: set[int]) -> ItemSummary:
@@ -196,7 +198,7 @@ class CatalogService:
 # ---- the wizard ----------------------------------------------------------------------------------------------------
 
 WIZARD_STEPS = ("stores", "storage", "test", "catalog")
-MARKED_STEPS = frozenset({"test"})  # the steps whose "done" is the owner's mark; the others come from the data
+MARKED_STEPS = frozenset({"test", "finished"})  # the owner's marks; the other steps' "done" comes from the data
 
 
 @dataclass(frozen=True)
@@ -209,7 +211,8 @@ class WizardStep:
 @dataclass(frozen=True)
 class WizardState:
     steps: list[WizardStep]
-    current: str | None  # the first step not done; None when every step up to the catalog is done
+    current: str | None  # the first step not done; None when every step up to the catalog is done, or finished
+    finished: bool = False  # the owner left the catalog step: the wizard is over
 
 
 def wizard_state(*, has_store: bool, storage_ready: bool, catalog_built: bool, marked: dict[str, bool]) -> WizardState:
@@ -221,7 +224,9 @@ def wizard_state(*, has_store: bool, storage_ready: bool, catalog_built: bool, m
         "catalog": catalog_built,
     }
     steps = [WizardStep(step, done[step], step not in MARKED_STEPS) for step in WIZARD_STEPS]
-    return WizardState(steps, next((step.step for step in steps if not step.done), None))
+    finished = marked.get("finished", False)
+    current = None if finished else next((step.step for step in steps if not step.done), None)
+    return WizardState(steps, current, finished)
 
 
 class WizardService:
