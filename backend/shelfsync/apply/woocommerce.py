@@ -9,7 +9,11 @@ Rules this module keeps:
   build `next_request` (it does even with redirects off, 04-A V58), so a `Location` httpx can't read is still
   `redirected`, with no host, never a crash. Any other 3xx (300, 304…) goes to `classify` (normally `bad_response`
   with its status).
-- the answer is streamed and read at most `MAX_BODY_BYTES` (1 MiB); more is a `bad_response`.
+- the answer is streamed and read at most `MAX_BODY_BYTES` (1 MiB) by default; a caller may give its own cap per call
+  (the catalog reader's pages, `apply/catalog_read.py`); more is a `bad_response`.
+- **no cookie is kept.** `GetOnlyTransport` drops every `Set-Cookie` and `Set-Cookie2` header from each answer before
+  httpx's cookie jar sees it, so no cookie is stored, sent back, or parsed (`http.cookiejar` can warn about a cookie it
+  can't read, with the cookie's text, and `logging.captureWarnings` would put that warning in the app log).
 - **GET only.** `WooClient` has no method for any other verb until M5, and `GetOnlyTransport` refuses one even if a
   later change reaches for it: the contract test builds a client and tries.
 - logs name a store by its code, never its address, and hold the reason and the status, never a body or a header.
@@ -85,8 +89,13 @@ class NonGetRefused(Exception):
     """Something tried to send a request that isn't a GET. Until M5 the client reads and never writes."""
 
 
+COOKIE_HEADERS = ("set-cookie", "set-cookie2")
+
+
 class GetOnlyTransport(httpx.BaseTransport):
-    """Wraps the real transport and refuses any request whose method isn't GET, whatever code built it."""
+    """Wraps the real transport and refuses any request whose method isn't GET, whatever code built it. Every answer
+    leaves it without `Set-Cookie` and `Set-Cookie2`: httpx's client extracts cookies from the response this returns
+    (`Client._send_single_request`, after `handle_request`), so a cookie dropped here is never parsed or kept."""
 
     def __init__(self, inner: httpx.BaseTransport) -> None:
         self._inner = inner
@@ -94,7 +103,11 @@ class GetOnlyTransport(httpx.BaseTransport):
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if request.method != "GET":
             raise NonGetRefused("only GET requests are sent to a store")
-        return self._inner.handle_request(request)
+        response = self._inner.handle_request(request)
+        for name in COOKIE_HEADERS:
+            if name in response.headers:
+                del response.headers[name]  # every header of that name (httpx.Headers.__delitem__)
+        return response
 
     def close(self) -> None:
         self._inner.close()
@@ -178,8 +191,11 @@ class WooClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def get(self, path: str, params: dict[str, str], deadline: float) -> WooResponse:
+    def get(
+        self, path: str, params: dict[str, str], deadline: float, *, max_bytes: int = MAX_BODY_BYTES
+    ) -> WooResponse:
         """One GET. `deadline` is a time on this client's monotonic clock after which the whole test has run out.
+        `max_bytes` is the most of the answer's body that is read (1 MiB unless the caller asks for another cap).
         Raises `ReadRefused` for a transport failure, a timeout, a redirect and an over-long body. A redirect status
         (301, 302, 303, 307, 308) is refused in the response hook `_refuse_redirect`, before httpx reads `Location`;
         that `ReadRefused` comes out of `stream` as it was raised."""
@@ -192,7 +208,7 @@ class WooClient:
         try:
             with self._client.stream("GET", self._base + path, params=params, timeout=timeout) as response:
                 declared = response.headers.get("content-length", "")
-                if declared.isascii() and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+                if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
                 encoding = response.headers.get("content-encoding", "identity").strip().lower()
                 if encoding not in ("", "identity"):
@@ -201,14 +217,16 @@ class WooClient:
                     if response.status_code != 200:
                         return WooResponse(response.status_code, response.headers, b"")
                     raise ReadRefused("bad_response")
-                body = b""
+                parts: list[bytes] = []
+                size = 0
                 for chunk in response.iter_raw():
-                    body += chunk
-                    if len(body) > MAX_BODY_BYTES:
+                    parts.append(chunk)
+                    size += len(chunk)
+                    if size > max_bytes:
                         raise ReadRefused("bad_response")
                     if self._monotonic() > deadline:
                         raise ReadRefused("timeout")
-                return WooResponse(response.status_code, response.headers, body)
+                return WooResponse(response.status_code, response.headers, b"".join(parts))
         except httpx.TimeoutException:
             raise ReadRefused("timeout") from None
         except httpx.DecodingError:  # not expected (`iter_raw` decodes nothing); a sibling of TransportError
