@@ -14,11 +14,13 @@ defined( 'ABSPATH' ) || exit;
 
 /** Acts only on the ShelfSync test site, never on another site this file is copied to. */
 function shelfsync_test_s3_is_test_site() {
-	return 'shelfsync-test.test' === wp_parse_url( home_url(), PHP_URL_HOST );
+	return 'shelfsync-test.test' === strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
 }
 
-// Kestrel documents backblaze, digitalocean and wasabi; none is the test server, and
-// digitalocean is the one whose region stays us-east-1, like the test server's (04-A V6, to verify).
+// Kestrel documents backblaze, digitalocean and wasabi; none is the test server. Any of the three
+// works in 3.5.5 (the name sets only the provider's label and the experimental flag; the filter
+// below sets the endpoint and region), so digitalocean is an arbitrary pick (04-A V6).
+// Assumes the S3 test server's defaults (port 47630, region us-east-1, bucket shelfsync-test-stack).
 add_filter(
 	'woocommerce_amazon_s3_client_cloud_service',
 	function ( $service ) {
@@ -35,7 +37,7 @@ add_filter(
 		$args['region']      = 'us-east-1';
 		$args['endpoint']    = 'http://127.0.0.1:47630';
 		// The test server answers only Host 127.0.0.1:<port>, so the bucket goes in the path,
-		// not in the host name (AWS SDK for PHP's S3 client option; 04-A V6, to verify).
+		// not in the host name (AWS SDK for PHP's S3 client option; 04-A V6).
 		$args['use_path_style_endpoint'] = true;
 		$args['credentials'] = array(
 			'key'    => 'TESTSTACKREADWRITE',
