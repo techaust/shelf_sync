@@ -16,10 +16,13 @@ from typing import Any
 import httpx
 
 from shelfsync.catalog.model import Download, Product
+from shelfsync.catalog.service import CatalogService, store_clients
 from shelfsync.clock import to_iso
 from shelfsync.db.migrate import migrate
 from shelfsync.db.stores import insert_store
-from tests.store_support import PRODUCTS, SYSTEM_STATUS, system_status, unread
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure.credentials import StoreCredentials
+from tests.store_support import KEY, PRODUCTS, SECRET, SYSTEM_STATUS, system_status, unread
 
 # The three near-miss pairs of 01-A section 2 (their slugs are public there); the titles are made up.
 NEAR_MISS_PAIRS: list[tuple[str, str, str]] = [
@@ -113,6 +116,9 @@ class FakeTime:
     def stop(self) -> None:
         self.stopped = True
 
+    def set(self) -> None:  # `threading.Event`'s name, so the runner can stop it
+        self.stopped = True
+
 
 Answer = Callable[[httpx.Request], httpx.Response] | httpx.Response
 
@@ -166,7 +172,7 @@ class FakeCatalogStore:
         return [request for request in self.requests if request.url.path.endswith(PRODUCTS)]
 
 
-# ---- a database with stores -----------------------------------------------------------------------------------------
+# ---- a database with stores ----------------------------------------------------------------------------------------
 
 
 @dataclass
@@ -220,3 +226,68 @@ def wait_for(condition: Callable[[], bool], seconds: float = 10.0) -> None:
             return
         event.wait(0.01)
     raise AssertionError("the condition was never met")
+
+
+# ---- several stores behind one transport, and a service wired to them ----------------------------------------------
+
+
+@dataclass
+class Sites:
+    """Each fake store answers for its own host (`https://store-<code>.example`); `gate` (when set) holds every answer
+    until it is opened, so a test can see a run in progress."""
+
+    stores: dict[str, FakeCatalogStore] = field(default_factory=dict)
+    gate: threading.Event | None = None
+    requests: list[httpx.Request] = field(default_factory=list)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.gate is not None:
+            self.gate.wait(10.0)
+        code = request.url.host.removeprefix("store-").removesuffix(".example").upper()
+        return self.stores[code](request)
+
+    def transport(self) -> httpx.BaseTransport:
+        return httpx.MockTransport(self)
+
+
+@dataclass
+class CatalogRig:
+    db: Db
+    sites: Sites
+    secrets: MemorySecretStore
+    service: CatalogService
+    time: FakeTime | None
+
+    def add_store(self, code: str, rows: list[dict[str, Any]], **options: Any) -> int:
+        store_id = self.db.add_store(code, **options)
+        StoreCredentials(self.secrets).save(store_id, KEY, SECRET)
+        self.sites.stores[code] = FakeCatalogStore(rows=rows)
+        return store_id
+
+    def run(self) -> None:
+        """One full run, to the end."""
+        assert self.service.start_sync()
+        self.service.runner.join(30.0)
+        assert not self.service.runner.state().running
+
+
+def make_catalog_rig(fake_time: bool = False) -> CatalogRig:
+    """A database, fake stores and a `CatalogService`. With `fake_time` the waits, the clocks and the stop are one
+    `FakeTime` (no real waiting: for retries and auto-pause); otherwise real time with a real stop (for shutdowns)."""
+    db = make_db()
+    sites = Sites()
+    secrets = MemorySecretStore()
+    time = FakeTime() if fake_time else None
+    if time is not None:
+        clock = time
+        service = CatalogService(
+            db.connect,
+            store_clients(secrets, sites.transport, monotonic=clock.monotonic),
+            now=clock.wall,
+            monotonic=clock.monotonic,
+            make_stop=lambda: clock,
+        )
+    else:
+        service = CatalogService(db.connect, store_clients(secrets, sites.transport))
+    return CatalogRig(db, sites, secrets, service, time)

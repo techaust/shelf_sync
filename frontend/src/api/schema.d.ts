@@ -34,6 +34,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog */
+        get: operations["list_catalog_api_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Item */
+        get: operations["get_item_api_catalog__item_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set Slug */
+        patch: operations["set_slug_api_catalog__item_id__patch"];
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -315,6 +350,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sync */
+        get: operations["get_sync_api_sync_get"];
+        put?: never;
+        /** Start Sync */
+        post: operations["start_sync_api_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sync/stores/{store_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Store */
+        post: operations["resume_store_api_sync_stores__store_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/updates": {
         parameters: {
             query?: never;
@@ -377,6 +447,40 @@ export interface paths {
         put?: never;
         /** Rollback */
         post: operations["rollback_api_updates_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/wizard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wizard */
+        get: operations["get_wizard_api_wizard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/wizard/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Wizard */
+        put: operations["put_wizard_api_wizard__step__put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -488,6 +592,45 @@ export interface components {
             /** Snapshot Retention Days */
             snapshot_retention_days: number;
         };
+        /** CatalogItemDetail */
+        CatalogItemDetail: {
+            /** Canonical Slug */
+            canonical_slug: string | null;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Links */
+            links: components["schemas"]["LinkModel"][];
+            /** Slots */
+            slots: components["schemas"]["SlotModel"][];
+            /** Title */
+            title: string;
+            /** Type */
+            type: string;
+        };
+        /** CatalogItemModel */
+        CatalogItemModel: {
+            /** Canonical Slug */
+            canonical_slug: string | null;
+            /** Id */
+            id: number;
+            /** Links */
+            links: components["schemas"]["LinkModel"][];
+            /** On Every Active Store */
+            on_every_active_store: boolean;
+            /** Slot Count */
+            slot_count: number;
+            /** Title */
+            title: string;
+            /** Type */
+            type: string;
+        };
+        /** CatalogResponse */
+        CatalogResponse: {
+            /** Items */
+            items: components["schemas"]["CatalogItemModel"][];
+        };
         /** CreateStoreRequest */
         CreateStoreRequest: {
             /** Code */
@@ -527,7 +670,7 @@ export interface components {
              * Error
              * @enum {string}
              */
-            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty" | "export_not_encrypted" | "backup_failed" | "too_many_stores" | "storage_not_set";
+            error: "forbidden" | "signed_out" | "bad_token" | "bad_ticket" | "invalid_request" | "internal" | "development_build" | "busy" | "no_key" | "nothing_to_install" | "no_previous" | "no_backup" | "files_changed" | "manifest_invalid" | "manifest_missing" | "cannot_restart" | "too_soon" | "confirm_required" | "not_found" | "store_exists" | "code_taken" | "keys_missing" | "keys_required" | "secrets_unavailable" | "export_invalid" | "passphrase_required" | "wrong_passphrase" | "export_too_new" | "import_needs_empty" | "export_not_encrypted" | "backup_failed" | "too_many_stores" | "storage_not_set" | "sync_running" | "slug_taken" | "wizard_step_from_state";
         };
         /** ExportRequest */
         ExportRequest: {
@@ -638,6 +781,30 @@ export interface components {
              */
             outcome: "ok" | "no_release" | "token_refused" | "rate_limited" | "not_public" | "unreachable" | "update_refused" | "update_failed";
         };
+        /** LinkModel */
+        LinkModel: {
+            /** Gone */
+            gone: boolean;
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: string;
+            /** Store Id */
+            store_id: number;
+            /** Wc Id */
+            wc_id: number;
+        };
+        /** ProgressModel */
+        ProgressModel: {
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Rows */
+            rows: number;
+            /** Store Id */
+            store_id: number;
+        };
         /** ResultModel */
         ResultModel: {
             /** At */
@@ -671,6 +838,31 @@ export interface components {
         SignInRequest: {
             /** Ticket */
             ticket: string;
+        };
+        /** SlotDownloadModel */
+        SlotDownloadModel: {
+            /** File */
+            file: string;
+            /** Store Id */
+            store_id: number;
+            /** Wc Download Id */
+            wc_download_id: string;
+        };
+        /** SlotModel */
+        SlotModel: {
+            /** Downloads */
+            downloads: components["schemas"]["SlotDownloadModel"][];
+            /** Id */
+            id: number;
+            /** Is Main */
+            is_main: boolean;
+            /** Name */
+            name: string;
+        };
+        /** SlugRequest */
+        SlugRequest: {
+            /** Canonical Slug */
+            canonical_slug: string;
         };
         /** StorageResponse */
         StorageResponse: {
@@ -778,6 +970,44 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** StoreSyncModel */
+        StoreSyncModel: {
+            /** Auto Pause Reason */
+            auto_pause_reason: string | null;
+            /** Auto Paused */
+            auto_paused: boolean;
+            /** Auto Paused At */
+            auto_paused_at: string | null;
+            /** Code */
+            code: string;
+            /** Failures In Row */
+            failures_in_row: number;
+            /** Http Status */
+            http_status: number | null;
+            /** Last Ok At */
+            last_ok_at: string | null;
+            /** Pages */
+            pages: number | null;
+            /** Read Finished At */
+            read_finished_at: string | null;
+            /** Read Started At */
+            read_started_at: string | null;
+            /** Reason */
+            reason: string | null;
+            /** Rows */
+            rows: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "paused";
+            /** Store Id */
+            store_id: number;
+            /** This Run */
+            this_run: string | null;
+            /** Total */
+            total: number | null;
+        };
         /** StoreTestResponse */
         StoreTestResponse: {
             /** Detail */
@@ -810,6 +1040,18 @@ export interface components {
         StoresResponse: {
             /** Stores */
             stores: components["schemas"]["StoreModel"][];
+        };
+        /** SyncResponse */
+        SyncResponse: {
+            current: components["schemas"]["ProgressModel"] | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Running */
+            running: boolean;
+            /** Started At */
+            started_at: string | null;
+            /** Stores */
+            stores: components["schemas"]["StoreSyncModel"][];
         };
         /** TicketResponse */
         TicketResponse: {
@@ -892,6 +1134,30 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WizardMarkRequest */
+        WizardMarkRequest: {
+            /** Done */
+            done: boolean;
+        };
+        /** WizardResponse */
+        WizardResponse: {
+            /** Current */
+            current: ("stores" | "storage" | "test" | "catalog") | null;
+            /** Steps */
+            steps: components["schemas"]["WizardStepModel"][];
+        };
+        /** WizardStepModel */
+        WizardStepModel: {
+            /** Done */
+            done: boolean;
+            /** From State */
+            from_state: boolean;
+            /**
+             * Step
+             * @enum {string}
+             */
+            step: "stores" | "storage" | "test" | "catalog";
         };
     };
     responses: never;
@@ -995,6 +1261,119 @@ export interface operations {
             };
             /** @description Service Unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_catalog_api_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogResponse"];
+                };
+            };
+        };
+    };
+    get_item_api_catalog__item_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogItemDetail"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_slug_api_catalog__item_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlugRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogItemModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1872,6 +2251,93 @@ export interface operations {
             };
         };
     };
+    get_sync_api_sync_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncResponse"];
+                };
+            };
+        };
+    };
+    start_sync_api_sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resume_store_api_sync_stores__store_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                store_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_updates_api_updates_get: {
         parameters: {
             query?: never;
@@ -1979,6 +2445,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AcceptedResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_wizard_api_wizard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WizardResponse"];
+                };
+            };
+        };
+    };
+    put_wizard_api_wizard__step__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                step: "stores" | "storage" | "test" | "catalog";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WizardMarkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WizardResponse"];
                 };
             };
             /** @description Conflict */

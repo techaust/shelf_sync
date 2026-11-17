@@ -18,6 +18,8 @@ from shelfsync.api.app_settings import AppSettingsService, stored_app_settings
 from shelfsync.api.backup import ExportService
 from shelfsync.api.backup_settings import BackupSettingsService
 from shelfsync.api.storage import build_storage_service
+from shelfsync.api.wizard import storage_ready
+from shelfsync.catalog.service import CatalogService, WizardService, store_clients
 from shelfsync.db.backup import migrate_with_backup
 from shelfsync.db.connection import connect
 from shelfsync.db.daily import DailyBackups
@@ -225,6 +227,8 @@ def _start(
             backups=BackupSettingsService(
                 lambda: connect(paths.database), DailyBackups(paths, lambda: connect(paths.database))
             ),
+            catalog=CatalogService(lambda: connect(paths.database), store_clients(secrets)),
+            wizard=WizardService(lambda: connect(paths.database), storage_ready(storage)),
         )
         serve(app, sock)
     finally:

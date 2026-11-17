@@ -59,6 +59,12 @@ ErrorCode = Literal[
     # Storage Test (M2.7): 409 `storage_not_set` (region or bucket empty, or a stored setting invalid); also `busy`,
     # `keys_missing` (409) and `secrets_unavailable` (503), above
     "storage_not_set",
+    # Catalog and sync (M3.1): 409 `sync_running` (a full read is already running), `slug_taken` (another item has that
+    # canonical slug), `wizard_step_from_state` (that wizard step's state comes from the data, not a mark); also
+    # `not_found` (404), above
+    "sync_running",
+    "slug_taken",
+    "wizard_step_from_state",
 ]
 
 CONTENT_SECURITY_POLICY = (
