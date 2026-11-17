@@ -195,6 +195,37 @@ Safety is clean and nothing built is wrong, but the records can't yet separate w
 1. The summary prints on every L1 run, and the 120 s attempt bound always applies in L1 (choice 6). If the lead wants a plain run to match m3.1's L1 exactly (no attempt bound), that would need a flag; I didn't add one unasked.
 2. The trace lines go to stdout as the read runs. The read's own log line still goes to stderr, so with `Tee-Object` both reach the log only if the owner's command captures both streams. L1's command for the owner isn't on this branch (m3.1 §7 is on `main`), so I couldn't check it: it should end `2>&1 | Tee-Object …`, as the repo's other owner commands do (`runbooks/m1b-exit-test.md`). I changed no docs outside the brief's files.
 
+### Fixes after review 1 (builder, Opus 5.5 high, 2026-11-18)
+Worked from the lead's rebase (`c5b107d`). Commits: `80f214d` (review 1 in §4), `c69d32f` (every fix with its tests), and this report.
+
+| # | Fix | Tests |
+|---|---|---|
+| 1 | `_Session._ended(tried, wire)` follows the lead's rule. It names a bound only when `WooClient`'s own between-chunks check fired (a `timeout` whose `Wire.error` is None) or when the timeout fired within `BOUND_SLACK_SECONDS` of the deadline `client.get` was given (on either side). The bound named is that deadline's: `store_bound` when it was the store's, else `attempt_bound`. Otherwise it is `read_timeout`. Without a `facts` transport only the slack test can be made (documented). No `woocommerce.py` change for this. The Settings line now reads "… at most N s for each store's read and 120 s for one request, each plus up to the read timeout after the last byte …". | `test_catalog_diagnostics.py`: both reviewer probes, each a byte every 10 s then a stall: read 30 s to 110 s then 30 s, and read 90 s to 40 s then 90 s. Both give `read_timeout`, error `read_timeout`, gap 30,000 or 90,000 ms, took 140,000 or 130,000 ms. The same stall past a 100 s store bound gives `read_timeout`, and the read then ends between requests. The client's own check gives `attempt_bound` with the attempt bound and `store_bound` without one; without facts it gives `read_timeout`. Slack: 0.1 s and 0 s early give the bound, 0.5 s early gives `read_timeout`, with and without facts. Restoring the old rule failed four of these tests. The reviewer's own probes now print `ended= read_timeout`. |
+| 2 | Each store's timing lines are printed right after its counts. Ctrl+C during a store's read prints its summary from the attempts so far (`read stopped by Ctrl+C`), then stops as before. | `test_catalog_report.py`: `…summary_follows_its_counts_before_the_next_store` (GF's summary before PW's counts, PW's before "Across"); `test_ctrl_c_during_a_store_prints_what_was_gathered_so_far` (GF's summary, PW's partial summary with 1 request, the three trace lines already printed, exit 1, "Stopped. Nothing was saved."). |
+| 3 | `read_ended(attempts, result)` puts how the read ended at the head of the summary: `ok`, the reason, `stopped by Ctrl+C`, or for a `timeout` the reader's own checks raised, `timeout, between requests at the store's bound`. A timeout ended by an attempt itself (its fourth try, or the one that auto-paused the store) stays `timeout`. | `test_how_the_read_ended_names_a_timeout_between_requests` (8 cases), and `test_a_read_ended_by_the_wait_before_a_request_is_reported_between_requests` (the real reader: `store_seconds=0.5`, the spacing wait passes it, `observe` saw one `ok`, and the summary says between requests). |
+| 4 | The Settings line ends "times are local, <zone>" (`now().astimezone().tzname()`, "zone unknown" if None). `Settings` gains `zone`. | `test_the_settings_line_names_the_local_zone_and_the_bounds_truthfully`; the fresh-process test matches the whole line. |
+| 5 | `_read_one` closes the `FactsTransport` (and so the inner transport) when `WooClient` refuses its arguments, then re-raises. | `test_the_transport_is_closed_when_the_client_refuses_its_arguments` (an `http://` address: `ValueError`, transport closed). |
+| 6 | `FactsTransport.seen()` removed: only tests used it, and `_emit` uses the `Wire`. `Attempt.what` and `Attempt.facts` are now properties derived from `page` and `wire`. `woocommerce.declared_length` (plain ASCII digits, else None; more than 18 digits reads as `DECLARED_MAX` = 10^18) is shared by `WooClient.get`'s cap check and `Wire.declared_bytes`. The cap behaves as before, except that a `Content-Length` over 4,300 digits now gets `bad_response` where the old `int()` raised a `ValueError` out of the read (checked: Python 3.15 refuses to convert more than 4,300 digits). | `test_woocommerce_client.py`: `test_the_shared_content_length_reading` (12 cases) and `test_the_cap_on_a_declared_length_is_unchanged` (at the cap, over it, 19 and 5,000 digits, not a number). The diagnostics tests adapted: no `seen()`, a 20-digit length reads as `DECLARED_MAX`, `" 5"` reads as None. |
+
+**Choices in this round (Lead (proposed) if kept)**
+- The slack applies on both sides of the deadline: a timer that wakes a little early or a little late.
+- A partial summary is printed only on `KeyboardInterrupt`, as decided. Any other exception still loses only the store being read; every earlier store's summary is already printed.
+- "Largest page" in the summary is now the largest products answer read `ok` among the attempts, so a partial summary has it too. Before, it was `CatalogRead.largest_page_bytes`; the two agree for a read that worked.
+
+**Commands run and their results** (all with `UV_PYTHON_DOWNLOADS=never`, `--locked`)
+- While working: `pytest --no-cov` on the report, diagnostics, reader, client, runner and stores-API tests: 574 passed. The mutation check above. The reviewer's two probes. `ruff check`, `ruff format` and `mypy` on each changed file: clean. mypy's note on `tests/test_woocommerce_client.py` line 367 (an unused `type: ignore`) was there before t9; tests aren't in the project's mypy set.
+- Through `bash tools/heavy.sh --log t9-fix2-<name>`, each exit 0:
+  - `pytest`: **3252 passed, 19 skipped, 58 deselected** in 371 s. Coverage 94 % in total.
+    - `apply/catalog_read.py` 99 %: the only new code not covered is the non-sync-stream branch; the other missed lines were uncovered before.
+    - `apply/woocommerce.py` 99 %: line 243, uncovered before.
+    - `catalog/report.py` 93 %: the lock-error, no-store and `__main__` paths, uncovered before.
+  - `mypy` and `mypy --platform linux`: no issues in 96 files.
+  - `bandit -r backend`: no issues (17 `nosec` skips, unchanged).
+  - `ruff format --check`: 209 files formatted. `ruff check` (the one full lint): all checks passed.
+- No background job is left running; `uv.lock` unchanged; no network beyond loopback.
+
+**Not verified:** as before (TLS and real stores; `-m windows`; pip-audit; the release build at integration). The zone name is what Windows' `tzname()` gives (for example "India Standard Time"); it was checked only against this PC's own zone in the tests.
+
 ## 4. Review
 
 ### Review 1, reviewer (Opus 5.5 high): SEND BACK
