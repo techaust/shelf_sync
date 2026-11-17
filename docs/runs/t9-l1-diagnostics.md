@@ -247,6 +247,16 @@ Commits: `6fd0872` (review 2 in §4), `6305400` (the fixes and their tests), `26
 
 **Not verified:** as before (TLS and the real stores; `-m windows`; pip-audit; the release build at integration).
 
+### Fix after the re-check of review 2 (builder, Opus 5.5 high, 2026-11-18)
+- **The silence still open** (`0dfbd58`). `FactsTransport.take_in_flight` now returns an `InFlight`: the `Wire` so far, `so_far_ms`, and `quiet_ms` since `quiet_since` (`last byte`, else `headers`, else `request start`), all on the recorder's clock. L1's line reads `GF #2 in flight when stopped: stage unknown, 320 of 9,000 bytes, longest gap 4,000 ms, 6,000 ms since the last byte, 10.5 s so far`, the longest gap unchanged. Tests: the Ctrl+C-inside-the-body test now expects 6,000 ms; `test_ctrl_c_before_any_body_byte_counts_the_silence_from_the_headers` (headers, then 8 s with no byte: `8,000 ms since the headers`); and `test_a_request_in_flight_with_no_byte_yet_counts_its_silence_from_the_headers_or_its_start` (5,000 ms since the headers; 3,000 ms since the request's start for Ctrl+C inside `handle_request`).
+- **The optional `WooClient.read_seconds` property: not taken.** `test_a_client_that_is_asked_to_write_cannot` pins WooClient's public members to exactly `get` and `close` ("nothing else until M5"), and a new public name fails it. Widening that GET-only contract is the lead's call, not mine, so the session keeps the commented read of `client._read_seconds`. If the lead wants the property, the contract test's set needs `read_seconds` added in the same change.
+- Commands (all with `UV_PYTHON_DOWNLOADS=never`, `--locked`):
+  - Targeted: `pytest --no-cov` on the report, diagnostics, reader, client, runner and stores-API tests: 585 passed. `ruff format --check`, `ruff check` and `mypy` on the changed files: clean.
+  - Through `bash tools/heavy.sh --log t9-fix4-<name>`, each exit 0:
+    - `pytest`: **3263 passed, 19 skipped, 58 deselected** in 368 s. Coverage 94 %; `catalog_read.py` 99 % (only the non-sync-stream branch is new and uncovered), `woocommerce.py` 99 %, `report.py` 93 % (missed lines all uncovered before t9).
+    - `mypy` and `mypy --platform linux`: no issues in 96 files. `bandit`: no issues (17 `nosec` skips, unchanged). `ruff format --check`: 209 files formatted. `ruff check`: all checks passed.
+  - No background job left running; `uv.lock` unchanged; no network beyond loopback.
+
 ## 4. Review
 
 ### Review 1, reviewer (Opus 5.5 high): SEND BACK
@@ -266,6 +276,9 @@ Commits: `6fd0872` (review 2 in §4), `6305400` (the fixes and their tests), `26
 4. Low, cleanups. **Lead:** put `DECLARED_MAX`'s comment above it; `trace_line` uses `Attempt.what`; build `ERROR_WORDS` from `_ERROR_CLASSES` plus `"other"`; one helper for the repeated `max(0, round((a - b) * 1000))`; the slack test covers late cases too if the slack remains.
 5. The owner's command ends `2>&1 | Tee-Object …`. **Lead:** the lead's (not the builder's).
 6. A `Content-Length` longer than 18 digits with leading zeros is now refused. **Lead:** no change; note it in §3 under "cap unchanged, refuses slightly more".
+
+#### Re-check of review 2's fix diff, same reviewer (Opus 5.5 high): APPROVE
+One new low. **Low:** the in-flight line leaves out the silence still open when Ctrl+C is pressed (`KeyboardInterrupt` isn't an `Exception`, so `_CountingStream` never calls `body_ended`); the builder's own test showed `longest gap 4,000 ms, 10.5 s so far` after a 6 s final silence. **Lead:** `take_in_flight` also measures the wait since the last byte (or the headers, or the request's start when no byte came) on the recorder's clock, and the line prints it as `N ms since the last byte`, the longest gap kept as is; update the test to expect 6,000 ms and add the no-byte-yet case. Optional: a read-only `WooClient.read_seconds` property used by the session in place of `_read_seconds`.
 
 ## 5. Integration notes
 
