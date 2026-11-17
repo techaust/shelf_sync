@@ -237,6 +237,15 @@ Worked from the lead's rebase (`c5b107d`). Commits: `80f214d` (review 1 in §4),
 5. Low: `_read_one` builds the transport before `WooClient` checks its arguments. **Lead:** close the transport when construction fails, with a test.
 6. Low, cleanups. **Lead:** remove `FactsTransport.seen()` if only tests use it; make `Attempt.facts` and `what` derived where they repeat `wire.facts` and `page`, if that stays simple; share one `Content-Length` parsing helper between `_declared` and WooClient's cap check (`woocommerce.py` only calls the shared helper; behaviour unchanged, tested).
 
+### Review 2 (second full review), new reviewer (Opus 5.5 high): APPROVE
+2 medium, 4 low; review 1's high confirmed fixed. Pasted by the builder from the lead's message, one line per finding with the lead's decision:
+1. Medium: `ended` differs for identical stalls when the deadline shortened the timeout. `WooClient.get` sets `min(read_seconds, remaining)` once and httpx applies it per phase, so with `--read-seconds 120` a stall before the headers fires at the deadline plus the connect and TLS time: past the 0.25 s slack on a new connection, within it on a reused one (probe: `read_timeout, attempt_bound, read_timeout, attempt_bound`). **Lead (the reviewer's first option):** the session knows `started`, the deadline it passed and the client's read timeout, so it can tell whether the deadline shortened the timeout (`deadline - started < read_seconds`). Label by that bound when WooClient's own between-chunks check fired (`Wire.error` None), or when the timeout was shortened by it and the error isn't `connect_timeout`; otherwise the error word (item 2). This replaces the slack guess for that case; keep the slack only where it is still needed, and say where. No further `woocommerce.py` change. Tests: the probe's new/reused alternation gives one label; the same near the store bound.
+2. Medium: a connect timeout is reported as `ended read_timeout`. **Lead:** for httpx's own timeouts `ended` is the error word itself (`connect_timeout`, `read_timeout`, `write_timeout`, `pool_timeout`), and `read_timeout` when there is no `Wire`. Update `ENDED_WORDS`, the trace and the summary, and their tests; add a `by error:` line to the summary.
+3. Low: Ctrl+C during an attempt loses that attempt. **Lead:** on `KeyboardInterrupt` also print one line for the request in flight from `facts.take()`: stage, bytes, longest gap, how long so far. Test with an interrupt raised inside the body stream.
+4. Low, cleanups. **Lead:** put `DECLARED_MAX`'s comment above it; `trace_line` uses `Attempt.what`; build `ERROR_WORDS` from `_ERROR_CLASSES` plus `"other"`; one helper for the repeated `max(0, round((a - b) * 1000))`; the slack test covers late cases too if the slack remains.
+5. The owner's command ends `2>&1 | Tee-Object …`. **Lead:** the lead's (not the builder's).
+6. A `Content-Length` longer than 18 digits with leading zeros is now refused. **Lead:** no change; note it in §3 under "cap unchanged, refuses slightly more".
+
 ## 5. Integration notes
 
 ## 6. Handover
