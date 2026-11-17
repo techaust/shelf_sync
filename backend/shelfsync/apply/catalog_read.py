@@ -308,6 +308,17 @@ class Wire:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class InFlight:
+    """The request in flight when a read was stopped (Ctrl+C): its `Wire` so far, how long it had run, and the
+    silence still open (`quiet_ms` since `quiet_since`: `last byte`, `headers` or `request start`)."""
+
+    wire: Wire
+    so_far_ms: int
+    quiet_ms: int
+    quiet_since: str
+
+
 class _WireRecorder:
     """One request's `Wire`, built as it goes. `trace` is httpcore's `trace` extension callback: it keeps the event's
     name, through `_TRACE_STAGES` only, and the time; its `info` (which holds the request, with its address and
@@ -322,8 +333,17 @@ class _WireRecorder:
     def _ms(self, moment: float) -> int:
         return ms_between(moment, self._started)
 
-    def so_far_ms(self) -> int:
-        return ms_between(self._monotonic(), self._started)
+    def in_flight(self) -> InFlight:
+        """This request as it stands (Ctrl+C mid-request): its `Wire`, how long it has run, and the silence still
+        open, measured on this recorder's clock since the last body byte, else since the headers, else since the
+        request started (`KeyboardInterrupt` isn't an `Exception`, so `body_ended` never measured it)."""
+        moment = self._monotonic()
+        so_far = ms_between(moment, self._started)
+        if self._last_byte is not None:
+            return InFlight(self.wire, so_far, ms_between(moment, self._last_byte), "last byte")
+        if self.wire.headers_ms is not None:
+            return InFlight(self.wire, so_far, max(0, so_far - self.wire.headers_ms), "headers")
+        return InFlight(self.wire, so_far, so_far, "request start")
 
     def trace(self, name: str, info: object) -> None:  # `info` is never read: it holds the request
         base, _, phase = name.rpartition(".")
@@ -431,11 +451,11 @@ class FactsTransport(httpx.BaseTransport):
         recorder, self._recorder = self._recorder, None
         return recorder.wire if recorder is not None else None
 
-    def take_in_flight(self) -> tuple[Wire, int] | None:
-        """For a read stopped mid-request (Ctrl+C, review 2): the request in flight's `Wire` so far and how long it has
-        run, in milliseconds; None when no request was in flight (each finished one was taken by the reader)."""
+    def take_in_flight(self) -> InFlight | None:
+        """For a read stopped mid-request (Ctrl+C, review 2 and its re-check): the request in flight as it stands
+        (`_WireRecorder.in_flight`); None when no request was in flight (each finished one was taken by the reader)."""
         recorder, self._recorder = self._recorder, None
-        return (recorder.wire, recorder.so_far_ms()) if recorder is not None else None
+        return recorder.in_flight() if recorder is not None else None
 
     def close(self) -> None:
         self._inner.close()
@@ -626,8 +646,8 @@ class _Session:
         self._observe = observe
         self._facts = facts
         self._attempt_seconds = attempt_seconds
-        # The client's read timeout, to tell whether a deadline shortened it (`_ended`). Read from the client itself
-        # (`woocommerce.py` is left as it is, review 2); this module already uses that module's own helpers.
+        # The client's read timeout, to tell whether a deadline shortened it (`_ended`). Read from the client's own
+        # attribute: `WooClient`'s public surface stays `get` and `close` until M5 (the GET-only contract test).
         self._read_seconds: float = client._read_seconds
         self._sent = False
         self.requests = 0

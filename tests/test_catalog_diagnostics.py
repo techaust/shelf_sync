@@ -1002,9 +1002,37 @@ def test_a_request_in_flight_gives_its_wire_so_far_once() -> None:
     clock.now += 7.0  # then nothing more, until Ctrl+C
     in_flight = facts.take_in_flight()
     assert in_flight is not None
-    wire, so_far = in_flight
-    assert (wire.received, wire.longest_gap_ms, so_far) == (42, 2000, 9500)
+    assert (in_flight.wire.received, in_flight.wire.longest_gap_ms, in_flight.so_far_ms) == (42, 2000, 9500)
+    assert (in_flight.quiet_ms, in_flight.quiet_since) == (7000, "last byte")  # the silence still open
     assert facts.take_in_flight() is None and facts.take() is None
+
+
+def test_a_request_in_flight_with_no_byte_yet_counts_its_silence_from_the_headers_or_its_start() -> None:
+    """The re-check of review 2: with no body byte yet the open silence runs from the headers; with no headers
+    either, from the request's start (Ctrl+C inside `handle_request`)."""
+    clock = Clock()
+
+    def headers_only(request: httpx.Request) -> httpx.Response:
+        clock.now += 0.4
+        return httpx.Response(200, stream=TimedStream(clock, []))
+
+    facts = FactsTransport(httpx.MockTransport(headers_only), monotonic=clock.monotonic)
+    facts.handle_request(httpx.Request("GET", STORE_URL))
+    clock.now += 5.0
+    in_flight = facts.take_in_flight()
+    assert in_flight is not None
+    assert (in_flight.quiet_ms, in_flight.quiet_since, in_flight.so_far_ms) == (5000, "headers", 5400)
+
+    def interrupted(request: httpx.Request) -> httpx.Response:
+        clock.now += 3.0
+        raise KeyboardInterrupt
+
+    facts = FactsTransport(httpx.MockTransport(interrupted), monotonic=clock.monotonic)
+    with pytest.raises(KeyboardInterrupt):
+        facts.handle_request(httpx.Request("GET", STORE_URL))
+    in_flight = facts.take_in_flight()
+    assert in_flight is not None and in_flight.wire.facts is None and in_flight.wire.error is None
+    assert (in_flight.quiet_ms, in_flight.quiet_since, in_flight.so_far_ms) == (3000, "request start", 3000)
 
 
 @pytest.mark.parametrize("seconds", [0.0, -1.0])

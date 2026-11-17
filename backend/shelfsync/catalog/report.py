@@ -65,6 +65,7 @@ from shelfsync.apply.catalog_read import (
     Attempt,
     CatalogRead,
     FactsTransport,
+    InFlight,
     ListingShape,
     MemoryFailureCount,
     ResponseFacts,
@@ -487,13 +488,15 @@ def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead | N
     ]
 
 
-def in_flight_line(code: str, number: int, wire: Wire, so_far_ms: int) -> str:
-    """The request in flight when Ctrl+C stopped a read (review 2): its stage, the bytes so far, its longest gap and
-    how long it had run. Numbers and fixed words only."""
+def in_flight_line(code: str, number: int, in_flight: InFlight) -> str:
+    """The request in flight when Ctrl+C stopped a read (review 2 and its re-check): its stage, the bytes so far, its
+    longest gap, the silence still open (since the last byte, the headers or the request's start) and how long it had
+    run. Numbers and fixed words only."""
+    wire = in_flight.wire
     return (
         f"{code} #{number} in flight when stopped: stage {wire.stage or 'unknown'}, "
         f"{_bytes(wire.received, wire.declared_bytes)}, {_ms('longest gap', wire.longest_gap_ms)}, "
-        f"{so_far_ms / 1000:,.1f} s so far"
+        f"{in_flight.quiet_ms:,} ms since the {in_flight.quiet_since}, {in_flight.so_far_ms / 1000:,.1f} s so far"
     )
 
 
@@ -754,7 +757,7 @@ def _read_one(
         except KeyboardInterrupt:
             in_flight = facts.take_in_flight()
             if in_flight is not None:
-                say(in_flight_line(store.code, len(attempts) + 1, *in_flight))
+                say(in_flight_line(store.code, len(attempts) + 1, in_flight))
             raise
 
 

@@ -632,9 +632,36 @@ def test_ctrl_c_inside_a_body_prints_the_request_in_flight(data_paths: DataPaths
     assert code == 1 and "Stopped. Nothing was saved." in err
     lines = out.splitlines()
     flight = lines.index(
-        "GF #2 in flight when stopped: stage unknown, 320 of 9,000 bytes, longest gap 4,000 ms, 10.5 s so far"
+        "GF #2 in flight when stopped: stage unknown, 320 of 9,000 bytes, longest gap 4,000 ms, "
+        "6,000 ms since the last byte, 10.5 s so far"
     )
     assert lines[flight + 1].startswith("Timing, store GF: read stopped by Ctrl+C; requests 1,")
+
+
+class _SilentThenInterrupted(httpx.SyncByteStream):
+    """Headers came, then no body byte at all until the owner presses Ctrl+C."""
+
+    def __init__(self, time: FakeTime) -> None:
+        self.time = time
+
+    def __iter__(self) -> Iterator[bytes]:
+        self.time.now += 8.0
+        raise KeyboardInterrupt
+        yield b""  # a generator, so the interrupt comes while the body is being read
+
+
+def test_ctrl_c_before_any_body_byte_counts_the_silence_from_the_headers(data_paths: DataPaths) -> None:
+    """The re-check of review 2: no byte came yet, so the open silence runs from the headers."""
+    make_database(data_paths)
+    gf = FakeCatalogStore(rows=[raw_product(1)])
+    gf.answers = [lambda request: httpx.Response(200, stream=_SilentThenInterrupted(gf.time))]
+    stores = {"GF": gf, "PW": FakeCatalogStore(rows=[raw_product(2)])}
+    code, out, _, _ = in_process(data_paths, "--yes", "--store", "GF", stores=stores, clock=gf.time)
+    assert code == 1
+    assert (
+        "GF #2 in flight when stopped: stage unknown, 0 bytes, no length given, longest gap none, "
+        "8,000 ms since the headers, 8.0 s so far"
+    ) in out.splitlines()
 
 
 @pytest.mark.parametrize(
