@@ -6,6 +6,10 @@ and every download is the `[amazon_s3 object="<key>"]` shortcode (04 §5, SET-02
 the layout seen in OmniSync's log, `productrepo/<slug>-<version>.zip` (01-B), plus one old unversioned key and one at
 the bucket's root.
 
+**Download names (m3.1):** a product's main download is named `Download`, as on the real stores (OmniSync's
+`PRIMARY_NAME`, 03 CAT-05's default); its other downloads (Northwind's second) and the variations' downloads keep their
+file name. `seed` sends `SampleFile.name`, so a re-run renames the downloads of samples already on the site.
+
 Each sample (and each variation) carries a marker, the meta entry `shelfsync_test_sample=<sample id>`, so `seed`
 finds its own products again and `seed --reset` deletes only them (marker **and** slug must both match).
 
@@ -15,10 +19,11 @@ samples. Names, slugs and headers are made up; no vendor code.
 
 import io
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 MARKER_KEY = "shelfsync_test_sample"
+MAIN_DOWNLOAD = "Download"  # the real stores' main button (03 CAT-05)
 SHORTCODE = '[amazon_s3 object="{key}"]'
 PRICE = "19.00"
 ATTRIBUTE = "Licence"
@@ -35,16 +40,25 @@ class SampleFile:
     kind: Literal["theme", "plugin"]
     title: str
     version: str
+    label: str | None = None  # the download's name when it isn't the file name (a main download: `Download`)
+
+    @property
+    def file_name(self) -> str:
+        return self.key.rsplit("/", 1)[-1]
 
     @property
     def name(self) -> str:
-        """The download's name on the store: the file name."""
-        return self.key.rsplit("/", 1)[-1]
+        """The download's name on the store: `Download` for a main download, otherwise the file name."""
+        return self.label if self.label is not None else self.file_name
+
+    def as_main(self) -> SampleFile:
+        """The same file as a product's main download."""
+        return replace(self, label=MAIN_DOWNLOAD)
 
     @property
     def stem(self) -> str:
         """The file name without `.zip` and without `-<version>`: the slug part of `<slug>-<version>.zip`."""
-        stem = self.name.removesuffix(".zip")
+        stem = self.file_name.removesuffix(".zip")
         return stem.removesuffix(f"-{self.version}")
 
     @property
@@ -121,27 +135,27 @@ def _plugin(key: str, title: str, version: str) -> SampleFile:
     return SampleFile(key, "plugin", title, version)
 
 
-_MOSAIC = _plugin("productrepo/mosaic-gallery-4.0.0.zip", "Mosaic Gallery", "4.0.0")
+_MOSAIC = _plugin("productrepo/mosaic-gallery-4.0.0.zip", "Mosaic Gallery", "4.0.0").as_main()
 
 SAMPLES: tuple[Sample, ...] = (
     Sample(
         "aurora",
         "aurora",
         "Aurora (ShelfSync test)",
-        files=(_theme("productrepo/aurora-2.4.1.zip", "Aurora", "2.4.1"),),
+        files=(_theme("productrepo/aurora-2.4.1.zip", "Aurora", "2.4.1").as_main(),),
     ),
     Sample(
         "pixel-forms",
         "pixel-forms",
         "Pixel Forms (ShelfSync test)",
-        files=(_plugin("productrepo/pixel-forms-1.8.0.zip", "Pixel Forms", "1.8.0"),),
+        files=(_plugin("productrepo/pixel-forms-1.8.0.zip", "Pixel Forms", "1.8.0").as_main(),),
     ),
     Sample(
         "northwind",
         "northwind",
         "Northwind (ShelfSync test)",
         files=(
-            _theme("productrepo/northwind-5.0.2.zip", "Northwind", "5.0.2"),
+            _theme("productrepo/northwind-5.0.2.zip", "Northwind", "5.0.2").as_main(),
             _plugin("productrepo/northwind-core-5.0.2.zip", "Northwind Core", "5.0.2"),
         ),
     ),
@@ -168,28 +182,28 @@ SAMPLES: tuple[Sample, ...] = (
         "harbor",
         "Harbor (ShelfSync test)",
         status="draft",
-        files=(_theme("productrepo/harbor-1.0.0.zip", "Harbor", "1.0.0"),),
+        files=(_theme("productrepo/harbor-1.0.0.zip", "Harbor", "1.0.0").as_main(),),
     ),
     Sample(
         "quiet-cache",
         "quiet-cache",
         "Quiet Cache (ShelfSync test)",
         status="private",
-        files=(_plugin("productrepo/quiet-cache-0.9.4.zip", "Quiet Cache", "0.9.4"),),
+        files=(_plugin("productrepo/quiet-cache-0.9.4.zip", "Quiet Cache", "0.9.4").as_main(),),
     ),
     Sample(
         "tidewater-seo",
         "tidewater-seo",
         "Tidewater SEO (ShelfSync test)",
         status="pending",
-        files=(_plugin("productrepo/tidewater-seo-7.3.2.zip", "Tidewater SEO", "7.3.2"),),
+        files=(_plugin("productrepo/tidewater-seo-7.3.2.zip", "Tidewater SEO", "7.3.2").as_main(),),
     ),
     Sample(
         "old-slider",
         "old-slider",
         "Old Slider (ShelfSync test)",
         status="trash",
-        files=(_plugin("productrepo/old-slider-6.2.0.zip", "Old Slider", "6.2.0"),),
+        files=(_plugin("productrepo/old-slider-6.2.0.zip", "Old Slider", "6.2.0").as_main(),),
     ),
     Sample("mosaic-gallery", "mosaic-gallery", "Mosaic Gallery (ShelfSync test)", files=(_MOSAIC,)),
     Sample(
@@ -199,9 +213,11 @@ SAMPLES: tuple[Sample, ...] = (
         "emberline",
         "emberline",
         "Emberline (ShelfSync test)",
-        files=(_theme("productrepo/emberline.zip", "Emberline", "1.0"),),
+        files=(_theme("productrepo/emberline.zip", "Emberline", "1.0").as_main(),),
     ),
-    Sample("lantern", "lantern", "Lantern (ShelfSync test)", files=(_plugin("lantern.zip", "Lantern", "2.0"),)),
+    Sample(
+        "lantern", "lantern", "Lantern (ShelfSync test)", files=(_plugin("lantern.zip", "Lantern", "2.0").as_main(),)
+    ),
 )
 
 

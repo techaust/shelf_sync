@@ -24,12 +24,16 @@ from shelfsync.api.backup import (
     make_backup_router,
 )
 from shelfsync.api.backup_settings import BackupSettingsService, make_backup_settings_router
+from shelfsync.api.catalog import make_catalog_router
 from shelfsync.api.errors import register_error_handlers
 from shelfsync.api.secrets import make_secrets_router
 from shelfsync.api.session import make_session_router
 from shelfsync.api.storage import StorageService, make_storage_router
 from shelfsync.api.stores import make_stores_router
+from shelfsync.api.sync import make_sync_router
 from shelfsync.api.updates import make_updates_router
+from shelfsync.api.wizard import make_wizard_router
+from shelfsync.catalog.service import CatalogService, WizardService
 from shelfsync.paths import source_ui_dir
 from shelfsync.secure.body_limit import BodyLimit, BodyLimitMiddleware
 from shelfsync.secure.headers import SecurityHeadersMiddleware, is_api_path
@@ -112,6 +116,8 @@ def create_app(
     backups: BackupSettingsService | None = None,
     storage: StorageService | None = None,
     exports: ExportService | None = None,
+    catalog: CatalogService | None = None,
+    wizard: WizardService | None = None,
 ) -> FastAPI:
     """The app for the port the server actually bound (the Host check needs it).
 
@@ -127,7 +133,9 @@ def create_app(
     the settings in memory and runs no schedule. The app starts the scheduler with the server and stops it with it.
     `storage` is the Settings > Storage service (M2.3): the S3 settings and key pairs; the default runs on an in-memory
     database and secret store. `exports` is the backup export and import service (M2.4); the default runs on an
-    in-memory database and secret store.
+    in-memory database and secret store. `catalog` is the Sync and Catalog service (M3.1; its router's own lifespan
+    stops a running read at shutdown) and `wizard` the first-run wizard's; the defaults run on in-memory databases with
+    no store, so they read nothing.
     """
     service = updates if updates is not None else UpdateService.development()
     backup_service = backups if backups is not None else BackupSettingsService.development()
@@ -179,6 +187,10 @@ def create_app(
     app.include_router(make_backup_settings_router(backup_service))
     app.include_router(make_storage_router(storage if storage is not None else StorageService.development()))
     app.include_router(make_backup_router(exports if exports is not None else ExportService.development()))
+    catalog_service = catalog if catalog is not None else CatalogService.in_memory()
+    app.include_router(make_sync_router(catalog_service))
+    app.include_router(make_catalog_router(catalog_service))
+    app.include_router(make_wizard_router(wizard if wizard is not None else WizardService.in_memory()))
 
     # Mounted last, so every /api route is matched first; and like every route it sits inside the middleware below:
     # the Host check and the security headers (the CSP included) apply to the UI's files too. No session is needed

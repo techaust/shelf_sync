@@ -10,6 +10,8 @@ Rules this module keeps:
 - Removing a store deletes both Credential Manager entries **first**; if that fails nothing changes. Then the row gets
   `removed_at` (the history from M3 points at store ids).
 - **One test per store at a time** (`busy`). A test runs inside the request and writes only its own result row.
+- **The busy slots are shared** (`BusySlots`): the catalog runner (`catalog/runner.py`) holds a store's slot for that
+  store's whole read, so an address or key edit, a removal and a Test connection answer `busy` while it reads.
 - Nothing here logs an address or a value: a store is named by its code.
 """
 
@@ -60,6 +62,27 @@ MAX_URL_LENGTH = 200
 MAX_STORES = 50  # live stores; far more than anyone adds. The backup import's model uses the same number.
 _HOST = re.compile(r"(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+")
 _PATH = re.compile(r"[A-Za-z0-9._~/-]*")  # no `%`: no encoded slashes or dots
+
+
+class BusySlots:
+    """Which stores are busy: a read test, an edit of the address or the keys, a key replacement, a removal, or the
+    catalog runner's read of that store. One object is shared by the stores service and the catalog runner (m3.1)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.ids: set[int] = set()
+
+    def claim(self, store_id: int) -> bool:
+        """Take the store's slot; False when it is taken."""
+        with self.lock:
+            if store_id in self.ids:
+                return False
+            self.ids.add(store_id)
+            return True
+
+    def release(self, store_id: int) -> None:
+        with self.lock:
+            self.ids.discard(store_id)
 
 
 class StoreError(Exception):
@@ -130,6 +153,7 @@ class StoreService:
         now: Callable[[], datetime] = utc_now,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        slots: BusySlots | None = None,
     ) -> None:
         self._open = open_connection
         self._credentials = StoreCredentials(secrets)
@@ -137,8 +161,8 @@ class StoreService:
         self._now = now
         self._sleep = sleep
         self._monotonic = monotonic
-        self._busy: set[int] = set()
-        self._busy_lock = threading.Lock()
+        self.slots = slots if slots is not None else BusySlots()
+        self._busy: set[int] = self.slots.ids  # the shared set itself, read by tests; changed only through `slots`
         self._limit_seconds = TOTAL_SECONDS  # a test seam: the whole read test's time limit
         self._grace_seconds = 1.0  # how long past the limit the request waits for the worker to report
         self._keeper: sqlite3.Connection | None = None  # holds a development database in memory
@@ -257,14 +281,11 @@ class StoreService:
     def _claim(self, store_id: int) -> None:
         """Take the store's busy slot, or `busy`. A read test, an edit of the address or the keys, a key replacement
         and a removal each hold it, so none of them can change what another one is working on."""
-        with self._busy_lock:
-            if store_id in self._busy:
-                raise StoreError(409, "busy")
-            self._busy.add(store_id)
+        if not self.slots.claim(store_id):
+            raise StoreError(409, "busy")
 
     def _release(self, store_id: int) -> None:
-        with self._busy_lock:
-            self._busy.discard(store_id)
+        self.slots.release(store_id)
 
     def update(self, store_id: int, changes: Mapping[str, Any], keys: tuple[str, str] | None) -> StoreView:
         fields = dict(changes)
@@ -449,10 +470,10 @@ class StoreService:
                     result["error"] = error
                 finally:
                     _close_quietly(client)
-                    with self._busy_lock:
+                    with self.slots.lock:
                         finished.set()
                         if overrun["yes"]:  # the request gave up waiting: only now is the store free
-                            self._busy.discard(store_id)
+                            self.slots.ids.discard(store_id)
 
             threading.Thread(target=work, name=f"store-test-{store_id}", daemon=True).start()
             handed_over = True
@@ -487,9 +508,9 @@ class StoreService:
             if not handed_over or completed:
                 self._release(store_id)  # after the result is saved
             else:  # no answer in time: the worker lets go when it ends (or has, in the meantime)
-                with self._busy_lock:
+                with self.slots.lock:
                     if finished.is_set():
-                        self._busy.discard(store_id)
+                        self.slots.ids.discard(store_id)
                     else:
                         overrun["yes"] = True
 
@@ -513,6 +534,7 @@ def build_store_service(paths: DataPaths, secrets: SecretStore) -> StoreService:
 
 __all__ = [
     "MAX_STORES",
+    "BusySlots",
     "ReadReport",
     "StoreError",
     "StoreService",
