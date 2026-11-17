@@ -1,6 +1,7 @@
 """L1, the dry first read of the live stores (m3.0 §2; CAT-01, CAT-02, CAT-03, CAT-05, APL-12, ERR-02).
 
     PYTHONPATH=backend uv run python -m shelfsync.catalog.report [--store GF] [--spacing-ms 1000] [--yes]
+        [--trace] [--no-meta] [--per-page 25|50|100] [--read-seconds 30..120]
 
 Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only after the owner's go-ahead, with
 `Tee-Object` into `.logs\\`. What it does:
@@ -20,7 +21,20 @@ Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only a
 - **saves nothing:** no database write, no file, no app log file; its log lines go to the console only, with the HTTP
   libraries held at the app's quiet levels (`logs.QUIET_LOGGERS`) and every line through the log redaction;
 - prints **counts only** (m3.0 §2, "What L1 prints", plus the analyst's additions). No slug, title, address, key or
-  file name is printed; the three near-miss pairs of 01-A §2 are reported as found or not, by number.
+  file name is printed; the three near-miss pairs of 01-A §2 are reported as found or not, by number;
+- ends with a timing summary per store (t9): requests, the median and slowest attempt, the timeouts by stage and by
+  what ended them, the request number of the first stall, and the largest page.
+The diagnostics (t9, to tell why a store stalls; one setting at a time, each run with the owner's go-ahead):
+- `--trace` prints one line per attempt as it ends: local time, the request number in that store's read, what was
+  asked, the try, the outcome, which limit ended a timeout and the stage reached, the error word, the connection, the
+  times (headers, first byte, longest gap, the whole attempt, the wait before it), the bytes, and the answer's facts,
+  all fixed words and numbers (`apply/catalog_read.py`'s `Attempt`, `Wire` and `ResponseFacts`);
+- `--no-meta` asks for the products without `meta_data` (the meta counts then read "not asked");
+- `--per-page` 25, 50 or 100 (the default): the pages line up (page p of 100 is pages 4p-3 to 4p of 25), the most
+  pages grows so no row is lost to the 4,000 cap, and each store's time limit grows to 600 s x 100 / per page;
+- `--read-seconds` 30 (the default, the app's) to 120: the read timeout;
+- every attempt is bounded at `ATTEMPT_SECONDS` (120 s, Lead (proposed)), within the store's time limit.
+The request list shown at the start is built from the same settings as the read (`ListingShape`, `listing_params`).
 Exit code: 0 when every store read worked, 1 when one didn't (or the stores couldn't be read), 2 for a usage error.
 """
 
@@ -28,6 +42,7 @@ import argparse
 import logging
 import re
 import sqlite3
+import statistics
 import sys
 import threading
 import time
@@ -41,16 +56,28 @@ from typing import TextIO
 import httpx
 
 from shelfsync.apply.catalog_read import (
-    MAX_PAGES,
+    MAX_ROWS,
+    PER_PAGE,
+    STORE_SECONDS,
     SYSTEM_STATUS_PARAMS,
+    Attempt,
     CatalogRead,
+    FactsTransport,
+    ListingShape,
     MemoryFailureCount,
+    ResponseFacts,
     Stop,
+    Wire,
     describe_bad,
-    listing_params,
     read_store_catalog,
 )
-from shelfsync.apply.woocommerce import PRODUCTS_PATH, SYSTEM_STATUS_PATH, WooClient
+from shelfsync.apply.woocommerce import (
+    PRODUCTS_PATH,
+    READ_SECONDS,
+    READ_SECONDS_RANGE,
+    SYSTEM_STATUS_PATH,
+    WooClient,
+)
 from shelfsync.catalog.linking import KnownLink, Placed, near_misses, plan_links
 from shelfsync.catalog.model import META_PREFIX, Product
 from shelfsync.catalog.names import (
@@ -70,6 +97,8 @@ from shelfsync.secure.redact import register_secret
 from shelfsync.tray.instance import CombinedInstanceLock, InstanceLock, WindowsFileLock, WindowsInstanceLock
 
 MIN_SPACING_MS = 1000
+PER_PAGE_CHOICES = (25, 50, 100)  # so the pages line up across runs (the analyst's finding 7)
+ATTEMPT_SECONDS = 120.0  # L1's bound on one attempt, within the store's (Lead (proposed), t9 early check)
 # The three near-miss pairs of 01-A §2 (their slugs are public there). Reported by number, found or not.
 KNOWN_NEAR_MISSES: tuple[frozenset[str], ...] = (
     frozenset({"jetformbuilder-mailpoet-action-add-on", "jetformbuilder-mailpoet-action-addon"}),
@@ -94,6 +123,33 @@ class StoreRef:
 
 
 TransportFactory = Callable[[StoreRef], httpx.BaseTransport]
+
+
+@dataclass(frozen=True)
+class Settings:
+    """What one L1 run reads with: the spacing, the listing's shape, each store's time limit, the read timeout, the
+    bound on one attempt, and whether each attempt is printed."""
+
+    spacing_ms: int
+    shape: ListingShape
+    store_seconds: float
+    read_seconds: int
+    attempt_seconds: float
+    trace: bool
+
+
+def settings_from(args: argparse.Namespace) -> Settings:
+    """The run's settings from its arguments: below 100 a page, the most pages grows to the 4,000-row cap and each
+    store's time limit to 600 s x 100 / per page (the lead's decision)."""
+    per_page: int = args.per_page
+    return Settings(
+        spacing_ms=args.spacing_ms,
+        shape=ListingShape(per_page, MAX_ROWS // per_page, not args.no_meta),
+        store_seconds=STORE_SECONDS * PER_PAGE / per_page,
+        read_seconds=args.read_seconds,
+        attempt_seconds=ATTEMPT_SECONDS,
+        trace=args.trace,
+    )
 
 
 def read_stores(database: Path) -> list[StoreRef]:
@@ -132,26 +188,32 @@ def _query(params: dict[str, str]) -> str:
     return "&".join(f"{name}={value}" for name, value in params.items())
 
 
-def plan_lines(stores: Sequence[StoreRef], spacing_ms: int) -> list[str]:
-    """The requests, built from the reader's own parameters (`SYSTEM_STATUS_PARAMS`, `listing_params`), the page
-    shown as `1..N`."""
-    params = _query({**listing_params(1), "page": "1..N"})
+def plan_lines(stores: Sequence[StoreRef], settings: Settings) -> list[str]:
+    """The settings in effect and the requests, built from the reader's own parameters (`SYSTEM_STATUS_PARAMS`, and
+    the run's `ListingShape`, whose `params` is `listing_params`), the page shown as `1..N`."""
+    shape = settings.shape
+    first = shape.params(1)
+    params = _query({**first, "page": "1..N"})
     lines = [
         "ShelfSync L1, the dry first read: read-only, nothing is saved. These requests go to each active store, one "
-        "store after another:"
+        "store after another:",
+        f"Settings: {shape.per_page} products a page, at most {shape.max_pages} pages; fields {first['_fields']}; at "
+        f"most {settings.store_seconds:,.0f} s for each store's read and {settings.attempt_seconds:,.0f} s for one "
+        f"request; read timeout {settings.read_seconds} s"
+        + ("; one line per request (--trace)" if settings.trace else ""),
     ]
     for store in stores:
         if store.state != "active":
             lines.append(f"Store {store.code}: skipped (paused in Settings)")
             continue
         lines += [
-            f"Store {store.code}, at least {max(store.spacing_ms, spacing_ms):,} ms between requests:",
+            f"Store {store.code}, at least {max(store.spacing_ms, settings.spacing_ms):,} ms between requests:",
             f"  GET {SYSTEM_STATUS_PATH}?{_query(SYSTEM_STATUS_PARAMS)}",
             f"  GET {PRODUCTS_PATH}?{params}",
         ]
     lines.append(
-        f"N is page 1's X-WP-TotalPages (at most {MAX_PAGES}). A request answered 429, 5xx or 520-527, or that timed "
-        "out, is tried again up to 3 times. GET only; the keys are sent in a header, never in an address."
+        f"N is page 1's X-WP-TotalPages (at most {shape.max_pages}). A request answered 429, 5xx or 520-527, or that "
+        "timed out, is tried again up to 3 times. GET only; the keys are sent in a header, never in an address."
     )
     return lines
 
@@ -175,8 +237,9 @@ def _stem_matches(suffix: str, bases: Sequence[str]) -> bool:
     )
 
 
-def store_lines(store: StoreRef, result: CatalogRead) -> list[str]:
-    """One store's counts (or why its read failed). Counts and fixed words only."""
+def store_lines(store: StoreRef, result: CatalogRead, meta: bool = True) -> list[str]:
+    """One store's counts (or why its read failed). Counts and fixed words only. Without `meta` (`--no-meta`) the
+    meta counts read "not asked", never 0."""
     head = f"Store {store.code}"
     if not result.ok:
         status = f", HTTP {result.http_status}" if result.http_status is not None else ""
@@ -223,7 +286,9 @@ def store_lines(store: StoreRef, result: CatalogRead) -> list[str]:
         f"  downloads in no slot (a name repeated on one product) {unslotted:,}",
         f"  download links: shortcode {shortcodes:,}, other {len(downloads) - shortcodes:,}",
         f"  meta latest_version {plain:,}; latest_version_<x> matching a file stem {matched:,}, matching none "
-        f"{unmatched:,}; skipped as unusable {sum(product.meta_skipped for product in products):,}",
+        f"{unmatched:,}; skipped as unusable {sum(product.meta_skipped for product in products):,}"
+        if meta
+        else "  meta not asked (--no-meta)",
         f"  titles with HTML entities {sum(product.entities for product in products):,}",
         f"  slugs outside the canonical pattern {sum(not is_canonical_slug(p.slug) for p in products):,}, of them "
         f"empty {sum(not p.slug for p in products):,} and trashed {_trashed(products):,}",
@@ -302,6 +367,97 @@ def cross_lines(reports: Sequence[tuple[StoreRef, CatalogRead]]) -> list[str]:
     ]
 
 
+# ---- the diagnostics (t9): fixed words and numbers only -------------------------------------------------------------
+
+
+def _ms(label: str, value: int | None) -> str:
+    return f"{label} {value:,} ms" if value is not None else f"{label} none"
+
+
+def _yes(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _connection(wire: Wire | None) -> str:
+    """`new connection`, `connection reused`, or `connection unknown` when no trace event came (so neither is known)."""
+    if wire is None or (wire.stage is None and not wire.new_connection):
+        return "connection unknown"
+    return "new connection" if wire.new_connection else "connection reused"
+
+
+def _bytes(received: int | None, declared: int | None) -> str:
+    if received is None:
+        return "bytes unknown"
+    return f"{received:,} of {declared:,} bytes" if declared is not None else f"{received:,} bytes, no length given"
+
+
+def facts_text(facts: ResponseFacts | None) -> str:
+    """The answer's facts, words from `apply/catalog_read.py`'s fixed lists and counts only."""
+    if facts is None:
+        return "no answer"
+    cookies = " ".join(facts.cookies) if facts.cookies else "none"
+    hints = " ".join(facts.hints) if facts.hints else "none"
+    return (
+        f"server {facts.server}, cf-ray {_yes(facts.cf_ray)}, cf-cache {facts.cache}, content {facts.content}, "
+        f"cf-mitigated {_yes(facts.cf_mitigated)}, retry-after {_yes(facts.retry_after)}, "
+        f"hints {hints}, cookies {cookies}, other cookies {facts.other_cookies}"
+    )
+
+
+def trace_line(code: str, number: int, attempt: Attempt, local: datetime) -> str:
+    """One attempt, as `--trace` prints it: the local time (`HH:MM:SS`), the store's code, the request number in its
+    read, what was asked, the try, the outcome and status, which limit ended a timeout, the stage reached and the error
+    word, then the connection, the times, the bytes and the facts. Nothing from a response but fixed words and
+    numbers."""
+    wire = attempt.wire
+    what = "system_status" if attempt.page is None else f"products page {attempt.page}"
+    status = f" HTTP {attempt.http_status}" if attempt.http_status is not None else ""
+    how = [f"ended {attempt.ended}"] if attempt.ended is not None else []
+    how.append(f"stage {wire.stage if wire is not None and wire.stage is not None else 'unknown'}")
+    if wire is not None and wire.error is not None:
+        how.append(f"error {wire.error}")
+    details = [
+        _connection(wire),
+        _ms("headers", wire.headers_ms if wire is not None else None),
+        _ms("first byte", wire.first_byte_ms if wire is not None else None),
+        _ms("longest gap", wire.longest_gap_ms if wire is not None else None),
+        _bytes(attempt.body_bytes, wire.declared_bytes if wire is not None else None),
+        f"took {attempt.elapsed_ms / 1000:,.1f} s",
+        f"waited {attempt.waited_ms:,} ms",
+    ]
+    return (
+        f"{local:%H:%M:%S} {code} #{number} {what} try {attempt.attempt}: {attempt.outcome}{status} "
+        f"({', '.join(how)}); {', '.join(details)}; {facts_text(attempt.facts)}"
+    )
+
+
+def _counts(counter: Counter[str]) -> str:
+    return ", ".join(f"{word} {count:,}" for word, count in sorted(counter.items())) or "none"
+
+
+def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead) -> list[str]:
+    """One store's timing summary: requests, the median and slowest attempt, the timeouts (after the headers or not,
+    by the stage reached and by what ended them), the request number of the first stall, and the largest page."""
+    if not attempts:
+        return [f"Timing, store {code}: no requests sent"]
+    times = [attempt.elapsed_ms for attempt in attempts]
+    timeouts = [attempt for attempt in attempts if attempt.outcome == "timeout"]
+    first = next((number for number, attempt in enumerate(attempts, 1) if attempt.outcome == "timeout"), None)
+    after_headers = sum(attempt.headers is True for attempt in timeouts)
+    stages = Counter(
+        attempt.wire.stage if attempt.wire is not None and attempt.wire.stage is not None else "unknown"
+        for attempt in timeouts
+    )
+    ends = Counter(attempt.ended or "unknown" for attempt in timeouts)
+    return [
+        f"Timing, store {code}: requests {len(attempts):,}, median {statistics.median(times) / 1000:,.1f} s, slowest "
+        f"{max(times) / 1000:,.1f} s; largest page {result.largest_page_bytes:,} bytes",
+        f"  timeouts {len(timeouts):,}: after the headers {after_headers:,}, before them or not known "
+        f"{len(timeouts) - after_headers:,}; first stall at request {first if first is not None else 'none'}",
+        f"  timeouts by stage: {_counts(stages)}; by what ended them: {_counts(ends)}",
+    ]
+
+
 # ---- the command ----------------------------------------------------------------------------------------------------
 
 
@@ -324,6 +480,17 @@ def _spacing(value: str) -> int:
     return number
 
 
+def _read_seconds(value: str) -> int:
+    low, high = (int(bound) for bound in READ_SECONDS_RANGE)
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("a whole number of seconds") from None
+    if not low <= number <= high:
+        raise argparse.ArgumentTypeError(f"{low} to {high} seconds")
+    return number
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m shelfsync.catalog.report",
@@ -337,6 +504,26 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"milliseconds between two requests to a store (at least {MIN_SPACING_MS}, the default)",
     )
     parser.add_argument("--yes", action="store_true", help="start without waiting for Enter")
+    parser.add_argument(
+        "--trace", action="store_true", help="print one line per request: its stages, times, bytes and fixed-word facts"
+    )
+    parser.add_argument(
+        "--no-meta", action="store_true", help="ask for the products without meta_data (no latest_version counts)"
+    )
+    parser.add_argument(
+        "--per-page",
+        type=int,
+        choices=PER_PAGE_CHOICES,
+        default=PER_PAGE,
+        help=f"products a page: 25, 50 or {PER_PAGE} (the default); below {PER_PAGE} the store's time limit grows",
+    )
+    parser.add_argument(
+        "--read-seconds",
+        type=_read_seconds,
+        default=int(READ_SECONDS),
+        help=f"the read timeout in seconds, {int(READ_SECONDS)} (the default, the app's) to "
+        f"{int(READ_SECONDS_RANGE[1])}",
+    )
     return parser.parse_args(argv)
 
 
@@ -443,13 +630,15 @@ def _run(
     if not stores:
         say("There are no stores to read.", stderr)
         return 1
-    for line in plan_lines(stores, args.spacing_ms):
+    settings = settings_from(args)
+    for line in plan_lines(stores, settings):
         say(line)
     if not args.yes:
         confirm("Press Enter to start, or Ctrl+C to stop: ")
     credentials = StoreCredentials(secrets_factory())
     stop = make_stop()
     reports: list[tuple[StoreRef, CatalogRead]] = []
+    timings: list[tuple[StoreRef, list[Attempt], CatalogRead]] = []
     for store in stores:
         if store.state != "active":
             continue
@@ -460,23 +649,62 @@ def _run(
             continue
         register_secret(key)
         register_secret(secret)
-        transport = transport_factory(store) if transport_factory is not None else None
-        with WooClient(store.url, key, secret, transport=transport, monotonic=monotonic) as client:
-            result = read_store_catalog(
-                client,
-                store.code,
-                spacing_ms=max(store.spacing_ms, args.spacing_ms),
-                stop=stop,
-                failures=MemoryFailureCount(),
-                monotonic=monotonic,
-                now=now,
-            )
+        attempts: list[Attempt] = []
+        result = _read_one(store, key, secret, settings, attempts, transport_factory, say, stop, monotonic, now)
         reports.append((store, result))
-        for line in store_lines(store, result):
+        timings.append((store, attempts, result))
+        for line in store_lines(store, result, settings.shape.meta):
             say(line)
     for line in cross_lines(reports):
         say(line)
+    for store, attempts, result in timings:
+        for line in timing_lines(store.code, attempts, result):
+            say(line)
     return 0 if reports and all(result.ok for _, result in reports) else 1
+
+
+def _read_one(
+    store: StoreRef,
+    key: str,
+    secret: str,
+    settings: Settings,
+    attempts: list[Attempt],
+    transport_factory: TransportFactory | None,
+    say: Callable[..., None],
+    stop: Stop,
+    monotonic: Callable[[], float],
+    now: Callable[[], datetime],
+) -> CatalogRead:
+    """One store's read with the run's settings, through a `FactsTransport` (on the real transport, or a test's), every
+    attempt kept in `attempts` and, with `--trace`, printed as it ends (local time)."""
+
+    def observe(attempt: Attempt) -> None:
+        attempts.append(attempt)
+        if settings.trace:
+            say(trace_line(store.code, len(attempts), attempt, now().astimezone()))
+
+    inner = transport_factory(store) if transport_factory is not None else httpx.HTTPTransport()
+    facts = FactsTransport(inner, monotonic=monotonic)
+    shape = settings.shape
+    with WooClient(
+        store.url, key, secret, transport=facts, monotonic=monotonic, read_seconds=settings.read_seconds
+    ) as client:
+        return read_store_catalog(
+            client,
+            store.code,
+            spacing_ms=max(store.spacing_ms, settings.spacing_ms),
+            stop=stop,
+            failures=MemoryFailureCount(),
+            monotonic=monotonic,
+            now=now,
+            store_seconds=settings.store_seconds,
+            observe=observe,
+            facts=facts,
+            meta=shape.meta,
+            per_page=shape.per_page,
+            max_pages=shape.max_pages,
+            attempt_seconds=settings.attempt_seconds,
+        )
 
 
 if __name__ == "__main__":

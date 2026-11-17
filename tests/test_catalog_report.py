@@ -2,21 +2,28 @@
 only (never the live stores): it opens the database read-only and never migrates, asks before any request, keeps the
 spacing at 1,000 ms or more, saves nothing, and prints counts only (no host, key, slug, title or file name)."""
 
+import base64
 import hashlib
 import io
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 import sys
 from contextlib import closing
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from shelfsync.apply import catalog_read
+from shelfsync.apply.catalog_read import Attempt, CatalogRead, FactsTransport, ResponseFacts, Wire
+from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog import report
 from shelfsync.db.connection import connect
 from shelfsync.db.migrate import DEFAULT_MIGRATIONS_DIR, applied_versions, migrate
@@ -343,3 +350,244 @@ def test_the_command_holds_the_http_loggers_at_the_apps_quiet_levels_and_leaves_
     in_process(data_paths, "--yes")
     assert {name: logging.getLogger(name).level for name in QUIET_LOGGERS} == QUIET_LOGGERS
     assert logging.getLogger().handlers == handlers
+
+
+# ---- the diagnostics (t9) -------------------------------------------------------------------------------------------
+
+TRACE_LINE = re.compile(r"\d{2}:\d{2}:\d{2} (GF|PW) #\d+ ")
+
+
+def test_the_trace_and_summary_in_a_fresh_process_hold_no_host_key_cookie_query_slug_title_or_file_name(
+    data_paths: DataPaths,
+) -> None:
+    """Item 4 (t9): with `--trace` and every option, the output holds fixed words and numbers only, though the
+    answers carry cookie values, a `cf-ray`, a server text and the marker, and the trace events' `info` holds the
+    request, an address with the keys in its query, and the `Authorization` header."""
+    make_database(data_paths)
+    before = snapshot(data_paths.root)
+    done = run_harness(data_paths, "--yes", "--trace", "--no-meta", "--per-page", "50", "--read-seconds", "90")
+    assert done.returncode == 0, done.stderr
+    output = done.stdout + done.stderr
+    assert snapshot(data_paths.root) == before
+    authorization = "Basic " + base64.b64encode(f"{KEY}:{SECRET}".encode()).decode()
+    for forbidden in (
+        MARK,
+        "store-gf.example",
+        "store-pw.example",
+        KEY,
+        SECRET,
+        KEY[3:],
+        authorization,
+        authorization[6:],
+        "consumer_key",
+        "consumer_secret",
+        "Authorization",
+        "LHR",
+        "cookie-value",
+        "amazon_s3",
+        *(slug for pair in NEAR_MISS_PAIRS for slug in pair[:2]),
+    ):
+        assert forbidden not in output, forbidden
+    traces = [line for line in done.stdout.splitlines() if TRACE_LINE.match(line)]
+    assert len(traces) == 4  # each store: system_status and its one page of 50
+    for line in traces:
+        assert not set("?=/@&") & set(line), line  # no address, query or header text
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} GF #2 products page 1 try 1: ok HTTP 200 \(stage done\); new connection, headers 0 ms, "
+        r"first byte 0 ms, longest gap 0 ms, [\d,]+ of [\d,]+ bytes, took 0\.0 s, waited 1,000 ms; server other, "
+        r"cf-ray yes, cf-cache other, content none, cf-mitigated no, retry-after no, hints x-cache, cookies __cf_bm "
+        r"wordpress_logged_in, other cookies 1",
+        traces[1],
+    ), traces[1]
+    out = done.stdout
+    assert (
+        "Settings: 50 products a page, at most 80 pages; fields id,slug,name,type,status,date_modified_gmt,downloads; "
+        "at most 1,200 s for each store's read and 120 s for one request; read timeout 90 s; one line per request "
+        "(--trace)"
+    ) in out
+    assert "  meta not asked (--no-meta)" in out and "meta latest_version" not in out
+    assert "Timing, store GF: requests 2, median 0.0 s, slowest 0.0 s; largest page " in out
+    assert "  timeouts 0: after the headers 0, before them or not known 0; first stall at request none" in out
+    assert "  timeouts by stage: none; by what ended them: none" in out
+
+
+@pytest.mark.parametrize(
+    "options", [[], ["--no-meta"], ["--per-page", "25"], ["--per-page", "50", "--no-meta"]], ids=str
+)
+def test_the_request_list_shown_is_what_is_sent_with_every_option(data_paths: DataPaths, options: list[str]) -> None:
+    """Item 3: `--no-meta` and `--per-page` change the list shown and the requests sent identically."""
+    make_database(data_paths)
+    code, out, _, sites = in_process(data_paths, "--yes", "--store", "GF", *options)
+    shown = [line.strip().removeprefix("GET ") for line in out.splitlines() if line.strip().startswith("GET ")]
+    sent = [request for request in sites.requests if request.url.host == "store-gf.example"]
+    assert code == 0 and len(shown) == 2 and len(sent) == 2
+    path, _, query = shown[1].partition("?")
+    params = dict(pair.split("=", 1) for pair in query.split("&"))
+    assert path == sent[1].url.path and params == {**dict(sent[1].url.params), "page": "1..N"}
+    per_page = options[options.index("--per-page") + 1] if "--per-page" in options else "100"
+    assert params["per_page"] == per_page
+    assert params["_fields"].endswith(",downloads") == ("--no-meta" in options)
+
+
+@pytest.mark.parametrize(
+    ("options", "store_seconds", "max_pages", "per_page", "meta", "read"),
+    [
+        ([], 600.0, 40, 100, True, 30.0),
+        (["--per-page", "50"], 1200.0, 80, 50, True, 30.0),
+        (["--per-page", "25", "--no-meta", "--read-seconds", "90"], 2400.0, 160, 25, False, 90.0),
+    ],
+    ids=["defaults", "50", "25 no meta 90 s"],
+)
+def test_each_store_is_read_with_the_runs_settings(
+    data_paths: DataPaths,
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+    store_seconds: float,
+    max_pages: int,
+    per_page: int,
+    meta: bool,
+    read: float,
+) -> None:
+    """The lead's decisions: the store's time limit scales to 600 s x 100 / per page, the most pages to the 4,000-row
+    cap; every attempt is bounded at 120 s; the read timeout is `--read-seconds`; the reader gets the facts transport
+    and an observer."""
+    make_database(data_paths)
+    calls: list[dict[str, Any]] = []
+    real = catalog_read.read_store_catalog
+
+    def spy(client: WooClient, code: str, **settings: Any) -> CatalogRead:
+        calls.append(settings)
+        return real(client, code, **settings)
+
+    monkeypatch.setattr(report, "read_store_catalog", spy)
+    code, _, _, sites = in_process(data_paths, "--yes", "--store", "GF", *options)
+    assert code == 0 and len(calls) == 1
+    used = calls[0]
+    assert (used["store_seconds"], used["max_pages"], used["per_page"], used["meta"]) == (
+        store_seconds,
+        max_pages,
+        per_page,
+        meta,
+    )
+    assert used["attempt_seconds"] == report.ATTEMPT_SECONDS == 120.0 and isinstance(used["facts"], FactsTransport)
+    assert callable(used["observe"])
+    assert {request.extensions["timeout"]["read"] for request in sites.requests} == {read}
+
+
+@pytest.mark.parametrize("value", ["30", "0", "200", "lots"])
+def test_per_page_is_only_25_50_or_100(value: str) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        report.parse_args(["--per-page", value])
+    assert exit_info.value.code == 2
+    assert [report.parse_args(["--per-page", n]).per_page for n in ("25", "50", "100")] == [25, 50, 100]
+    assert report.parse_args([]).per_page == 100
+
+
+@pytest.mark.parametrize("value", ["29", "121", "0", "ninety", "45.5"])
+def test_the_read_timeout_is_30_to_120_seconds(value: str) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        report.parse_args(["--read-seconds", value])
+    assert exit_info.value.code == 2
+    assert [report.parse_args(["--read-seconds", n]).read_seconds for n in ("30", "90", "120")] == [30, 90, 120]
+    assert report.parse_args([]).read_seconds == 30
+
+
+def test_trace_prints_a_line_per_attempt_as_it_ends_with_its_request_number(data_paths: DataPaths) -> None:
+    make_database(data_paths)
+    gf = FakeCatalogStore(rows=[raw_product(1)], answers=[httpx.Response(429, headers={"Retry-After": "3"})])
+    stores = {"GF": gf, "PW": FakeCatalogStore(rows=[raw_product(2)])}
+    code, out, _, _ = in_process(data_paths, "--yes", "--trace", "--store", "GF", stores=stores)
+    traces = [line for line in out.splitlines() if TRACE_LINE.match(line)]
+    assert code == 0 and len(traces) == 3
+    assert [line[9:].split(";")[0] for line in traces] == [
+        "GF #1 system_status try 1: ok HTTP 200 (stage unknown)",
+        "GF #2 products page 1 try 1: rate_limited HTTP 429 (stage unknown)",
+        "GF #3 products page 1 try 2: ok HTTP 200 (stage unknown)",
+    ]
+    assert "connection unknown" in traces[0] and "waited 3,000 ms" in traces[2] and "retry-after yes" in traces[1]
+    assert out.index(traces[-1]) < out.index("Store GF: WooCommerce")  # printed as the read goes
+    assert "Timing, store GF: requests 3," in out
+
+
+def test_without_trace_no_attempt_line_is_printed_but_the_summary_is(data_paths: DataPaths) -> None:
+    make_database(data_paths)
+    code, out, _, _ = in_process(data_paths, "--yes")
+    assert code == 0 and not [line for line in out.splitlines() if TRACE_LINE.match(line)]
+    assert "Timing, store GF: requests 2" in out and "Timing, store PW: requests 2" in out
+
+
+def test_a_store_without_keys_has_no_timing_line(data_paths: DataPaths) -> None:
+    make_database(data_paths)
+    code, out, _, _ = in_process(data_paths, "--yes", secrets=MemorySecretStore())
+    assert code == 1 and "Timing, store" not in out
+
+
+def _attempt(**changes: Any) -> Attempt:
+    base = Attempt(
+        what="products",
+        page=13,
+        attempt=1,
+        outcome="timeout",
+        http_status=200,
+        elapsed_ms=30_960,
+        body_bytes=118_400,
+        headers=True,
+        facts=ResponseFacts(True, "cloudflare", "dynamic", ("__cf_bm",), 2, "json", False, True, ("x-cache",)),
+        wire=Wire(
+            facts=None,
+            stage="body",
+            new_connection=False,
+            headers_ms=840,
+            first_byte_ms=900,
+            longest_gap_ms=30_000,
+            received=118_400,
+            declared_bytes=250_000,
+            error="read_timeout",
+        ),
+        waited_ms=1_000,
+        ended="read_timeout",
+    )
+    return replace(base, **changes)
+
+
+def test_one_trace_line_holds_fixed_words_and_numbers_only() -> None:
+    local = datetime(2026, 11, 18, 9, 5, 7)
+    assert report.trace_line("PW", 13, _attempt(), local) == (
+        "09:05:07 PW #13 products page 13 try 1: timeout HTTP 200 (ended read_timeout, stage body, error "
+        "read_timeout); connection reused, headers 840 ms, first byte 900 ms, longest gap 30,000 ms, "
+        "118,400 of 250,000 bytes, took 31.0 s, waited 1,000 ms; server cloudflare, cf-ray yes, cf-cache dynamic, "
+        "content json, cf-mitigated no, retry-after yes, hints x-cache, cookies __cf_bm, other cookies 2"
+    )
+    nothing = _attempt(
+        page=None, what="system_status", outcome="unreachable", http_status=None, body_bytes=None, headers=None,
+        facts=None, wire=None, ended=None, waited_ms=0,
+    )  # fmt: skip
+    assert report.trace_line("GF", 1, nothing, local) == (
+        "09:05:07 GF #1 system_status try 1: unreachable (stage unknown); connection unknown, headers none, "
+        "first byte none, longest gap none, bytes unknown, took 31.0 s, waited 0 ms; no answer"
+    )
+    wire = _attempt().wire
+    assert wire is not None
+    chunked = _attempt(wire=replace(wire, new_connection=True, declared_bytes=None))
+    assert "new connection," in report.trace_line("GF", 2, chunked, local)
+    assert "118,400 bytes, no length given" in report.trace_line("GF", 2, chunked, local)
+
+
+def test_the_timing_summary_counts_timeouts_by_stage_and_by_what_ended_them() -> None:
+    attempts = [
+        _attempt(outcome="ok", elapsed_ms=400, ended=None, headers=True),
+        _attempt(outcome="ok", elapsed_ms=600, ended=None, headers=True),
+        _attempt(),  # a timeout during the body, 30,960 ms
+        _attempt(elapsed_ms=120_000, ended="attempt_bound", headers=True),
+        _attempt(
+            elapsed_ms=10_000, ended="read_timeout", headers=False, wire=Wire(stage="headers", error="read_timeout")
+        ),
+        _attempt(outcome="rate_limited", elapsed_ms=200, ended=None),
+    ]
+    result = CatalogRead("timeout", largest_page_bytes=250_000)
+    assert report.timing_lines("PW", attempts, result) == [
+        "Timing, store PW: requests 6, median 5.3 s, slowest 120.0 s; largest page 250,000 bytes",
+        "  timeouts 3: after the headers 2, before them or not known 1; first stall at request 3",
+        "  timeouts by stage: body 2, headers 1; by what ended them: attempt_bound 1, read_timeout 2",
+    ]
+    assert report.timing_lines("GF", [], CatalogRead("stopped")) == ["Timing, store GF: no requests sent"]
