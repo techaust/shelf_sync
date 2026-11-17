@@ -112,6 +112,89 @@ Safety is clean and nothing built is wrong, but the records can't yet separate w
 
 ## 3. Builder report
 
+### Builder (Opus 5.5 high), 2026-11-18: the analyst's findings 1–8 and item 3
+
+**Skills and tools:** as in §2. For the stream and trace questions I read httpx 0.28.1 and httpcore 1.0.9 in `.venv`: `_models.py` (`iter_raw` and `close` use `self.stream`), `_client.py` (the client itself replaces `response.stream` with `BoundSyncStream` right after `handle_request`), `_transports/default.py` 247, and httpcore's `_trace.py`, `_sync/connection.py` and `_sync/http11.py` (the event names). No skill applies beyond §2's.
+
+**Commits** (after §2's `7a5c9fb`, `96b9d6d`, `a5e680a`; not pushed):
+
+| Commit | What |
+|---|---|
+| `6e53a0e` | `docs(runs)`: the analyst's findings and the lead's decisions in §2 |
+| `c67a641` | `feat(catalog)`: the stage of a stall, the shape of a trickle, the attempt bound, the read timeout, more facts, and `FactsTransport`'s own GET check (findings 1–6, 8) |
+| `484ef02` | `feat(catalog)`: L1's `--trace`, `--no-meta`, `--per-page`, `--read-seconds` and the timing summary (item 3, finding 7) |
+
+**Files changed in this round:** `backend/shelfsync/apply/catalog_read.py`, `backend/shelfsync/apply/woocommerce.py` (finding 5 only: `read_seconds`), `backend/shelfsync/catalog/report.py`, `tests/test_catalog_diagnostics.py` (44 tests in all, 116 cases), `tests/test_catalog_report.py` (11 new tests, 22 cases), `tests/report_harness.py`, this file. Nothing else; `uv.lock` unchanged.
+
+**How each finding was done**
+1. **The stage of a stall.** `FactsTransport.handle_request` sets `request.extensions["trace"]` to a per-request `_WireRecorder.trace(name, info)`.
+   - It never reads `info`. It splits the name into `<base>.<phase>`, keeps only bases in a fixed six-entry table (httpcore's `connection.connect_tcp`, `connection.start_tls`, `http11.send_request_headers|body`, `http11.receive_response_headers|body`) and phases `started|complete|failed`, and notes the time.
+   - `started` or `failed` sets `stage`. `connect_tcp.started` sets `new_connection`. `receive_response_headers.complete` sets `headers_ms`. `receive_response_body.complete` sets `stage done`.
+   - `error` comes from the exception the transport or the body stream caught (its class only, through a fixed table), never from `info["exception"]`.
+   - Tested: the mapping directly, through a fake that fires httpcore-named events (MockTransport fires none); unknown or malformed names are ignored; and `info` is never kept (a weak reference to the `info` object is dead after the calls, and no repr holds the key, the secret or the address).
+2. **The shape of a trickle.** `FactsTransport` replaces `response.stream` with `_CountingStream`, which passes every chunk on as it is and records `first_byte_ms`, `longest_gap_ms`, `received` and `declared_bytes` (`Content-Length` as a number, None when absent or not plain digits). This works in httpx 0.28.1: the client wraps the stream once more in `BoundSyncStream`, and `iter_raw` and `close` use `self.stream`. Tested: the reader gets the same result through it, and the bytes counted equal the bytes read.
+3. **A dropped connection's bytes.** The counting stream counts what came. With a `FactsTransport`, `Attempt.body_bytes` and `Attempt.headers` come from the `Wire`, so an `unreachable` mid-body reports its bytes and `headers yes`. `woocommerce.py` has no further change for this.
+4. **The attempt bound.** `read_catalog(attempt_seconds=None)`. With a value, the session reads the clock and gives `client.get` the earlier of the store's deadline and the attempt's start plus `attempt_seconds`. A timed-out attempt gets `ended` by comparing the clock with those deadlines: `store_bound`, `attempt_bound`, else `read_timeout`. With None (the app), there is no extra clock read and the deadline is unchanged. Tested: a trickle ends at the attempt bound and the retry reads on; the bound is the deadline the client gets (read timeout 20 s at `attempt_seconds=20`); a plain read timeout; the store's bound; the slack; and `attempt_seconds ≤ 0` refused.
+5. **The read timeout.** `WooClient(read_seconds=READ_SECONDS)` takes 30–120 (`READ_SECONDS_RANGE`, else `ValueError`) and uses it in place of the constant. Tested: 30, 90 and 120 accepted (the request's read timeout is that value), 29.9 and 121 refused. An AST scan of `backend/shelfsync` finds `read_seconds=` and the L1 options passed only by `catalog/report.py`; the reader only hands its own on. The Test connection tests are unchanged and pass.
+6. **More facts.** `ResponseFacts` gains:
+   - `content` (`json` for `application/json` or `application/…+json`, `html` for `text/html`, else `other`, `none` when absent);
+   - `cf_mitigated` and `retry_after` (present or not);
+   - `hints`, the names present from the fixed list of seven, in that order.
+
+   `Attempt` gains `waited_ms` (measured around the wait before it: the spacing, a back-off or a `Retry-After`), `ended`, and `wire` (the whole `Wire`).
+7. **`--per-page`** accepts only 25, 50 or 100 (argparse `choices`); the reader keeps 25–100.
+8. **`FactsTransport` refuses a non-GET itself** (`NonGetRefused`) before anything is recorded or sent.
+
+**Item 3 (`catalog/report.py`)**
+- **Settings.** `Settings` is built from the arguments (`settings_from`): `ListingShape(per_page, 4,000 // per_page, not --no-meta)` (`_Shape` became the public `ListingShape`), the store's bound at 600 × 100 / per_page, `read_seconds`, `ATTEMPT_SECONDS = 120` (Lead (proposed)), and `trace`.
+- **The plan lines** start with a `Settings:` line: per page, most pages, fields, the store's bound, the attempt bound, the read timeout, and whether `--trace` is on. The products request comes from `shape.params(1)` (`listing_params`), and the read is given the same shape's values.
+- **The read.** Every store is read through `FactsTransport(inner)` (the real `httpx.HTTPTransport()`, or a test's) with an observer. With `--trace`, the observer prints one line per attempt as it ends: local `HH:MM:SS`, the store code, `#n` (the request number in that store's read), what and page, the try, the outcome and status, `ended`, `stage` and `error`, the connection (`new`, `reused`, or `unknown` when no trace event came), the headers, first-byte and longest-gap times, bytes received of declared, the time taken, the wait, and the facts.
+- **`--no-meta`** prints `meta not asked (--no-meta)` in place of the meta counts.
+- **The timing summary** comes after the cross-store lines, one block per store read:
+  - requests, the median and slowest attempt, the largest page;
+  - timeouts after the headers and before them or not known;
+  - the request number of the first stall;
+  - timeouts by stage and by what ended them.
+- **Tests:**
+  - a fresh-process run with every option, where the harness fires trace events whose `info` holds the request, an address with both keys in its query and the `Authorization` value, and every answer carries marked cookie values, a hashed WordPress cookie name, a `cf-ray`, a server and a cache text. No marker, host, key, `Authorization` value, `consumer_` or `LHR` appears, no trace line holds `? = / @ &`, and one trace line is matched in full;
+  - in process: the list shown is what is sent, for four option sets; each store gets the run's settings (a spy: store bound 600, 1,200 or 2,400; most pages 40, 80 or 160; `attempt_seconds` 120; a `FactsTransport`; the client's read timeout 30 or 90);
+  - argument ranges; the trace lines' order and request numbers; no trace lines without `--trace`; no timing line for a store without keys;
+  - `trace_line` and `timing_lines` exactly, on built attempts.
+
+**Choices I made (Lead (proposed) if the lead keeps them)**
+1. `BOUND_SLACK_SECONDS = 0.25`: a timeout within 0.25 s of a bound is labelled by the bound, for a system timer that wakes a little early. `read_timeout` also covers a connect timeout before any bound; the `error` word tells them apart.
+2. `headers_ms` comes from the trace's `receive_response_headers.complete` when it fires, else the moment `handle_request` returned (the connection pool returns right after the headers), so test transports have it too.
+3. `longest_gap_ms` counts the wait from the last chunk to the body's end or failure, so a final stall shows (the loopback probe's trickle: 1,013 ms for a 1 s timeout). The wait from the headers to the first byte isn't a gap: it is `first_byte_ms − headers_ms`. An empty chunk isn't a byte.
+4. `Attempt.wire` carries the whole `Wire` rather than flattening its fields into `Attempt`; `Attempt.facts` stays for §2's callers.
+5. The trace table holds HTTP/1.1 names only: `WooClient` doesn't turn HTTP/2 on.
+6. L1 always reads through `FactsTransport` with the observer and the 120 s attempt bound, so the timing summary prints on every run; `--trace` only adds the per-attempt lines. The app never does either.
+7. `connection unknown` when no trace event came (a test transport), since `new_connection False` alone can't tell "reused" from "not traced".
+8. "First stall" means the first attempt whose outcome is `timeout`.
+9. `--read-seconds` takes whole seconds; `WooClient` takes any number from 30 to 120.
+
+**Commands run and their results** (all with `UV_PYTHON_DOWNLOADS=never`, `--locked`)
+- While working: `pytest --no-cov` on `test_catalog_report`, `test_catalog_diagnostics`, `test_catalog_read`, `test_woocommerce_client`, `test_catalog_runner` and `test_stores_api`: 534 passed. Two mutation checks, reverted afterwards: keeping `info` in the trace callback, and a slack of 0, each made its test fail; the slack test first used the constant itself and didn't catch it, so it now uses a literal 0.1 s. `ruff check`, `ruff format` and `mypy` on each changed file: clean.
+- A loopback probe (127.0.0.1 only, a scratch script, not committed) with `FactsTransport(httpx.HTTPTransport())` on a real httpcore connection:
+  - a first request opens a new connection, and the next reuses it (`stage done`);
+  - a trickle ends `stage body`, `read_timeout`, 4 of 50 bytes, longest gap 1,013 ms;
+  - a silent server ends `stage headers`, `read_timeout`, no facts;
+  - a connection dropped mid-body keeps its 5 bytes, with `stage body` and error word `protocol_error` (httpx raises `RemoteProtocolError` there; `WooClient` maps it to `unreachable`).
+- Through `bash tools/heavy.sh --log t9-fix-<name>`, each exit 0:
+  - `uv run pytest` (`t9-fix-pytest`): **3212 passed, 19 skipped, 58 deselected** in 391 s. Coverage 94 % in total. `apply/catalog_read.py` 99 %: of the new code only the branch for a non-sync body stream (434→436) isn't taken, which a sync client never gives; 580, 745, 1029 and 1037 were uncovered before t9. `apply/woocommerce.py` 99 % (228, uncovered before). `catalog/report.py` 92 %: its missed lines are the lock-error, no-store and `__main__` paths, uncovered before t9.
+  - `uv run mypy` (`t9-fix-mypy`) and `uv run mypy --platform linux` (`t9-fix-mypy-linux`): no issues in 96 source files.
+  - `uv run bandit -r backend` (`t9-fix-bandit`): no issues; still the 17 `nosec` skips from before t9.
+  - `uv run ruff format --check` (`t9-fix-ruff-format`): 209 files already formatted. `uv run ruff check` (`t9-fix-ruff`, the one full lint): all checks passed.
+
+**Not verified**
+- Against TLS and a real store: the probe ran over plain HTTP on loopback, so `start_tls` events, the real stores' headers, and how PluginWay stalls are for the owner's L1 runs.
+- The real `datetime.now().astimezone()` zone name: L1 prints `HH:MM:SS` local time with no zone, as the brief's example does.
+- `pytest -m windows`, pip-audit (no package changed), the release build (the lead's, at integration: `backend/shelfsync` ships).
+- L1 against the real installed database and Credential Manager (the owner's step, outside Claude).
+
+**Open questions**
+1. The summary prints on every L1 run, and the 120 s attempt bound always applies in L1 (choice 6). If the lead wants a plain run to match m3.1's L1 exactly (no attempt bound), that would need a flag; I didn't add one unasked.
+2. The trace lines go to stdout as the read runs. The read's own log line still goes to stderr, so with `Tee-Object` both reach the log only if the owner's command captures both streams. L1's command for the owner isn't on this branch (m3.1 §7 is on `main`), so I couldn't check it: it should end `2>&1 | Tee-Object …`, as the repo's other owner commands do (`runbooks/m1b-exit-test.md`). I changed no docs outside the brief's files.
+
 ## 4. Review
 
 ## 5. Integration notes
