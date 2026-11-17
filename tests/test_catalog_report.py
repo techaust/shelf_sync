@@ -750,3 +750,19 @@ def test_the_transport_is_closed_when_the_client_refuses_its_arguments() -> None
     with pytest.raises(ValueError, match="https"):
         report._read_one(store, KEY, SECRET, settings, [], factory, print, time, time.monotonic, time.wall)
     assert len(made) == 1 and made[0].closed
+
+
+def test_ctrl_c_during_a_wait_has_no_request_in_flight(data_paths: DataPaths) -> None:
+    """Review 2, finding 3: Ctrl+C between requests (here the spacing wait after system_status): no in-flight line,
+    only the partial summary."""
+    make_database(data_paths)
+    clock = FakeTime()
+
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    clock.on_wait = interrupt
+    code, out, err, _ = in_process(data_paths, "--yes", "--store", "GF", clock=clock)
+    assert code == 1 and "Stopped. Nothing was saved." in err
+    assert "in flight" not in out
+    assert "Timing, store GF: read stopped by Ctrl+C; requests 1," in out
