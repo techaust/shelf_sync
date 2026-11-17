@@ -181,16 +181,6 @@ _TRACE_STAGES = {
     "http11.receive_response_body": "body",
 }
 _TRACE_PHASES = frozenset({"started", "complete", "failed"})
-ERROR_WORDS = (
-    "connect_timeout",
-    "read_timeout",
-    "write_timeout",
-    "pool_timeout",
-    "connect_error",
-    "read_error",
-    "protocol_error",
-    "other",
-)
 _ERROR_CLASSES: tuple[tuple[type[Exception], str], ...] = (
     (httpx.ConnectTimeout, "connect_timeout"),
     (httpx.ReadTimeout, "read_timeout"),
@@ -200,10 +190,15 @@ _ERROR_CLASSES: tuple[tuple[type[Exception], str], ...] = (
     (httpx.ReadError, "read_error"),
     (httpx.ProtocolError, "protocol_error"),
 )
-ENDED_WORDS = ("read_timeout", "attempt_bound", "store_bound")
-# A read timeout cut short by a bound fires at the bound, give or take the system timer; within this of the bound it
-# is labelled by the bound (Lead (proposed)).
-BOUND_SLACK_SECONDS = 0.25
+ERROR_WORDS = (*(word for _, word in _ERROR_CLASSES), "other")
+TIMEOUT_WORDS = ("connect_timeout", "read_timeout", "write_timeout", "pool_timeout")  # httpx's own timeouts
+# What ended a timed-out attempt (`_Session._ended`): httpx's own timeout, by its word, or a bound.
+ENDED_WORDS = (*TIMEOUT_WORDS, "attempt_bound", "store_bound")
+
+
+def ms_between(later: float, earlier: float) -> int:
+    """Whole milliseconds from `earlier` to `later` (two readings of one monotonic clock), never below 0."""
+    return max(0, round((later - earlier) * 1000))
 
 
 @dataclass(frozen=True)
@@ -325,7 +320,10 @@ class _WireRecorder:
         self.wire = Wire()
 
     def _ms(self, moment: float) -> int:
-        return max(0, round((moment - self._started) * 1000))
+        return ms_between(moment, self._started)
+
+    def so_far_ms(self) -> int:
+        return ms_between(self._monotonic(), self._started)
 
     def trace(self, name: str, info: object) -> None:  # `info` is never read: it holds the request
         base, _, phase = name.rpartition(".")
@@ -373,7 +371,7 @@ class _WireRecorder:
             self.failed(error)
 
     def _gap(self, since: float, moment: float) -> None:
-        gap = max(0, round((moment - since) * 1000))
+        gap = ms_between(moment, since)
         if self.wire.longest_gap_ms is None or gap > self.wire.longest_gap_ms:
             self.wire = replace(self.wire, longest_gap_ms=gap)
 
@@ -433,6 +431,12 @@ class FactsTransport(httpx.BaseTransport):
         recorder, self._recorder = self._recorder, None
         return recorder.wire if recorder is not None else None
 
+    def take_in_flight(self) -> tuple[Wire, int] | None:
+        """For a read stopped mid-request (Ctrl+C, review 2): the request in flight's `Wire` so far and how long it has
+        run, in milliseconds; None when no request was in flight (each finished one was taken by the reader)."""
+        recorder, self._recorder = self._recorder, None
+        return (recorder.wire, recorder.so_far_ms()) if recorder is not None else None
+
     def close(self) -> None:
         self._inner.close()
 
@@ -445,8 +449,9 @@ class Attempt:
     arrived, False when nothing came, None when that isn't known (a connection that failed with no `facts`
     transport). `body_bytes`: the body bytes that came (for a timeout, or with a `facts` transport a dropped
     connection, what came before it ended), None when not known. `elapsed_ms` is the request alone; `waited_ms` the
-    wait before it (the spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: `read_timeout` (httpx's
-    own timeout), `attempt_bound` or `store_bound` (`_Session._ended`). `wire` when the read has a `FactsTransport`
+    wait before it (the spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: httpx's own timeout by
+    its word (`connect_timeout`, `read_timeout`, `write_timeout`, `pool_timeout`), or `attempt_bound` or `store_bound`
+    (`_Session._ended`). `wire` when the read has a `FactsTransport`
     (`facts` is its `Wire.facts`)."""
 
     page: int | None
@@ -621,6 +626,9 @@ class _Session:
         self._observe = observe
         self._facts = facts
         self._attempt_seconds = attempt_seconds
+        # The client's read timeout, to tell whether a deadline shortened it (`_ended`). Read from the client itself
+        # (`woocommerce.py` is left as it is, review 2); this module already uses that module's own helpers.
+        self._read_seconds: float = client._read_seconds
         self._sent = False
         self.requests = 0
         self.last_failure_status: int | None = None
@@ -657,17 +665,25 @@ class _Session:
         self._emit(observe, tried, refused.reason, status, body_bytes, headers, timeout=timeout)
 
     def _ended(self, tried: _Try, wire: Wire | None) -> str:
-        """Which limit ended a timed-out attempt (review 1, the lead's decision). httpx's read timeout restarts at each
-        socket read, so a body that trickles and then stalls fails a whole read timeout after its last byte, which
-        can be well past the deadline `client.get` was given: that is `read_timeout`, httpx's own. A bound ended it
-        only when `WooClient`'s own check between chunks fired (a timeout with no exception behind it: the `Wire`
-        holds no error), or when the timeout fired within `BOUND_SLACK_SECONDS` of that deadline (the httpx timeout
-        was cut short by it). Then it is `store_bound` when that deadline was the store's, else `attempt_bound`.
-        Without a `facts` transport, only the second test can be made."""
-        own_check = wire is not None and wire.error is None
-        if own_check or abs(self._monotonic() - tried.deadline) <= BOUND_SLACK_SECONDS:
-            return "store_bound" if tried.deadline >= self._deadline else "attempt_bound"
-        return "read_timeout"
+        """What ended a timed-out attempt (reviews 1 and 2, the lead's decisions), from facts, not the clock's distance
+        to a deadline. `WooClient.get` sets its timeouts once, from the deadline it is given: the read timeout (and the
+        write and pool ones) is `min(read_seconds, remaining)`, the connect one `min(10 s, remaining)`, and httpx
+        applies each per phase. So the deadline is what ended the attempt when:
+        - `WooClient`'s own check between chunks fired (a timeout with no exception behind it: the `Wire` holds no
+          error), or
+        - the deadline shortened the timeout (`deadline - started < read_seconds`) and the error isn't
+          `connect_timeout` (the 10 s connect timeout is its own).
+        It is then `store_bound` when that deadline was the store's, else `attempt_bound`. Otherwise it is httpx's own
+        timeout, by its word (`TIMEOUT_WORDS`; `read_timeout` when there is no `Wire`, or for a timeout httpx didn't
+        name). No slack is needed any more: nothing here compares the clock with the deadline. Without a `facts`
+        transport the first test can't be made, so a trickle caught by `WooClient`'s check reads as `read_timeout`."""
+        which = "store_bound" if tried.deadline >= self._deadline else "attempt_bound"
+        if wire is not None and wire.error is None:
+            return which
+        error = wire.error if wire is not None and wire.error in TIMEOUT_WORDS else "read_timeout"
+        if tried.deadline - tried.started < self._read_seconds and error != "connect_timeout":
+            return which
+        return error
 
     def _emit(
         self,
@@ -691,7 +707,7 @@ class _Session:
                 attempt=tried.number,
                 outcome=outcome,
                 http_status=status,
-                elapsed_ms=max(0, round((self._monotonic() - tried.started) * 1000)),
+                elapsed_ms=ms_between(self._monotonic(), tried.started),
                 body_bytes=body_bytes,
                 headers=headers,
                 wire=wire,
@@ -752,7 +768,7 @@ class _Session:
                 deadline = min(deadline, started + self._attempt_seconds)
             tried = None
             if self._observe is not None:
-                tried = _Try(page, attempt + 1, max(0, round((started - before) * 1000)), started, deadline)
+                tried = _Try(page, attempt + 1, ms_between(started, before), started, deadline)
             try:
                 response = self._client.get(path, params, deadline, max_bytes=max_bytes)
             except ReadRefused as refused:

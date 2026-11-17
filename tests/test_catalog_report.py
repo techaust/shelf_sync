@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -168,7 +169,7 @@ def in_process(
     with closing(sqlite3.connect(paths.database)) as connection:
         for (store_id,) in connection.execute("SELECT id FROM store WHERE code IN ('GF', 'PW')"):
             StoreCredentials(secrets).save(store_id, KEY, SECRET)
-    clock = FakeTime()
+    clock = options.get("clock") or FakeTime()
     out, err = io.StringIO(), io.StringIO()
     code = report.main(
         list(argv),
@@ -409,7 +410,7 @@ def test_the_trace_and_summary_in_a_fresh_process_hold_no_host_key_cookie_query_
     assert "  meta not asked (--no-meta)" in out and "meta latest_version" not in out
     assert "Timing, store GF: read ok; requests 2, median 0.0 s, slowest 0.0 s; largest page " in out
     assert "  timeouts 0: after the headers 0, before them or not known 0; first stall at request none" in out
-    assert "  timeouts by stage: none; by what ended them: none" in out
+    assert "  timeouts by stage: none; by what ended them: none" in out and "  by error: none" in out
 
 
 @pytest.mark.parametrize(
@@ -573,23 +574,67 @@ def test_one_trace_line_holds_fixed_words_and_numbers_only() -> None:
     assert "118,400 bytes, no length given" in report.trace_line("GF", 2, chunked, local)
 
 
-def test_the_timing_summary_counts_timeouts_by_stage_and_by_what_ended_them() -> None:
+def test_the_timing_summary_counts_timeouts_by_stage_by_what_ended_them_and_by_error() -> None:
+    wire = _attempt().wire
+    assert wire is not None
+    clean = replace(wire, error=None)
     attempts = [
-        _attempt(outcome="ok", elapsed_ms=400, ended=None, headers=True),
-        _attempt(outcome="ok", elapsed_ms=600, ended=None, headers=True, body_bytes=250_000),
-        _attempt(),  # a timeout during the body, 30,960 ms
-        _attempt(elapsed_ms=120_000, ended="attempt_bound", headers=True),
+        _attempt(outcome="ok", elapsed_ms=400, ended=None, headers=True, wire=clean),
+        _attempt(outcome="ok", elapsed_ms=600, ended=None, headers=True, body_bytes=250_000, wire=clean),
+        _attempt(),  # a read timeout during the body, 30,960 ms
+        _attempt(elapsed_ms=120_000, ended="attempt_bound", headers=True, wire=clean),  # WooClient's own check
         _attempt(
-            elapsed_ms=10_000, ended="read_timeout", headers=False, wire=Wire(stage="headers", error="read_timeout")
+            elapsed_ms=10_000,
+            ended="connect_timeout",
+            headers=False,
+            wire=Wire(stage="connect", error="connect_timeout"),
         ),
-        _attempt(outcome="rate_limited", elapsed_ms=200, ended=None, body_bytes=900_000),  # not a page read
+        _attempt(outcome="rate_limited", elapsed_ms=200, ended=None, body_bytes=900_000, wire=clean),  # not a page
+        _attempt(outcome="unreachable", elapsed_ms=1_500, ended=None, wire=Wire(stage="body", error="read_error")),
     ]
     assert report.timing_lines("PW", attempts, CatalogRead("server_error")) == [
-        "Timing, store PW: read server_error; requests 6, median 5.3 s, slowest 120.0 s; largest page 250,000 bytes",
+        "Timing, store PW: read server_error; requests 7, median 1.5 s, slowest 120.0 s; largest page 250,000 bytes",
         "  timeouts 3: after the headers 2, before them or not known 1; first stall at request 3",
-        "  timeouts by stage: body 2, headers 1; by what ended them: attempt_bound 1, read_timeout 2",
+        "  timeouts by stage: body 2, connect 1; by what ended them: attempt_bound 1, connect_timeout 1, "
+        "read_timeout 1",
+        "  by error: connect_timeout 1, read_error 1, read_timeout 1",
     ]
     assert report.timing_lines("GF", [], CatalogRead("stopped")) == ["Timing, store GF: read stopped; no requests sent"]
+    connect = report.trace_line("PW", 5, attempts[4], datetime(2026, 11, 18, 9, 5, 7))
+    assert "timeout HTTP 200 (ended connect_timeout, stage connect, error connect_timeout);" in connect
+
+
+class _Interrupting(httpx.SyncByteStream):
+    """A body that sends a little, then the owner presses Ctrl+C while it trickles."""
+
+    def __init__(self, time: FakeTime) -> None:
+        self.time = time
+
+    def __iter__(self) -> Iterator[bytes]:
+        self.time.now += 0.5
+        yield b"[" * 300
+        self.time.now += 4.0
+        yield b" " * 20
+        self.time.now += 6.0
+        raise KeyboardInterrupt
+
+
+def test_ctrl_c_inside_a_body_prints_the_request_in_flight(data_paths: DataPaths) -> None:
+    """Review 2, finding 3: the attempt Ctrl+C interrupted gets one line (stage, bytes, longest gap, how long so far)
+    before the store's partial summary."""
+    make_database(data_paths)
+    gf = FakeCatalogStore(rows=[raw_product(1)])
+    gf.answers = [
+        lambda request: httpx.Response(200, headers={"Content-Length": "9000"}, stream=_Interrupting(gf.time))
+    ]
+    stores = {"GF": gf, "PW": FakeCatalogStore(rows=[raw_product(2)])}
+    code, out, err, _ = in_process(data_paths, "--yes", "--store", "GF", stores=stores, clock=gf.time)
+    assert code == 1 and "Stopped. Nothing was saved." in err
+    lines = out.splitlines()
+    flight = lines.index(
+        "GF #2 in flight when stopped: stage unknown, 320 of 9,000 bytes, longest gap 4,000 ms, 10.5 s so far"
+    )
+    assert lines[flight + 1].startswith("Timing, store GF: read stopped by Ctrl+C; requests 1,")
 
 
 @pytest.mark.parametrize(

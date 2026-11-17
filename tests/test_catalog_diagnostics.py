@@ -8,7 +8,7 @@ import gc
 import inspect
 import string
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,7 @@ from shelfsync.apply import catalog_read
 from shelfsync.apply.catalog_read import (
     CACHE_WORDS,
     COOKIE_WORDS,
+    ENDED_WORDS,
     ERROR_WORDS,
     HINT_HEADERS,
     LISTING_FIELDS,
@@ -30,6 +31,7 @@ from shelfsync.apply.catalog_read import (
     PER_PAGE,
     SERVER_WORDS,
     STAGES,
+    TIMEOUT_WORDS,
     Attempt,
     CatalogRead,
     FactsTransport,
@@ -38,6 +40,7 @@ from shelfsync.apply.catalog_read import (
     Wire,
     error_word,
     listing_params,
+    ms_between,
     read_catalog,
     response_facts,
 )
@@ -890,19 +893,118 @@ def test_a_read_timeout_with_no_bound_near_is_read_timeout() -> None:
     assert (seen[1].outcome, seen[1].ended) == ("timeout", "read_timeout")
 
 
-@pytest.mark.parametrize(("early", "ended"), [(0.1, "attempt_bound"), (0.0, "attempt_bound"), (0.5, "read_timeout")])
-@pytest.mark.parametrize("facts", [True, False], ids=["facts", "no facts"])
-def test_a_timeout_within_the_slack_of_a_bound_is_labelled_by_the_bound(early: float, ended: str, facts: bool) -> None:
-    """A timeout cut short by the deadline fires at it, give or take a timer that wakes early (`BOUND_SLACK_SECONDS`
-    is 0.25 s); 0.5 s early is httpx's own."""
+def _silent_for_the_timeout(store: FakeCatalogStore, tries: int, error: type[httpx.TimeoutException]) -> None:
+    """The reviewer's probe (review 2): page 1 gets no header byte for the whole timeout httpx was given, `tries` times;
+    odd tries first spend 0.6 s on a new TLS connection, even ones use a kept-alive one."""
 
-    def late(request: httpx.Request) -> httpx.Response:
-        store.time.now += 120.0 - early
-        raise httpx.ReadTimeout("x")
+    def answer(number: int) -> Callable[[httpx.Request], httpx.Response]:
+        def silent(request: httpx.Request) -> httpx.Response:
+            store.time.now += 0.6 if number % 2 else 0.0
+            store.time.now += request.extensions["timeout"]["connect" if error is httpx.ConnectTimeout else "read"]
+            raise error("nothing came")
 
-    store = FakeCatalogStore(rows=rows(3), answers=[late])
-    _, seen = with_facts(store, attempt_seconds=120.0) if facts else observed(store, attempt_seconds=120.0)
-    assert seen[1].ended == ended
+        return silent
+
+    store.answers = [answer(number) for number in range(1, tries + 1)]
+
+
+@pytest.mark.parametrize(
+    ("read_seconds", "attempt_seconds", "ended"),
+    [(120.0, 120.0, "read_timeout"), (30.0, 120.0, "read_timeout"), (120.0, 60.0, "attempt_bound")],
+    ids=["read 120 s, bound 120 s", "read 30 s, bound 120 s", "read 120 s, bound 60 s"],
+)
+def test_identical_stalls_on_new_and_kept_alive_connections_get_one_label(
+    read_seconds: float, attempt_seconds: float, ended: str
+) -> None:
+    """Review 2, finding 1: whether the deadline shortened the timeout decides, not how far past it the timeout fired
+    (a new connection's setup time used to tip it). Bound 120 s with read 120 s doesn't shorten it (120 isn't below
+    120): httpx's own; bound 60 s does: the attempt's bound."""
+    store = FakeCatalogStore(rows=rows(3))
+    _silent_for_the_timeout(store, 4, httpx.ReadTimeout)
+    result, seen = with_facts(store, read_seconds=read_seconds, attempt_seconds=attempt_seconds)
+    assert result.reason == "timeout"
+    assert [(a.outcome, a.ended) for a in seen[1:]] == [("timeout", ended)] * 4
+
+
+@pytest.mark.parametrize("setup", [0.6, 0.0], ids=["new connection", "kept alive"])
+def test_a_stall_whose_timeout_the_store_bound_shortened_is_store_bound(setup: float) -> None:
+    """The same near the store's bound: 21 s for the whole read leaves page 1 20 s, below the 30 s read timeout."""
+    store = FakeCatalogStore(rows=rows(3))
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        store.time.now += setup + request.extensions["timeout"]["read"]
+        raise httpx.ReadTimeout("nothing came")
+
+    store.answers = [silent]
+    result, seen = with_facts(store, store_seconds=21.0, attempt_seconds=120.0)
+    assert result.reason == "timeout" and [(a.page, a.ended) for a in seen] == [(None, None), (1, "store_bound")]
+
+
+@pytest.mark.parametrize("store_seconds", [600.0, 5.0], ids=["far from the bound", "the bound shortened it"])
+def test_a_connect_timeout_is_ended_connect_timeout(store_seconds: float) -> None:
+    """Review 2, finding 2 (the reviewer's probe): httpx's connect timeout is its own word, even when the deadline
+    shortened it (the lead's decision)."""
+    store = FakeCatalogStore(rows=rows(3))
+    _silent_for_the_timeout(store, 4, httpx.ConnectTimeout)
+    _, seen = with_facts(store, store_seconds=store_seconds, attempt_seconds=120.0)
+    assert seen[1].wire is not None and seen[1].wire.error == "connect_timeout"
+    assert seen[1].ended == "connect_timeout"
+
+
+@pytest.mark.parametrize(
+    ("error", "ended"),
+    [
+        (httpx.WriteTimeout, "write_timeout"),
+        (httpx.PoolTimeout, "pool_timeout"),
+        (httpx.TimeoutException, "read_timeout"),
+    ],
+    ids=["write", "pool", "unnamed"],
+)
+def test_httpxs_other_timeouts_are_their_own_words(error: type[httpx.TimeoutException], ended: str) -> None:
+    store = FakeCatalogStore(rows=rows(3))
+    _silent_for_the_timeout(store, 1, error)
+    _, seen = with_facts(store, attempt_seconds=120.0)
+    assert seen[1].ended == ended and ended in ENDED_WORDS
+
+
+def test_without_a_wire_a_timeout_is_read_timeout_unless_the_bound_shortened_it() -> None:
+    store = FakeCatalogStore(rows=rows(3))
+    _silent_for_the_timeout(store, 1, httpx.ConnectTimeout)
+    _, seen = observed(store, attempt_seconds=120.0)
+    assert (seen[1].wire, seen[1].ended) == (None, "read_timeout")  # no Wire: the word can't be known
+    store = FakeCatalogStore(rows=rows(3))
+    _silent_for_the_timeout(store, 1, httpx.ReadTimeout)
+    _, seen = observed(store, attempt_seconds=20.0)
+    assert seen[1].ended == "attempt_bound"
+
+
+def test_the_words_are_built_from_one_table() -> None:
+    assert ERROR_WORDS[-1] == "other" and set(TIMEOUT_WORDS) < set(ERROR_WORDS)
+    assert (*TIMEOUT_WORDS, "attempt_bound", "store_bound") == ENDED_WORDS
+    assert (ms_between(2.0004, 1.0), ms_between(1.0, 2.0), ms_between(1.0015, 1.0)) == (1000, 0, 2)
+
+
+def test_a_request_in_flight_gives_its_wire_so_far_once() -> None:
+    """Review 2, finding 3: what L1 prints for the request in flight when Ctrl+C stops it."""
+    clock = Clock()
+    steps: list[tuple[float, bytes | Exception]] = [(0.5, b"[" * 40), (2.0, b" " * 2)]
+    facts = FactsTransport(
+        httpx.MockTransport(lambda request: httpx.Response(200, stream=TimedStream(clock, steps))),
+        monotonic=clock.monotonic,
+    )
+    assert facts.take_in_flight() is None
+    response = facts.handle_request(httpx.Request("GET", STORE_URL))
+    stream = response.stream
+    assert isinstance(stream, httpx.SyncByteStream)
+    chunks = iter(stream)
+    next(chunks)
+    next(chunks)
+    clock.now += 7.0  # then nothing more, until Ctrl+C
+    in_flight = facts.take_in_flight()
+    assert in_flight is not None
+    wire, so_far = in_flight
+    assert (wire.received, wire.longest_gap_ms, so_far) == (42, 2000, 9500)
+    assert facts.take_in_flight() is None and facts.take() is None
 
 
 @pytest.mark.parametrize("seconds", [0.0, -1.0])

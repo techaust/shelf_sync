@@ -23,8 +23,8 @@ Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only a
 - prints **counts only** (m3.0 §2, "What L1 prints", plus the analyst's additions). No slug, title, address, key or
   file name is printed; the three near-miss pairs of 01-A §2 are reported as found or not, by number;
 - prints a timing summary after each store's counts (t9): how its read ended, requests, the median and slowest
-  attempt, the largest page, the timeouts by stage and by what ended them, and the request number of the first stall;
-  on Ctrl+C, the summary of the attempts made so far in the store being read;
+  attempt, the largest page, the timeouts by stage and by what ended them, the request number of the first stall,
+  and the errors; on Ctrl+C, the request in flight and the summary of the attempts made so far in that store;
 The diagnostics (t9, to tell why a store stalls; one setting at a time, each run with the owner's go-ahead):
 - `--trace` prints one line per attempt as it ends: local time, the request number in that store's read, what was
   asked, the try, the outcome, which limit ended a timeout and the stage reached, the error word, the connection, the
@@ -414,7 +414,7 @@ def trace_line(code: str, number: int, attempt: Attempt, local: datetime) -> str
     word, then the connection, the times, the bytes and the facts. Nothing from a response but fixed words and
     numbers."""
     wire = attempt.wire
-    what = "system_status" if attempt.page is None else f"products page {attempt.page}"
+    what = attempt.what if attempt.page is None else f"{attempt.what} page {attempt.page}"
     status = f" HTTP {attempt.http_status}" if attempt.http_status is not None else ""
     how = [f"ended {attempt.ended}"] if attempt.ended is not None else []
     how.append(f"stage {wire.stage if wire is not None and wire.stage is not None else 'unknown'}")
@@ -459,9 +459,9 @@ def read_ended(attempts: Sequence[Attempt], result: CatalogRead | None) -> str:
 
 def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead | None) -> list[str]:
     """One store's timing summary: how its read ended (`read_ended`), requests, the median and slowest attempt, the
-    largest products answer, the timeouts (after the headers or not, by the stage reached and by what ended them), and
-    the request number of the first stall. `result` is None when Ctrl+C stopped the read: the summary is of the
-    attempts made so far."""
+    largest products answer, the timeouts (after the headers or not, by the stage reached and by what ended them), the
+    request number of the first stall, and every attempt's error word. `result` is None when Ctrl+C stopped the read:
+    the summary is of the attempts made so far."""
     ended = read_ended(attempts, result)
     if not attempts:
         return [f"Timing, store {code}: read {ended}; no requests sent"]
@@ -475,6 +475,7 @@ def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead | N
         for attempt in timeouts
     )
     ends = Counter(attempt.ended or "unknown" for attempt in timeouts)
+    errors = Counter(attempt.wire.error for attempt in attempts if attempt.wire is not None and attempt.wire.error)
     return [
         f"Timing, store {code}: read {ended}; requests {len(attempts):,}, median "
         f"{statistics.median(times) / 1000:,.1f} s, slowest {max(times) / 1000:,.1f} s; largest page "
@@ -482,7 +483,18 @@ def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead | N
         f"  timeouts {len(timeouts):,}: after the headers {after_headers:,}, before them or not known "
         f"{len(timeouts) - after_headers:,}; first stall at request {first if first is not None else 'none'}",
         f"  timeouts by stage: {_counts(stages)}; by what ended them: {_counts(ends)}",
+        f"  by error: {_counts(errors)}",
     ]
+
+
+def in_flight_line(code: str, number: int, wire: Wire, so_far_ms: int) -> str:
+    """The request in flight when Ctrl+C stopped a read (review 2): its stage, the bytes so far, its longest gap and
+    how long it had run. Numbers and fixed words only."""
+    return (
+        f"{code} #{number} in flight when stopped: stage {wire.stage or 'unknown'}, "
+        f"{_bytes(wire.received, wire.declared_bytes)}, {_ms('longest gap', wire.longest_gap_ms)}, "
+        f"{so_far_ms / 1000:,.1f} s so far"
+    )
 
 
 # ---- the command ----------------------------------------------------------------------------------------------------
@@ -703,7 +715,8 @@ def _read_one(
     now: Callable[[], datetime],
 ) -> CatalogRead:
     """One store's read with the run's settings, through a `FactsTransport` (on the real transport, or a test's), every
-    attempt kept in `attempts` and, with `--trace`, printed as it ends (local time)."""
+    attempt kept in `attempts` and, with `--trace`, printed as it ends (local time). On Ctrl+C the request in flight,
+    if one was, gets one line (`in_flight_line`) before the interrupt goes on."""
 
     def observe(attempt: Attempt) -> None:
         attempts.append(attempt)
@@ -721,22 +734,28 @@ def _read_one(
         facts.close()  # WooClient refused its arguments (an address that isn't https): the transport isn't left open
         raise
     with client:
-        return read_store_catalog(
-            client,
-            store.code,
-            spacing_ms=max(store.spacing_ms, settings.spacing_ms),
-            stop=stop,
-            failures=MemoryFailureCount(),
-            monotonic=monotonic,
-            now=now,
-            store_seconds=settings.store_seconds,
-            observe=observe,
-            facts=facts,
-            meta=shape.meta,
-            per_page=shape.per_page,
-            max_pages=shape.max_pages,
-            attempt_seconds=settings.attempt_seconds,
-        )
+        try:
+            return read_store_catalog(
+                client,
+                store.code,
+                spacing_ms=max(store.spacing_ms, settings.spacing_ms),
+                stop=stop,
+                failures=MemoryFailureCount(),
+                monotonic=monotonic,
+                now=now,
+                store_seconds=settings.store_seconds,
+                observe=observe,
+                facts=facts,
+                meta=shape.meta,
+                per_page=shape.per_page,
+                max_pages=shape.max_pages,
+                attempt_seconds=settings.attempt_seconds,
+            )
+        except KeyboardInterrupt:
+            in_flight = facts.take_in_flight()
+            if in_flight is not None:
+                say(in_flight_line(store.code, len(attempts) + 1, *in_flight))
+            raise
 
 
 if __name__ == "__main__":

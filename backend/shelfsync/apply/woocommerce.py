@@ -147,9 +147,8 @@ def _is_tls_error(error: BaseException) -> bool:
     return False
 
 
-DECLARED_MAX = (
-    10**18
-)  # a `Content-Length` longer than 18 digits reads as this: more than any cap, never converted whole
+# A `Content-Length` longer than 18 digits reads as this: more than any cap, never converted whole.
+DECLARED_MAX = 10**18
 
 
 def declared_length(value: str | None) -> int | None:
