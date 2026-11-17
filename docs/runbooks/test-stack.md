@@ -42,7 +42,7 @@ Leave that window open while you test. Each request it answers adds one line suc
 
 What the server is:
 - **Only on this PC** (`127.0.0.1`): no other computer can reach it, and no other program can take over its port while it runs.
-- **Not reachable from web pages:** it answers only requests addressed to `127.0.0.1:<port>` or `localhost:<port>` (anything else gets "403 Forbidden"), and moto's "any website may call me" setting (CORS) is off, so a page open in your browser can't read, change or empty it. The S3 extension's download links are plain links (the browser goes to them), which don't need CORS; that it works this way is checked when the extension is set up (04-A V6, section 3).
+- **Not reachable from web pages:** it answers only requests addressed to `127.0.0.1:<port>` or `localhost:<port>` (anything else gets "403 Forbidden"), and moto's "any website may call me" setting (CORS) is off, so a page open in your browser can't read, change or empty it. The S3 extension's download links are plain links (the browser goes to them), which don't need CORS; verified 2026-11-17 (04-A V6, section 3.6).
 - **In memory only:** nothing is written to disk. Stopping it removes the bucket and every file in it; the next start begins empty with a new bucket.
 - **Any key pair works:** it checks no keys or signatures. Use made-up keys (below), **never your real AWS keys**.
 - **Not a full copy of Amazon S3** ([04-A V8](../04-architecture-appendix/A-stack-verification.md)): it doesn't refuse a wrong `Content-MD5`, an expired download link or a changed one. Those are proven in other tests and in the live canary (M6), not here.
@@ -51,6 +51,8 @@ Options, if you need them (add them after `testenv/moto_s3.py`):
 - `--port 47631`: another port, if 47630 is taken. It says so ("Port 47630 on 127.0.0.1 can't be used: …"), so you'd know. ShelfSync's own port is 47615 (up to 47624), so the default stays clear of it.
 - `--bucket another-name`: another bucket name.
 - `--region eu-west-2`: another region.
+
+The test site's S3 file (§3.4) assumes the defaults. With another port, bucket or region, tell Claude first.
 
 ### Stop it
 Click in its window and press **Ctrl+C**. It prints "Stopped. The bucket and its files are gone (they were in memory only)." Closing the window stops it too.
@@ -148,15 +150,10 @@ uv run python -m testenv.laragon cert
 uv run python -m testenv.laragon cert --force
 ```
 
-3. **(you)** Reload Apache with Laragon's own command (laragon.org/docs/cli):
-
-```powershell
-C:\laragon\laragon.exe reload apache
-```
-
-   Clicking **Stop**, then **Start All** in Laragon does the same.
+3. **(you)** Restart Apache: in Laragon, click **Stop**, wait until Apache and MySQL show as stopped, then click **Start All**.
+   - Don't rely on `C:\laragon\laragon.exe reload apache` (laragon.org/docs/cli): on 2026-11-17 it didn't restart Apache. Apache's `error_log` showed no restart after it, and the site kept serving Laragon's certificate until Stop and Start All.
 4. **(Claude)** Runs `check` once the site's keys are saved (§3.3). It must say "Connected in <n> ms. WooCommerce <version>, …".
-   - **"The store's security certificate wasn't accepted."** right after step 3 most likely means Laragon's own site file (`auto.shelfsync-test.test.conf`, with Laragon's certificate) answered instead of ours. Check that `00-shelfsync-test.test.conf` is in `C:\laragon\etc\apache2\sites-enabled` and reload Apache again (step 3).
+   - **"The store's security certificate wasn't accepted."** right after step 3 most likely means Apache hasn't restarted, or Laragon's own site file (`auto.shelfsync-test.test.conf`, with Laragon's certificate) answered instead of ours. Check that `00-shelfsync-test.test.conf` is in `C:\laragon\etc\apache2\sites-enabled` and restart Apache again (step 3).
 
 **Why Laragon shouldn't undo this, and what is only assumed:**
 - **Documented by Laragon** (laragon.org/docs/pretty-urls): Laragon writes each site's Apache file itself, named `C:\laragon\etc\apache2\sites-enabled\auto.<site>.test.conf`. The template for every one of them is `C:\laragon\usr\tpl\VirtualHost.tpl`. The `cert` command touches neither.
@@ -164,7 +161,7 @@ C:\laragon\laragon.exe reload apache
   - The files in `sites-enabled` are read in alphabetical order. Laragon's `httpd.conf` reads them with `IncludeOptional "C:/laragon/etc/apache2/sites-enabled/*.conf"`, read on this PC on 2026-11-05.
   - The first site whose `ServerName` matches answers.
   - `00-shelfsync-test.test.conf` sorts before `auto.shelfsync-test.test.conf`, so it answers for `shelfsync-test.test` while Laragon's own file stays as Laragon wrote it.
-- **Laragon does rewrite some files that don't start with `auto.`.** When SSL was turned off and on (2026-11-05, 03:54:45 IST), Laragon rewrote its own `00-default.conf` in that folder, along with `httpd-ssl.conf` and `laragon.crt`, and the `sites-enabled` folder changed. Its docs don't say whether it ever removes or rewrites a file it didn't make. **Unverified until step 5.**
+- **Laragon does rewrite some files that don't start with `auto.`.** When SSL was turned off and on (2026-11-05, 03:54:45 IST), Laragon rewrote its own `00-default.conf` in that folder, along with `httpd-ssl.conf` and `laragon.crt`, and the `sites-enabled` folder changed. Its docs don't say whether it ever removes or rewrites a file it didn't make. **Verified 2026-11-17 (step 5):** after SSL off and on, then Stop and Start All, Laragon rewrote `00-default.conf`, both `auto.` files and `laragon.crt` (15:39) and left `00-shelfsync-test.test.conf` unchanged (15:11); `check` still connected.
 5. **(you)** **Check that Laragon keeps it.** In Laragon:
    - turn SSL off and on again (**Menu › Apache › SSL › Enabled**, twice);
    - click **Stop**, then **Start All**;
@@ -209,17 +206,42 @@ uv run python -m testenv.laragon keys
 5. **(Claude)** Runs `check` (§3.5).
 
 ### 3.4 The Amazon S3 Storage extension, pointed at the S3 server
-**Unverified:** the extension's screens haven't been seen on this site yet ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). Claude helps with the exact screen when you get there.
-1. **(you)** Download the extension's ZIP from your woocommerce.com account (My Account › Downloads).
-2. **(you)** In wp-admin, go to **Plugins › Add New Plugin › Upload Plugin**, choose the ZIP, click **Install Now**, then **Activate**.
-3. **(you)** Set its provider to **User defined** (S3-compatible), following the vendor's own instructions on its product page (V6: it needs a small snippet the vendor documents). Use these values, the same as section 2:
-   - **Endpoint:** `http://127.0.0.1:47630`
-   - **Region:** `us-east-1`
-   - **Bucket:** `shelfsync-test-stack`
-   - **Access key ID:** `TESTSTACKREADWRITE`
-   - **Secret:** `TestStackSecretReadWrite1`
+**Verified 2026-11-17** with Amazon S3 Storage for WooCommerce 3.5.5 and WooCommerce 11.3.0 ([04-A V6](../04-architecture-appendix/A-stack-verification.md)).
 
-   These are made-up keys: the S3 server checks none. Never type real AWS keys here.
+**How it reaches the S3 server.** The vendor (Kestrel) supports S3-compatible servers only as an experiment: you choose **User defined (experimental)**, and a small code file supplies the address and keys (kestrelwp.com/docs/s3-compatible-providers/). The settings page then has no endpoint or key fields. ShelfSync's file is [`testenv/wordpress/shelfsync-test-s3.php`](../../testenv/wordpress/shelfsync-test-s3.php). It:
+- follows Kestrel's own snippet, which names one of `backblaze`, `digitalocean` or `wasabi`. None of them is the S3 server. In version 3.5.5 the name sets only the provider's label and the experimental flag, so any of the three works; it names `digitalocean`, an arbitrary pick ([11](../11-decisions.md) 2026-11-17);
+- points it at the S3 server (section 1): endpoint `http://127.0.0.1:47630`, region `us-east-1`, the made-up keys `TESTSTACKREADWRITE` / `TestStackSecretReadWrite1`;
+- puts the bucket in the path (`use_path_style_endpoint`), because the server answers only `Host: 127.0.0.1:<port>`;
+- does nothing on any site other than `shelfsync-test.test`;
+- assumes the S3 server's defaults (port 47630, region `us-east-1`, bucket `shelfsync-test-stack`). If you started the server with other options (section 1), tell Claude first.
+
+It goes in as a **must-use plugin**: WordPress loads every file in `wp-content\mu-plugins` by itself, so nothing else needs installing.
+
+1. **(you)** Download the extension's ZIP from your woocommerce.com account (**My Account › Downloads**).
+2. **(you)** In wp-admin, go to **Plugins › Add New Plugin › Upload Plugin**, choose the ZIP, click **Install Now**, then **Activate**.
+3. **(you)** Go to **WooCommerce › S3 storage**, set **Cloud service provider** to **User defined (experimental)**, and click **Save**. The endpoint and key fields disappear; that's expected.
+4. **(you)** In Windows PowerShell (top of §3), make the site's must-use plugins folder:
+
+```powershell
+New-Item -ItemType Directory -Force "C:\laragon\www\shelfsync-test\wp-content\mu-plugins"
+```
+
+5. **(you)** Copy the file in:
+
+```powershell
+Copy-Item "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\testenv\wordpress\shelfsync-test-s3.php" "C:\laragon\www\shelfsync-test\wp-content\mu-plugins\"
+```
+
+6. **(you)** Start the S3 server now if it isn't running (section 1; it's also §3.5 step 1), then reload **WooCommerce › S3 storage**:
+   - In the **Shortcode offloading** section (not **Automatic offloading**, which has its own "S3 bucket"), under **Default bucket** ("The default bucket to use when creating a new S3 shortcode"), choose `shelfsync-test-stack`. **This one matters:** every sample's download is `[amazon_s3 object="…"]` with no bucket, like the real stores' links, so the extension takes the bucket from this setting. Left empty, a download says "No file defined" (2026-11-17).
+   - Leave the automatic offloading **Enable** box unticked.
+   - Click **Save**.
+
+   If no bucket is listed, the S3 server isn't running or the file isn't in `mu-plugins`: tell Claude what the page says.
+
+   **The extension remembers its bucket list for 30 days, an empty one too** (read in its 3.5.5 source, 04-A V6). A download tried while the S3 server is stopped can leave every later download saying "No file defined" after the server is back. Opening **WooCommerce › S3 storage** once refreshes the list.
+
+Never type real AWS keys on this site. **After the file in the repo changes,** copy it again (step 5).
 
 ### 3.5 Start the S3 server, add the sample products, check
 1. **(you)** Start the S3 server in its own PowerShell window (section 1) and leave it running.
@@ -243,7 +265,7 @@ uv run python -m testenv.laragon seed
 uv run python -m testenv.laragon check
 ```
 
-   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 10 downloadable products." Settings counts every status except trash (draft, pending and private included), so: aurora, pixel-forms, northwind, harbor, quiet-cache, tidewater-seo, mosaic-gallery, mosaic-gallery-bundle, emberline and lantern. The variable product (its files are on its variations), the service and the trashed one aren't counted. **Unverified** until it runs.
+   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 10 downloadable products." Settings counts every status except trash (draft, pending and private included), so: aurora, pixel-forms, northwind, harbor, quiet-cache, tidewater-seo, mosaic-gallery, mosaic-gallery-bundle, emberline and lantern. The variable product (its files are on its variations), the service and the trashed one aren't counted. **Verified 2026-11-17:** "Connected in 1,306 ms. WooCommerce 11.3.0, 10 downloadable products."; `seed` created 13, and a second run left all 13 unchanged.
 
 **The samples** (the full table is in [runs/m2.8](../runs/m2.8-laragon-test-stack.md) §3):
 - simple themes and plugins, and one product with two downloads;
@@ -256,7 +278,7 @@ uv run python -m testenv.laragon check
 Each download is a tiny ZIP holding only a made-up theme or plugin header.
 
 ### 3.6 Try one download (V6)
-**Unverified:** these steps test whether the extension can serve a file from the S3 server ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). That's the point of trying them.
+These steps test whether the extension can serve a file from the S3 server ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). **Verified 2026-11-17:** `aurora-2.4.1.zip` downloaded (after the Default bucket fix in §3.4 step 6).
 1. **(you)** Keep the S3 server running, with `seed` run since its last start.
 2. **(you)** In wp-admin, go to **WooCommerce › Orders › Add order**:
    - Customer: yourself;
@@ -264,10 +286,11 @@ Each download is a tiny ZIP holding only a made-up theme or plugin header.
    - Status: **Completed**;
    - click **Create**.
 
-   Nothing is charged or sent: the site is on this PC only.
+   Nothing is charged: the site is on this PC only. WooCommerce's log records its order emails as "sent"; where Laragon's mail setup takes them wasn't checked (2026-11-17).
 3. **(you)** Open `http://shelfsync-test.test/my-account/downloads/` and click the Aurora download.
 4. **(you)** Note the result and tell Claude:
    - **Expected:** `aurora-2.4.1.zip` downloads, and the S3 server's window shows a `GET /shelfsync-test-stack/productrepo/aurora-2.4.1.zip` line with 200.
+   - **"No file defined":** check the Default bucket (§3.4 step 6). If it's set, start the S3 server if it isn't running, open **WooCommerce › S3 storage** once (that refreshes the extension's remembered bucket list), then try again.
    - **Anything else:** what the browser shows, and the server window's last lines.
 
 ### 3.7 Stop and reset
@@ -286,3 +309,4 @@ uv run python -m testenv.laragon keys --remove
 ```
 
 - **Undo the certificate (you):** see the end of §3.2.
+- **Remove the S3 server file (you):** delete `C:\laragon\www\shelfsync-test\wp-content\mu-plugins\shelfsync-test-s3.php`. The extension then has no address or keys for the S3 server. Then, in **WooCommerce › S3 storage**, set **Cloud service provider** back to Amazon's own choice (the first in the list) and click **Save**, or deactivate the extension (**Plugins**).

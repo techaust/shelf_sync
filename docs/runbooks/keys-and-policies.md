@@ -15,7 +15,7 @@ Do this once per store, signed in to that store's WordPress admin.
 2. **Make the key for that user:** **WooCommerce › Settings › Advanced › REST API › Add key**.
    - Description: `ShelfSync`.
    - User: the `shelfsync` user from step 1.
-   - Permissions: **Read/Write** (ShelfSync only reads until M5, when it starts updating downloads).
+   - Permissions: **Read** until M5 (ShelfSync only reads until then). At M5, when it starts updating downloads, make a **Read/Write** key and revoke the Read one ([key-rotation.md](key-rotation.md) A; owner, 2026-11-17, [11](../11-decisions.md)).
    - Click **Generate API key**.
 3. WooCommerce shows the **Consumer key** (`ck_…`) and **Consumer secret** (`cs_…`) **once**. Leave that page open.
 4. In ShelfSync, **Settings › Stores**:
