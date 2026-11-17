@@ -197,6 +197,15 @@ Safety is clean and nothing built is wrong, but the records can't yet separate w
 
 ## 4. Review
 
+### Review 1, reviewer (Opus 5.5 high): SEND BACK
+1 high, 1 medium, 4 low; the security review found nothing. Pasted by the builder from the lead's message, one line per finding with the lead's decision:
+1. High: `ended` mislabels plain read timeouts after a bound. httpx's read timeout restarts on every socket read, so a body that trickles and then stalls near the end of an attempt fails `read_seconds` after its last byte, past the deadline, and `_ended` names the bound. Reviewer's probes: read 30 s, bound 120 s, a chunk every 10 s to 110 s, then a stall: `attempt_bound`, took 140,000 ms; `--read-seconds 90`, trickle to 40 s, then a stall: `attempt_bound`, took 130,000 ms. **Lead:** label a bound only when the timeout fired within `BOUND_SLACK_SECONDS` of that deadline (the httpx timeout was cut short by it), or when WooClient's own between-chunks deadline check fired (a `timeout` whose `Wire.error` is None); otherwise `read_timeout`. No further `woocommerce.py` change. Word the Settings line truthfully ("120 s for one request, plus up to the read timeout after its last byte"). Tests for both probe cases and the same case at the store bound.
+2. Medium: Ctrl+C or an exception loses every timing summary. **Lead:** print each store's timing lines straight after its store lines; on `KeyboardInterrupt` print the attempts gathered so far for the store being read (summary lines; the trace lines are already printed as they happen). Test both.
+3. Low: timeouts from the reader's own bound checks (`_pause`, the deadline check before a request) never reach `observe`. **Lead:** one summary word saying the read ended between requests at the store's bound (the `CatalogRead` reason next to the counts), with a test.
+4. Low: trace times have no zone name. **Lead:** print the zone once on the Settings line (`astimezone().tzname()`), per CLAUDE.md.
+5. Low: `_read_one` builds the transport before `WooClient` checks its arguments. **Lead:** close the transport when construction fails, with a test.
+6. Low, cleanups. **Lead:** remove `FactsTransport.seen()` if only tests use it; make `Attempt.facts` and `what` derived where they repeat `wire.facts` and `page`, if that stays simple; share one `Content-Length` parsing helper between `_declared` and WooClient's cap check (`woocommerce.py` only calls the shared helper; behaviour unchanged, tested).
+
 ## 5. Integration notes
 
 ## 6. Handover
