@@ -4,7 +4,8 @@ starts it with `python -m tests.report_harness <report arguments>`, `SHELFSYNC_D
 Fresh process: the report's logging set-up (its console handler, the quiet HTTP loggers) is seen as it is on the owner's
 PC, with nothing a test session left behind. No socket is opened: every store is an httpx.MockTransport (RFC 2606
 hosts). The products carry marker text (slugs, titles, file names, and the 01-A near-miss slugs) the parent checks
-never reaches the output."""
+never reaches the output; so do the answers' headers (cookies, `cf-ray`, server, cache) and the trace events' `info`
+(the request, its address with a key in the query, and its `Authorization`), for `--trace` (t9)."""
 
 import sys
 from typing import Any
@@ -50,6 +51,51 @@ def pw_rows() -> list[dict[str, Any]]:
     return rows
 
 
+# What a store's answer may carry that L1 must never print (t9): cookie values and a hashed WordPress cookie name, a
+# `cf-ray` value, a server and cache text, and origin-hint values. Each holds the marker.
+LEAKY_HEADERS = [
+    ("Set-Cookie", f"__cf_bm={MARK}-cookie-value; path=/; HttpOnly"),
+    ("Set-Cookie", f"wordpress_logged_in_{MARK}hash={MARK}-session; path=/"),
+    ("Set-Cookie", f"{MARK}_unlisted=1; path=/"),
+    ("CF-RAY", f"{MARK}-ray-LHR"),
+    ("Server", f"{MARK}-server/1.0"),
+    ("CF-Cache-Status", f"{MARK}-cache"),
+    ("X-Cache", f"HIT from {MARK}.example"),
+]
+TRACE_EVENTS = (
+    "connection.connect_tcp.started",
+    "connection.connect_tcp.complete",
+    "http11.send_request_headers.started",
+    "http11.send_request_headers.complete",
+    "http11.receive_response_headers.started",
+    "http11.receive_response_headers.complete",
+    "http11.receive_response_body.started",
+    "http11.receive_response_body.complete",
+)
+
+
+def traced(sites: Sites) -> httpx.MockTransport:
+    """The fake stores behind httpcore-named trace events whose `info` holds what httpcore's does (the request, with
+    its address and `Authorization`), plus an address with a key in its query; every answer gets `LEAKY_HEADERS`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        trace = request.extensions.get("trace")
+        info = {
+            "request": request,
+            "url": f"{request.url}?consumer_key={KEY}&consumer_secret={SECRET}",
+            "authorization": request.headers.get("Authorization", ""),
+        }
+        if trace is not None:
+            for name in TRACE_EVENTS:
+                trace(name, info)
+        response = sites(request)
+        return httpx.Response(
+            response.status_code, headers=[*response.headers.multi_items(), *LEAKY_HEADERS], stream=response.stream
+        )
+
+    return httpx.MockTransport(handler)
+
+
 def main() -> int:
     ids = {store.code: store.id for store in report.read_stores(resolve_data_paths().database)}
     secrets = MemorySecretStore()
@@ -60,7 +106,7 @@ def main() -> int:
     return report.main(
         sys.argv[1:],
         secrets_factory=lambda: secrets,
-        transport_factory=lambda store: httpx.MockTransport(sites),
+        transport_factory=lambda store: traced(sites),
         confirm=lambda prompt: "",
         make_stop=lambda: clock,
         monotonic=clock.monotonic,

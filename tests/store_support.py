@@ -2,7 +2,7 @@
 names only), a fake clock, a secret store that can be made to fail, and an app wired to them."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +55,26 @@ def unread(response: httpx.Response) -> httpx.Response:
     except httpx.ResponseNotRead:
         return response  # built from a stream already
     return httpx.Response(response.status_code, headers=response.headers, stream=httpx.ByteStream(body))
+
+
+class StallingStream(httpx.SyncByteStream):
+    """A body whose headers have arrived that sends `chunks`, then stalls: httpx raises `ReadTimeout` when no byte
+    comes within the read timeout. `before_chunk` runs before each chunk is sent (a test moves its clock there)."""
+
+    def __init__(self, chunks: list[bytes], before_chunk: Callable[[], None] | None = None) -> None:
+        self.chunks = chunks
+        self.before_chunk = before_chunk
+
+    def __iter__(self) -> Iterator[bytes]:
+        for chunk in self.chunks:
+            if self.before_chunk is not None:
+                self.before_chunk()
+            yield chunk
+        raise httpx.ReadTimeout("no byte came within the read timeout")
+
+
+def stalling(status: int, chunks: list[bytes], headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(status, headers=headers or {}, stream=StallingStream(chunks))
 
 
 class FakeTime:

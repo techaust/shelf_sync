@@ -42,6 +42,8 @@ MAX_BODY_BYTES = 1024 * 1024
 TOTAL_SECONDS = 60.0
 CONNECT_SECONDS = 10.0
 READ_SECONDS = 30.0
+# L1 only (t9, the lead's decision): `WooClient(read_seconds=)` accepts 30 to 120 s; every app caller keeps 30.
+READ_SECONDS_RANGE = (30.0, 120.0)
 MIN_WC_VERSION = (5, 8)
 SYSTEM_STATUS_PATH = "/wp-json/wc/v3/system_status"
 PRODUCTS_PATH = "/wp-json/wc/v3/products"
@@ -76,13 +78,27 @@ def health_for(reason: str | None) -> str:
 
 class ReadRefused(Exception):
     """A request stopped before there was a usable answer. `reason` is one of the fixed reasons, `detail` the host
-    a redirect named (a host name only). The message never holds a URL, key or body."""
+    a redirect named (a host name only). The message never holds a URL, key or body.
 
-    def __init__(self, reason: str, detail: str | None = None, status: int | None = None) -> None:
+    For a `timeout`, `headers_status` is the status of an answer whose headers had arrived before the body stalled
+    (None: nothing came at all), and `received` the body bytes read before it ended. They are for the L1 trace only
+    (t9): `status` stays None for a timeout, so Test connection and the catalog reader read one exactly as before."""
+
+    def __init__(
+        self,
+        reason: str,
+        detail: str | None = None,
+        status: int | None = None,
+        *,
+        headers_status: int | None = None,
+        received: int = 0,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.detail = detail
         self.status = status  # the HTTP status, when an answer arrived (a redirect)
+        self.headers_status = headers_status
+        self.received = received
 
 
 class NonGetRefused(Exception):
@@ -131,6 +147,20 @@ def _is_tls_error(error: BaseException) -> bool:
     return False
 
 
+# A `Content-Length` longer than 18 digits reads as this: more than any cap, never converted whole.
+DECLARED_MAX = 10**18
+
+
+def declared_length(value: str | None) -> int | None:
+    """A `Content-Length` as a number: plain ASCII digits only, else None (absent, as for a chunked answer, or
+    anything else). One longer than 18 digits reads as `DECLARED_MAX`, still more than any body cap, so a hostile
+    value is never converted whole (Python refuses to convert one over 4,300 digits). `WooClient.get`'s cap check and
+    L1's `Wire.declared_bytes` both use it (t9 review 1)."""
+    if value is None or not (value.isascii() and value.isdigit()):
+        return None
+    return int(value) if len(value) <= 18 else DECLARED_MAX
+
+
 def _redirect_host(location: str | None) -> str | None:
     """The host a redirect points at, lowercased, or None. A relative target stays on the store's own host; one that
     can't be parsed (httpx raises `InvalidURL`, and the IDNA codec a `ValueError` subclass, `idna.IDNAError`) names
@@ -153,7 +183,8 @@ def _refuse_redirect(response: httpx.Response) -> None:
 
 
 class WooClient:
-    """GET requests to one store. `transport` is for tests (httpx.MockTransport)."""
+    """GET requests to one store. `transport` is for tests (httpx.MockTransport) and for L1's `FactsTransport`.
+    `read_seconds` (30 to 120) is the read timeout: 30 for the app, which never sets it; L1's `--read-seconds` only."""
 
     def __init__(
         self,
@@ -163,12 +194,16 @@ class WooClient:
         *,
         transport: httpx.BaseTransport | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        read_seconds: float = READ_SECONDS,
     ) -> None:
         url = httpx.URL(base_url)
         if url.scheme != "https" or not url.host:
             raise ValueError("a store address must be https")
+        if not READ_SECONDS_RANGE[0] <= read_seconds <= READ_SECONDS_RANGE[1]:
+            raise ValueError("read_seconds must be 30 to 120")
         self._base = base_url.rstrip("/")
         self._monotonic = monotonic
+        self._read_seconds = read_seconds
         self._client = httpx.Client(
             transport=GetOnlyTransport(transport if transport is not None else httpx.HTTPTransport()),
             auth=httpx.BasicAuth(consumer_key, consumer_secret),
@@ -198,17 +233,21 @@ class WooClient:
         `max_bytes` is the most of the answer's body that is read (1 MiB unless the caller asks for another cap).
         Raises `ReadRefused` for a transport failure, a timeout, a redirect and an over-long body. A redirect status
         (301, 302, 303, 307, 308) is refused in the response hook `_refuse_redirect`, before httpx reads `Location`;
-        that `ReadRefused` comes out of `stream` as it was raised."""
+        that `ReadRefused` comes out of `stream` as it was raised. A timeout after the answer's headers arrived carries
+        their status and the body bytes read so far (`headers_status`, `received`; nothing else changes)."""
         if any(name.lower().startswith("consumer_") or "key" in name.lower() for name in params):
             raise ValueError("credentials never go in a query string")
         remaining = deadline - self._monotonic()
         if remaining <= 0:
             raise ReadRefused("timeout")
-        timeout = httpx.Timeout(min(READ_SECONDS, remaining), connect=min(CONNECT_SECONDS, remaining))
+        timeout = httpx.Timeout(min(self._read_seconds, remaining), connect=min(CONNECT_SECONDS, remaining))
+        answered: int | None = None  # the status, once the answer's headers have arrived
+        size = 0
         try:
             with self._client.stream("GET", self._base + path, params=params, timeout=timeout) as response:
-                declared = response.headers.get("content-length", "")
-                if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
+                answered = response.status_code
+                declared = declared_length(response.headers.get("content-length"))
+                if declared is not None and declared > max_bytes:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
                 encoding = response.headers.get("content-encoding", "identity").strip().lower()
                 if encoding not in ("", "identity"):
@@ -218,17 +257,16 @@ class WooClient:
                         return WooResponse(response.status_code, response.headers, b"")
                     raise ReadRefused("bad_response")
                 parts: list[bytes] = []
-                size = 0
                 for chunk in response.iter_raw():
                     parts.append(chunk)
                     size += len(chunk)
                     if size > max_bytes:
                         raise ReadRefused("bad_response")
                     if self._monotonic() > deadline:
-                        raise ReadRefused("timeout")
+                        raise ReadRefused("timeout", headers_status=answered, received=size)
                 return WooResponse(response.status_code, response.headers, b"".join(parts))
         except httpx.TimeoutException:
-            raise ReadRefused("timeout") from None
+            raise ReadRefused("timeout", headers_status=answered, received=size) from None
         except httpx.DecodingError:  # not expected (`iter_raw` decodes nothing); a sibling of TransportError
             raise ReadRefused("bad_response") from None
         except httpx.TransportError as error:

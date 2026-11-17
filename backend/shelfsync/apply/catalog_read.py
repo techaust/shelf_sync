@@ -31,6 +31,21 @@ Rules this module keeps:
 - **Stop:** the read stops between requests and during every wait when asked (`stopped`).
 - **Logs:** one line per store per read: its code, the outcome, pages, rows, the HTTP status of the last failure, and
   for `bad_response` the field and page. Never an address, key, cookie, query string, header or body.
+
+For the L1 dry read only (t9, to tell why a store stalls; the app's runner never sets any of these, and with their
+defaults nothing changes: the same requests, the same results):
+- **`observe`** is called once per attempt (the first try and each retry) with an `Attempt`: what was asked (and the
+  page), the attempt number, the outcome (`ok`, `past_the_end` or the fixed reason), the HTTP status, the time it took
+  and the wait before it, the body bytes, whether the answer's headers had arrived, for a timeout which limit ended
+  it, and the `Wire` when `facts` is given.
+- **`facts`**, a `FactsTransport`, is the transport the caller builds its `WooClient` on. `WooClient` wraps it in
+  `GetOnlyTransport`, so it sees each answer's headers **before** `GetOnlyTransport` drops `Set-Cookie`: it keeps only
+  fixed words from them (`response_facts`), never a value. It also times the request's stages through httpcore's
+  `trace` extension (the event names only, never their `info`) and counts and times the body as it comes (`Wire`).
+  The cookie drop stays as it is, so no cookie is kept, parsed or sent back.
+- **`meta=False`** asks for the products without `meta_data` (no `latest_version` data, no error); **`per_page`**
+  (25 to 100) and **`max_pages`** (at most 4,000 rows in all, as with 40 pages of 100) change the listing's pages.
+- **`attempt_seconds`** bounds one attempt (the store's bound still holds): `client.get` gets the earlier of the two.
 """
 
 import html
@@ -38,8 +53,8 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from itertools import pairwise
@@ -59,6 +74,7 @@ from shelfsync.apply.woocommerce import (
     _json,
     _version_tuple,
     classify,
+    declared_length,
 )
 from shelfsync.catalog.model import (
     DOWNLOAD_FILE_MAX,
@@ -92,6 +108,9 @@ RETRY_AFTER_MAX_SECONDS = 60.0
 STORE_SECONDS = 600.0  # one store's whole read
 FAILURES_TO_PAUSE = 10
 LISTING_FIELDS = "id,slug,name,type,status,date_modified_gmt,downloads,meta_data"
+LISTING_FIELDS_NO_META = "id,slug,name,type,status,date_modified_gmt,downloads"  # L1's `meta=False` only
+PER_PAGE_MIN = 25  # L1's smallest page (`per_page`)
+MAX_ROWS = MAX_PAGES * PER_PAGE  # what `max_pages` times `per_page` may reach (L1 only; the app keeps 40 of 100)
 SYSTEM_STATUS_PARAMS = {"_fields": "environment"}  # the first request's query (also what L1 shows)
 WC_ID_MAX = 2**63 - 1
 
@@ -106,17 +125,376 @@ _GMT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 _COUNT = re.compile(r"[0-9]{1,9}")
 
 
-def listing_params(page: int) -> dict[str, str]:
-    """The query of one products page (contract-tested)."""
+def listing_params(page: int, *, per_page: int = PER_PAGE, meta: bool = True) -> dict[str, str]:
+    """The query of one products page (contract-tested). `per_page` and `meta` are L1's options; the app keeps the
+    defaults."""
     return {
         "downloadable": "true",
         "status": "any",
         "orderby": "id",
         "order": "asc",
-        "per_page": str(PER_PAGE),
+        "per_page": str(per_page),
         "page": str(page),
-        "_fields": LISTING_FIELDS,
+        "_fields": LISTING_FIELDS if meta else LISTING_FIELDS_NO_META,
     }
+
+
+# ---- L1's diagnostics (t9): fixed words and numbers about each answer and each attempt, never a value --------------
+
+SERVER_WORDS = ("cloudflare", "nginx", "apache", "litespeed", "openresty")  # else `other`, or `none` when absent
+CACHE_WORDS = ("hit", "miss", "dynamic", "bypass", "expired")  # `cf-cache-status`; else `other`, or `none`
+CONTENT_WORDS = ("json", "html")  # `content-type`; else `other`, or `none`
+COOKIE_WORDS = (
+    "__cf_bm",
+    "cf_clearance",
+    "_cfuvid",
+    "PHPSESSID",
+    "wordpress_logged_in",
+    "wordpress_sec",
+    "wp-settings",
+)
+# Origin hints: only whether each of these header names is there, never its value.
+HINT_HEADERS = (
+    "x-litespeed-cache",
+    "x-turbo-charged-by",
+    "x-sucuri-id",
+    "x-sucuri-cache",
+    "x-cache",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+)
+# WordPress names these with a suffix (`wordpress_logged_in_<hash of the site address>`, `wp-settings-1`,
+# `wp-settings-time-1`): the family's word is kept, never the suffix (it would identify the store).
+_COOKIE_FAMILIES = (("wordpress_logged_in", "_"), ("wordpress_sec", "_"), ("wp-settings", "-"))
+_COOKIE_EXACT = frozenset({"__cf_bm", "cf_clearance", "_cfuvid", "PHPSESSID"})
+_SERVER_TOKEN = re.compile(r"[^/\s(,;]*")
+
+STAGES = ("connect", "tls", "send", "headers", "body", "done")
+# httpcore's trace events (`<prefix>.<name>.started|complete|failed`; httpcore 1.0.9 `_trace.py`,
+# `_sync/connection.py`, `_sync/http11.py`): the name decides the stage, and nothing else of the event is kept.
+_TRACE_STAGES = {
+    "connection.connect_tcp": "connect",
+    "connection.start_tls": "tls",
+    "http11.send_request_headers": "send",
+    "http11.send_request_body": "send",
+    "http11.receive_response_headers": "headers",
+    "http11.receive_response_body": "body",
+}
+_TRACE_PHASES = frozenset({"started", "complete", "failed"})
+_ERROR_CLASSES: tuple[tuple[type[Exception], str], ...] = (
+    (httpx.ConnectTimeout, "connect_timeout"),
+    (httpx.ReadTimeout, "read_timeout"),
+    (httpx.WriteTimeout, "write_timeout"),
+    (httpx.PoolTimeout, "pool_timeout"),
+    (httpx.ConnectError, "connect_error"),
+    (httpx.ReadError, "read_error"),
+    (httpx.ProtocolError, "protocol_error"),
+)
+ERROR_WORDS = (*(word for _, word in _ERROR_CLASSES), "other")
+TIMEOUT_WORDS = ("connect_timeout", "read_timeout", "write_timeout", "pool_timeout")  # httpx's own timeouts
+# What ended a timed-out attempt (`_Session._ended`): httpx's own timeout, by its word, or a bound.
+ENDED_WORDS = (*TIMEOUT_WORDS, "attempt_bound", "store_bound")
+
+
+def ms_between(later: float, earlier: float) -> int:
+    """Whole milliseconds from `earlier` to `later` (two readings of one monotonic clock), never below 0."""
+    return max(0, round((later - earlier) * 1000))
+
+
+@dataclass(frozen=True)
+class ResponseFacts:
+    """What one answer's headers say, in fixed words only: `cf-ray` present, the `server` header's product
+    (`SERVER_WORDS`, `other` or `none`), `cf-cache-status` (`CACHE_WORDS`, `other` or `none`), the names of the
+    cookies the store set that are in `COOKIE_WORDS` (each once, in that order), how many others it set, the
+    `content-type` (`CONTENT_WORDS`, `other` or `none`), whether `cf-mitigated` and `retry-after` are there, and which
+    of `HINT_HEADERS` are there (in that order)."""
+
+    cf_ray: bool
+    server: str
+    cache: str
+    cookies: tuple[str, ...]
+    other_cookies: int
+    content: str = "none"
+    cf_mitigated: bool = False
+    retry_after: bool = False
+    hints: tuple[str, ...] = ()
+
+
+def _word_of(value: str | None, words: tuple[str, ...]) -> str:
+    if value is None:
+        return "none"
+    word = value.strip().lower()
+    return word if word in words else "other"
+
+
+def _cookie_word(header: str) -> str | None:
+    """The allowlisted word for one `Set-Cookie` header's cookie name, or None (an unlisted name, or no name)."""
+    name, equals, _ = header.partition("=")
+    name = name.strip()
+    if not equals:
+        return None
+    if name in _COOKIE_EXACT:
+        return name
+    for family, joiner in _COOKIE_FAMILIES:
+        if name == family or name.startswith(family + joiner):
+            return family
+    return None
+
+
+def _content_word(value: str | None) -> str:
+    """`json` for `application/json` or an `application/…+json` type, `html` for `text/html`, else `other` (`none`:
+    no header)."""
+    if value is None:
+        return "none"
+    media = value.partition(";")[0].strip().lower()
+    if media == "application/json" or (media.startswith("application/") and media.endswith("+json")):
+        return "json"
+    return "html" if media == "text/html" else "other"
+
+
+def response_facts(headers: httpx.Headers) -> ResponseFacts:
+    """The facts of one answer's headers, `Set-Cookie` and `Set-Cookie2` included (so this must see them before
+    `GetOnlyTransport` drops them). Nothing from a header is kept but a fixed word, a yes or no, or a count."""
+    server = headers.get("server")
+    token = _SERVER_TOKEN.match(server.strip().lower()) if server is not None else None
+    found: set[str] = set()
+    others = 0
+    for header in (*headers.get_list("set-cookie"), *headers.get_list("set-cookie2")):
+        word = _cookie_word(header)
+        if word is None:
+            others += 1
+        else:
+            found.add(word)
+    return ResponseFacts(
+        cf_ray="cf-ray" in headers,
+        server=_word_of(token.group() if token is not None else None, SERVER_WORDS),
+        cache=_word_of(headers.get("cf-cache-status"), CACHE_WORDS),
+        cookies=tuple(word for word in COOKIE_WORDS if word in found),
+        other_cookies=others,
+        content=_content_word(headers.get("content-type")),
+        cf_mitigated="cf-mitigated" in headers,
+        retry_after="retry-after" in headers,
+        hints=tuple(name for name in HINT_HEADERS if name in headers),
+    )
+
+
+def error_word(error: BaseException) -> str:
+    """The fixed word for the exception that ended a request (`ERROR_WORDS`), from its class only."""
+    for kind, word in _ERROR_CLASSES:
+        if isinstance(error, kind):
+            return word
+    return "other"
+
+
+@dataclass(frozen=True)
+class Wire:
+    """What `FactsTransport` saw of one request, numbers and fixed words only. `facts` is None when no answer's
+    headers arrived. `stage` is the last stage httpcore started (or the one that failed; `done` once the body was read
+    to its end), from `STAGES`, None when no trace event came (a test transport). `new_connection`: a TCP connection
+    was opened for it (else a kept-alive one was used, or no trace event came). The times are milliseconds from the
+    request's start: `headers_ms` when the headers were in, `first_byte_ms` the first body byte, `longest_gap_ms` the
+    longest wait for the body after its first byte (between two chunks, or from the last chunk to the body's end or
+    failure). `received` is every body byte that came, even on a connection that then dropped; `declared_bytes` the
+    `Content-Length`; `error` the `ERROR_WORDS` word of the exception that ended it, if one did."""
+
+    facts: ResponseFacts | None = None
+    stage: str | None = None
+    new_connection: bool = False
+    headers_ms: int | None = None
+    first_byte_ms: int | None = None
+    longest_gap_ms: int | None = None
+    received: int = 0
+    declared_bytes: int | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class InFlight:
+    """The request in flight when a read was stopped (Ctrl+C): its `Wire` so far, how long it had run, and the
+    silence still open (`quiet_ms` since `quiet_since`: `last byte`, `headers` or `request start`)."""
+
+    wire: Wire
+    so_far_ms: int
+    quiet_ms: int
+    quiet_since: str
+
+
+class _WireRecorder:
+    """One request's `Wire`, built as it goes. `trace` is httpcore's `trace` extension callback: it keeps the event's
+    name, through `_TRACE_STAGES` only, and the time; its `info` (which holds the request, with its address and
+    `Authorization`) is never looked at or kept."""
+
+    def __init__(self, monotonic: Callable[[], float]) -> None:
+        self._monotonic = monotonic
+        self._started = monotonic()
+        self._last_byte: float | None = None
+        self.wire = Wire()
+
+    def _ms(self, moment: float) -> int:
+        return ms_between(moment, self._started)
+
+    def in_flight(self) -> InFlight:
+        """This request as it stands (Ctrl+C mid-request): its `Wire`, how long it has run, and the silence still
+        open, measured on this recorder's clock since the last body byte, else since the headers, else since the
+        request started (`KeyboardInterrupt` isn't an `Exception`, so `body_ended` never measured it)."""
+        moment = self._monotonic()
+        so_far = ms_between(moment, self._started)
+        if self._last_byte is not None:
+            return InFlight(self.wire, so_far, ms_between(moment, self._last_byte), "last byte")
+        if self.wire.headers_ms is not None:
+            return InFlight(self.wire, so_far, max(0, so_far - self.wire.headers_ms), "headers")
+        return InFlight(self.wire, so_far, so_far, "request start")
+
+    def trace(self, name: str, info: object) -> None:  # `info` is never read: it holds the request
+        base, _, phase = name.rpartition(".")
+        stage = _TRACE_STAGES.get(base)
+        if stage is None or phase not in _TRACE_PHASES:
+            return
+        if phase != "complete":
+            self.wire = replace(self.wire, stage=stage)
+            if base == "connection.connect_tcp" and phase == "started":
+                self.wire = replace(self.wire, new_connection=True)
+        elif stage == "headers":
+            self.wire = replace(self.wire, headers_ms=self._ms(self._monotonic()))
+        elif stage == "body":
+            self.wire = replace(self.wire, stage="done")
+
+    def answered(self, headers: httpx.Headers) -> None:
+        """The headers are in (`handle_request` returned): their facts, the declared length, and their time when no
+        trace event gave it."""
+        headers_ms = self.wire.headers_ms
+        self.wire = replace(
+            self.wire,
+            facts=response_facts(headers),
+            declared_bytes=declared_length(headers.get("content-length")),
+            headers_ms=headers_ms if headers_ms is not None else self._ms(self._monotonic()),
+        )
+
+    def failed(self, error: Exception) -> None:
+        self.wire = replace(self.wire, error=error_word(error))
+
+    def chunk(self, size: int) -> None:
+        if size <= 0:
+            return
+        moment = self._monotonic()
+        if self._last_byte is None:
+            self.wire = replace(self.wire, first_byte_ms=self._ms(moment))
+        else:
+            self._gap(self._last_byte, moment)
+        self._last_byte = moment
+        self.wire = replace(self.wire, received=self.wire.received + size)
+
+    def body_ended(self, error: Exception | None) -> None:
+        if self._last_byte is not None:
+            self._gap(self._last_byte, self._monotonic())
+        if error is not None:
+            self.failed(error)
+
+    def _gap(self, since: float, moment: float) -> None:
+        gap = ms_between(moment, since)
+        if self.wire.longest_gap_ms is None or gap > self.wire.longest_gap_ms:
+            self.wire = replace(self.wire, longest_gap_ms=gap)
+
+
+class _CountingStream(httpx.SyncByteStream):
+    """The answer's body, passed on chunk by chunk as it is, counted and timed for its `Wire`."""
+
+    def __init__(self, inner: httpx.SyncByteStream, recorder: _WireRecorder) -> None:
+        self._inner = inner
+        self._recorder = recorder
+
+    def __iter__(self) -> Iterator[bytes]:
+        try:
+            for chunk in self._inner:
+                self._recorder.chunk(len(chunk))
+                yield chunk
+        except Exception as error:
+            self._recorder.body_ended(error)
+            raise
+        self._recorder.body_ended(None)
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class FactsTransport(httpx.BaseTransport):
+    """L1's transport (t9): the caller builds its `WooClient` on it, and `WooClient` wraps it in `GetOnlyTransport`
+    (`GetOnlyTransport(FactsTransport(real))`). So each answer comes through here first, with its headers and before
+    `GetOnlyTransport` drops its cookies (httpx 0.28.1 runs `handle_request`, then extracts cookies, then the response
+    hooks). It keeps a `Wire` of each request, fixed words and numbers only, and hands the answer on unchanged but for
+    its body stream, which is wrapped to count and time it (httpx's own client wraps it the same way next,
+    `BoundSyncStream`). It gives the request httpcore's `trace` extension (`_WireRecorder.trace`), and refuses any
+    request but a GET itself (as `GetOnlyTransport` does before it). `take` returns the last request's `Wire`, once."""
+
+    def __init__(self, inner: httpx.BaseTransport, *, monotonic: Callable[[], float] = time.monotonic) -> None:
+        self._inner = inner
+        self._monotonic = monotonic
+        self._recorder: _WireRecorder | None = None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            raise NonGetRefused("only GET requests are sent to a store")
+        recorder = self._recorder = _WireRecorder(self._monotonic)
+        request.extensions["trace"] = recorder.trace
+        try:
+            response = self._inner.handle_request(request)
+        except Exception as error:
+            recorder.failed(error)
+            raise
+        recorder.answered(response.headers)
+        if isinstance(response.stream, httpx.SyncByteStream):
+            response.stream = _CountingStream(response.stream, recorder)
+        return response
+
+    def take(self) -> Wire | None:
+        """The last request's `Wire` (None when no request went through since the last `take`)."""
+        recorder, self._recorder = self._recorder, None
+        return recorder.wire if recorder is not None else None
+
+    def take_in_flight(self) -> InFlight | None:
+        """For a read stopped mid-request (Ctrl+C, review 2 and its re-check): the request in flight as it stands
+        (`_WireRecorder.in_flight`); None when no request was in flight (each finished one was taken by the reader)."""
+        recorder, self._recorder = self._recorder, None
+        return recorder.in_flight() if recorder is not None else None
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One attempt (the first try or a retry), for L1's trace. `page` is the products page (None: `system_status`;
+    `what` names which); `attempt` 1 to 4; `outcome` `ok` (an answer the reader takes), `past_the_end` (a 400 on page
+    2 or later) or the fixed reason; `http_status` when an answer arrived. `headers`: True when the answer's headers
+    arrived, False when nothing came, None when that isn't known (a connection that failed with no `facts`
+    transport). `body_bytes`: the body bytes that came (for a timeout, or with a `facts` transport a dropped
+    connection, what came before it ended), None when not known. `elapsed_ms` is the request alone; `waited_ms` the
+    wait before it (the spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: httpx's own timeout by
+    its word (`connect_timeout`, `read_timeout`, `write_timeout`, `pool_timeout`), or `attempt_bound` or `store_bound`
+    (`_Session._ended`). `wire` when the read has a `FactsTransport`
+    (`facts` is its `Wire.facts`)."""
+
+    page: int | None
+    attempt: int
+    outcome: str
+    http_status: int | None
+    elapsed_ms: int
+    body_bytes: int | None
+    headers: bool | None
+    wire: Wire | None = None
+    waited_ms: int = 0
+    ended: str | None = None
+
+    @property
+    def what(self) -> str:
+        return "system_status" if self.page is None else "products"
+
+    @property
+    def facts(self) -> ResponseFacts | None:
+        return self.wire.facts if self.wire is not None else None
+
+
+Observe = Callable[[Attempt], None]
 
 
 class FailureCount(Protocol):
@@ -229,6 +607,18 @@ def is_retried(reason: str, status: int | None) -> bool:
     return reason in RETRIED_REASONS or (reason == "blocked" and status == 503)
 
 
+@dataclass(frozen=True)
+class _Try:
+    """One attempt as the observer sees it: the products page (None: `system_status`), its number (1 to 4), the wait
+    before it, when it started, and the deadline `client.get` was given."""
+
+    page: int | None
+    number: int
+    waited_ms: int
+    started: float
+    deadline: float
+
+
 class _Session:
     """The requests of one store's read: spacing, retries, the failure count, the time bound and the stop."""
 
@@ -242,6 +632,9 @@ class _Session:
         monotonic: Callable[[], float],
         now: Callable[[], datetime],
         deadline: float,
+        observe: Observe | None = None,
+        facts: FactsTransport | None = None,
+        attempt_seconds: float | None = None,
     ) -> None:
         self._client = client
         self._spacing = spacing_seconds
@@ -250,6 +643,12 @@ class _Session:
         self._monotonic = monotonic
         self._now = now
         self._deadline = deadline
+        self._observe = observe
+        self._facts = facts
+        self._attempt_seconds = attempt_seconds
+        # The client's read timeout, to tell whether a deadline shortened it (`_ended`). Read from the client's own
+        # attribute: `WooClient`'s public surface stays `get` and `close` until M5 (the GET-only contract test).
+        self._read_seconds: float = client._read_seconds
         self._sent = False
         self.requests = 0
         self.last_failure_status: int | None = None
@@ -262,6 +661,80 @@ class _Session:
             raise _End("timeout")  # the wait alone would pass the store's bound
         if self._stop.wait(seconds):
             raise _End("stopped")
+
+    def _note_answer(self, tried: _Try | None, outcome: str, response: WooResponse) -> None:
+        """An answer came (headers and body): hand the attempt to `observe`, when there is one."""
+        if tried is not None and (observe := self._observe) is not None:
+            self._emit(observe, tried, outcome, response.status, len(response.body), True)
+
+    def _note_refused(self, tried: _Try | None, refused: ReadRefused) -> None:
+        """No usable answer: hand the attempt to `observe`, when there is one. A timeout says whether the headers had
+        arrived (`ReadRefused.headers_status`), the bytes read before it ended, and which limit ended it; a redirect,
+        and an over-long or unreadable body (`bad_response`), are refused only once the headers are in; for a failed
+        connection it is known only through the `facts` transport (`_emit`), else None."""
+        if tried is None or (observe := self._observe) is None:
+            return
+        status = refused.status if refused.status is not None else refused.headers_status
+        body_bytes: int | None = None
+        headers: bool | None = None
+        timeout = refused.reason == "timeout"
+        if timeout:
+            headers, body_bytes = refused.headers_status is not None, refused.received
+        elif refused.reason in ("redirected", "bad_response"):
+            headers = True
+        self._emit(observe, tried, refused.reason, status, body_bytes, headers, timeout=timeout)
+
+    def _ended(self, tried: _Try, wire: Wire | None) -> str:
+        """What ended a timed-out attempt (reviews 1 and 2, the lead's decisions), from facts, not the clock's distance
+        to a deadline. `WooClient.get` sets its timeouts once, from the deadline it is given: the read timeout (and the
+        write and pool ones) is `min(read_seconds, remaining)`, the connect one `min(10 s, remaining)`, and httpx
+        applies each per phase. So the deadline is what ended the attempt when:
+        - `WooClient`'s own check between chunks fired (a timeout with no exception behind it: the `Wire` holds no
+          error), or
+        - the deadline shortened the timeout (`deadline - started < read_seconds`) and the error isn't
+          `connect_timeout` (the 10 s connect timeout is its own).
+        It is then `store_bound` when that deadline was the store's, else `attempt_bound`. Otherwise it is httpx's own
+        timeout, by its word (`TIMEOUT_WORDS`; `read_timeout` when there is no `Wire`, or for a timeout httpx didn't
+        name). No slack is needed any more: nothing here compares the clock with the deadline. Without a `facts`
+        transport the first test can't be made, so a trickle caught by `WooClient`'s check reads as `read_timeout`."""
+        which = "store_bound" if tried.deadline >= self._deadline else "attempt_bound"
+        if wire is not None and wire.error is None:
+            return which
+        error = wire.error if wire is not None and wire.error in TIMEOUT_WORDS else "read_timeout"
+        if tried.deadline - tried.started < self._read_seconds and error != "connect_timeout":
+            return which
+        return error
+
+    def _emit(
+        self,
+        observe: Observe,
+        tried: _Try,
+        outcome: str,
+        status: int | None,
+        body_bytes: int | None,
+        headers: bool | None,
+        *,
+        timeout: bool = False,
+    ) -> None:
+        """Build the `Attempt` and hand it on. With a `facts` transport its `Wire` gives the body bytes (every byte
+        that came, a dropped connection's too) and whether headers arrived."""
+        wire = self._facts.take() if self._facts is not None else None
+        if wire is not None:
+            body_bytes, headers = wire.received, wire.facts is not None
+        observe(
+            Attempt(
+                page=tried.page,
+                attempt=tried.number,
+                outcome=outcome,
+                http_status=status,
+                elapsed_ms=ms_between(self._monotonic(), tried.started),
+                body_bytes=body_bytes,
+                headers=headers,
+                wire=wire,
+                waited_ms=tried.waited_ms,
+                ended=self._ended(tried, wire) if timeout else None,
+            )
+        )
 
     def usable(self) -> None:
         """A products page was read and parsed: the failures in a row go back to 0."""
@@ -282,20 +755,22 @@ class _Session:
         params: dict[str, str],
         max_bytes: int,
         *,
-        page: bool = False,
+        page: int | None = None,
         past_the_end: bool = False,
     ) -> WooResponse:
         """One request with its retries. Only a GET is ever sent or retried: any other method is refused here,
-        before anything is sent (and `GetOnlyTransport` refuses one too). With `page`, a 200 is returned as it is (the
-        caller parses it, and a body that isn't a JSON list is its `bad_response`); otherwise a 200 that isn't JSON is
-        `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and later), a 400 is returned as it is
-        too, neither a success nor a failure: WooCommerce's answer to a page past the last one, which the caller
-        treats as the listing having shrunk while it was read (m3.1 review 2; not verified on a store)."""
+        before anything is sent (and `GetOnlyTransport` refuses one too). With `page` (a products page's number), a
+        200 is returned as it is (the caller parses it, and a body that isn't a JSON list is its `bad_response`);
+        otherwise a 200 that isn't JSON is `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and
+        later), a 400 is returned as it is too, neither a success nor a failure: WooCommerce's answer to a page past
+        the last one, which the caller treats as the listing having shrunk while it was read (m3.1 review 2; not
+        verified on a store). Each attempt goes to `observe` when there is one, before anything else is done with it."""
         if method != "GET":
             raise NonGetRefused("only GET requests are sent or retried")
         delay = self._spacing if self._sent else 0.0
         attempt = 0
         while True:
+            before = self._monotonic() if self._observe is not None else 0.0
             self._pause(delay)
             if self._stop.is_set():
                 raise _End("stopped")
@@ -304,15 +779,28 @@ class _Session:
             self._sent = True
             self.requests += 1
             headers: httpx.Headers | None = None
+            # Without an observer or an attempt bound (the app), no clock is read here and `client.get` gets the
+            # store's deadline, as always.
+            timed = self._observe is not None or self._attempt_seconds is not None
+            started = self._monotonic() if timed else 0.0
+            deadline = self._deadline
+            if self._attempt_seconds is not None:
+                deadline = min(deadline, started + self._attempt_seconds)
+            tried = None
+            if self._observe is not None:
+                tried = _Try(page, attempt + 1, ms_between(started, before), started, deadline)
             try:
-                response = self._client.get(path, params, self._deadline, max_bytes=max_bytes)
+                response = self._client.get(path, params, deadline, max_bytes=max_bytes)
             except ReadRefused as refused:
                 reason = refused.reason
                 status = refused.status
+                self._note_refused(tried, refused)
             else:
                 if past_the_end and response.status == 400:
+                    self._note_answer(tried, "past_the_end", response)
                     return response
-                answered = None if page and response.status == 200 else classify(response)
+                answered = None if page is not None and response.status == 200 else classify(response)
+                self._note_answer(tried, answered or "ok", response)
                 if answered is None:
                     return response  # the caller resets the count once the answer proved usable
                 reason, status, headers = answered, response.status, response.headers
@@ -338,8 +826,20 @@ def read_catalog(
     store_seconds: float = STORE_SECONDS,
     page_max_bytes: int = PAGE_MAX_BYTES,
     listing_max_bytes: int = LISTING_MAX_BYTES,
+    observe: Observe | None = None,
+    facts: FactsTransport | None = None,
+    meta: bool = True,
+    per_page: int = PER_PAGE,
+    max_pages: int = MAX_PAGES,
+    attempt_seconds: float | None = None,
 ) -> CatalogRead:
-    """Read one store's catalog (the module text says how). Never raises for anything the store answers."""
+    """Read one store's catalog (the module text says how). Never raises for anything the store answers.
+    `observe`, `facts`, `meta`, `per_page`, `max_pages` and `attempt_seconds` are L1's (t9; the module text): the
+    app leaves them as they are. A `per_page` outside 25 to 100, a `max_pages` below 1 or past 4,000 rows, or an
+    `attempt_seconds` that isn't above 0, is a `ValueError` before anything is sent."""
+    shape = ListingShape(per_page, max_pages, meta)
+    if attempt_seconds is not None and not attempt_seconds > 0:
+        raise ValueError("attempt_seconds must be above 0")
     session = _Session(
         client,
         spacing_seconds=spacing_ms / 1000,
@@ -348,6 +848,9 @@ def read_catalog(
         monotonic=monotonic,
         now=now,
         deadline=monotonic() + store_seconds,
+        observe=observe,
+        facts=facts,
+        attempt_seconds=attempt_seconds,
     )
     wc_version: str | None = None
     state = _Listing()
@@ -355,7 +858,7 @@ def read_catalog(
         wc_version = _check_version(session)
         for _attempt in range(2):
             state = _Listing()
-            _read_listing(session, state, page_max_bytes, listing_max_bytes, progress)
+            _read_listing(session, state, shape, page_max_bytes, listing_max_bytes, progress)
             if state.consistent():
                 return CatalogRead(
                     None,
@@ -430,6 +933,26 @@ def _check_version(session: _Session) -> str:
     return version
 
 
+@dataclass(frozen=True)
+class ListingShape:
+    """The listing's pages: `per_page` rows each, at most `max_pages`, with or without `meta_data` (L1's options;
+    the app's are 100, 40 and with). L1 builds one to show its request list (`params`); the reader builds its own from
+    the same values."""
+
+    per_page: int = PER_PAGE
+    max_pages: int = MAX_PAGES
+    meta: bool = True
+
+    def __post_init__(self) -> None:
+        if not PER_PAGE_MIN <= self.per_page <= PER_PAGE:
+            raise ValueError(f"per_page must be {PER_PAGE_MIN} to {PER_PAGE}")
+        if self.max_pages < 1 or self.max_pages * self.per_page > MAX_ROWS:
+            raise ValueError(f"max_pages must be at least 1 and reach at most {MAX_ROWS} rows")
+
+    def params(self, page: int) -> dict[str, str]:
+        return listing_params(page, per_page=self.per_page, meta=self.meta)
+
+
 @dataclass
 class _Listing:
     rows: list[Product] = field(default_factory=list)
@@ -444,14 +967,14 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
-    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int) -> None:
+    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int, shape: ListingShape) -> None:
         self.pages = page
         self.largest = max(self.largest, len(body))
         self.size += len(body)
         if self.size > listing_max_bytes:
             session.bad("listing_bytes", page)
         try:
-            rows = parse_page(body)
+            rows = parse_page(body, per_page=shape.per_page, meta=shape.meta)
         except BadAnswer as bad:
             session.bad(bad.field, page)
         self.rows.extend(rows)
@@ -466,38 +989,44 @@ def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
 
 
 def _read_listing(
-    session: _Session, listing: _Listing, page_max_bytes: int, listing_max_bytes: int, progress: Progress | None
+    session: _Session,
+    listing: _Listing,
+    shape: ListingShape,
+    page_max_bytes: int,
+    listing_max_bytes: int,
+    progress: Progress | None,
 ) -> None:
-    first = session.request("GET", PRODUCTS_PATH, listing_params(1), page_max_bytes, page=True)
+    first = session.request("GET", PRODUCTS_PATH, shape.params(1), page_max_bytes, page=1)
     listing.total = _count(session, first.headers, "x-wp-total")
     pages = _count(session, first.headers, "x-wp-totalpages")
-    if pages > MAX_PAGES:
+    if pages > shape.max_pages:
         raise _End("too_many_pages")
-    listing.add_page(session, 1, first.body, listing_max_bytes)
+    listing.add_page(session, 1, first.body, listing_max_bytes, shape)
     if listing.total == 0 and not listing.rows:
         raise _End("no_products")
     if progress is not None:
         progress(1, max(pages, 1), len(listing.rows))
     for page in range(2, pages + 1):
         response = session.request(
-            "GET", PRODUCTS_PATH, listing_params(page), page_max_bytes, page=True, past_the_end=True
+            "GET", PRODUCTS_PATH, shape.params(page), page_max_bytes, page=page, past_the_end=True
         )
         if response.status == 400:
             return  # the pages ran out early: the count check reads the listing once more
-        listing.add_page(session, page, response.body, listing_max_bytes)
+        listing.add_page(session, page, response.body, listing_max_bytes, shape)
         if progress is not None:
             progress(page, pages, len(listing.rows))
 
 
-def parse_page(body: bytes) -> list[Product]:
-    """One products page: a JSON list of at most 100 products. `BadAnswer` for anything else."""
+def parse_page(body: bytes, *, per_page: int = PER_PAGE, meta: bool = True) -> list[Product]:
+    """One products page: a JSON list of at most `per_page` products (100 in the app). `BadAnswer` for anything
+    else. With `meta=False` (L1's option), `meta_data` isn't read: the products have no `latest_version` data."""
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError, RecursionError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors; a deep nest recurses
         raise BadAnswer("json") from None
-    if not isinstance(data, list) or len(data) > PER_PAGE:
+    if not isinstance(data, list) or len(data) > per_page:
         raise BadAnswer("page")
-    return [parse_product(raw) for raw in data]
+    return [parse_product(raw, meta=meta) for raw in data]
 
 
 def _clean(value: str, name: str) -> str:
@@ -526,8 +1055,9 @@ def _word(raw: dict[str, Any], key: str) -> str:
     return value
 
 
-def parse_product(raw: Any) -> Product:
-    """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value)."""
+def parse_product(raw: Any, *, meta: bool = True) -> Product:
+    """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value). With
+    `meta=False` (L1's option), `meta_data` is neither read nor checked: no `latest_version` data, no error."""
     if not isinstance(raw, dict):
         raise BadAnswer("row")
     wc_id = raw.get("id")
@@ -538,7 +1068,7 @@ def parse_product(raw: Any) -> Product:
     title = _clean(html.unescape(raw_title), "name")
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
-    meta, meta_skipped = _meta(raw.get("meta_data"))
+    kept, meta_skipped = _meta(raw.get("meta_data")) if meta else ((), 0)
     if "date_modified_gmt" not in raw:
         raise BadAnswer("date_modified_gmt")
     modified = raw["date_modified_gmt"]
@@ -552,7 +1082,7 @@ def parse_product(raw: Any) -> Product:
         status=_word(raw, "status"),
         modified_gmt=modified,
         downloads=_downloads(raw.get("downloads")),
-        meta=meta,
+        meta=kept,
         entities=title != raw_title,
         meta_skipped=meta_skipped,
     )
