@@ -4,13 +4,17 @@ them, a fake time with a stop, and a database with stores in it. RFC 2606 host n
 
 import json
 import math
+import shutil
 import sqlite3
+import tempfile
 import threading
 import uuid
+import weakref
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -18,6 +22,7 @@ import httpx
 from shelfsync.catalog.model import Download, Product
 from shelfsync.catalog.service import CatalogService, store_clients
 from shelfsync.clock import to_iso
+from shelfsync.db.connection import connect
 from shelfsync.db.migrate import migrate
 from shelfsync.db.stores import insert_store
 from shelfsync.platform.secrets import MemorySecretStore
@@ -177,15 +182,14 @@ class FakeCatalogStore:
 
 @dataclass
 class Db:
-    """An in-memory database (shared cache, so every connection sees it) with the migrations applied."""
+    """A database file with the migrations applied, opened as the app opens its own (`db/connection.py`: WAL, foreign
+    keys, the busy timeout). A file, not shared-cache memory: there a reader and the runner's writer meet table locks
+    that don't wait (SQLITE_LOCKED), which the app's WAL file never has."""
 
-    uri: str
-    keeper: sqlite3.Connection
+    path: Path
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.uri, uri=True, isolation_level=None, timeout=5.0, check_same_thread=False)
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return connect(self.path)
 
     def add_store(
         self, code: str, *, main_button: str = "Download", state: str = "active", spacing_ms: int = 150
@@ -212,10 +216,13 @@ class Db:
 
 
 def make_db() -> Db:
-    uri = f"file:shelfsync-catalog-{uuid.uuid4().hex}?mode=memory&cache=shared"
-    keeper = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
-    migrate(keeper)
-    return Db(uri, keeper)
+    """A new database in its own temporary folder, removed (best effort) when the test is done with it."""
+    folder = Path(tempfile.mkdtemp(prefix="shelfsync-catalog-"))
+    db = Db(folder / "catalog.db")
+    with closing(db.connect()) as connection:
+        migrate(connection)
+    weakref.finalize(db, shutil.rmtree, folder, ignore_errors=True)
+    return db
 
 
 def wait_for(condition: Callable[[], bool], seconds: float = 10.0) -> None:
