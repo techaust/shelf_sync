@@ -97,6 +97,19 @@ Changing the app's reader settings, keeping cookies, changing the User-Agent, or
 1. **The 10-minute bound with a smaller `per_page`.** `STORE_SECONDS` (600 s) still bounds one store's read, and `read_catalog` already takes `store_seconds`. At `per_page 25`, a store has four times as many requests, each at least 1 s apart, so a large store may reach the bound before the end. Should L1 also raise `store_seconds` (and if so, to what), or does `--per-page` keep the 10 minutes? The brief doesn't say, so I didn't guess.
 2. Item 3's summary counts "timed out with and without headers". With these records that is `outcome == "timeout"` split on `headers`. Nothing more is needed from the reader unless the analyst wants it.
 
+### Analyst (Opus 5.5 high): CHANGE
+Safety is clean and nothing built is wrong, but the records can't yet separate what the PW reads must show. Pasted by the builder from the lead's message, one line per finding with the lead's decision (all accepted):
+1. Medium, the stage of a stall. **Lead:** `FactsTransport` sets httpcore's `trace` extension to a callback that keeps only the event name (from a fixed set) and a monotonic time, never `info`. `Attempt` gains `stage` (`connect|tls|send|headers|body|done`), `new_connection`, `headers_ms`, and `error` (`connect_timeout|read_timeout|write_timeout|pool_timeout|connect_error|read_error|protocol_error|other`). The mapping is tested directly, and so is that `info` is never kept.
+2. Medium, the shape of a trickle. **Lead:** `FactsTransport` wraps `response.stream` in a counting stream and records `first_byte_ms`, `longest_gap_ms` and `declared_bytes` (`Content-Length` as a number, None when chunked). Check that replacing the stream works in httpx 0.28.1, and test it.
+3. Medium, a connection dropped mid-body loses its bytes. **Lead:** finding 2's counting stream counts them; no further `woocommerce.py` change.
+4. Medium, one attempt can use up the whole store bound. **Lead:** an L1-only `attempt_seconds` (Lead (proposed) 120 s). `client.get` gets `min(store deadline, attempt start + attempt_seconds)`, and each timed-out attempt is labelled `ended` = `read_timeout|attempt_bound|store_bound`. The runner sets none.
+5. High for the diagnosis, the 30 s read timeout (the research reads used 90 s). **Lead:** `WooClient(read_seconds=READ_SECONDS)`, accepted only from 30 to 120 and set only by L1's `--read-seconds`. Test that no app caller sets it and that Test connection is unchanged. This widens the brief's one allowed `woocommerce.py` change (the lead's decision).
+6. Low, missing fixed-word facts. **Lead:** add a `content_type` word (`json|html|other|none`), whether `cf-mitigated` and `retry-after` are present, which origin-hint header names are present (from a fixed list), and `waited_ms` per attempt.
+7. Low. **Lead:** L1's `--per-page` is restricted to 25, 50 or 100; the reader keeps 25–100.
+8. Low. **Lead:** `FactsTransport.handle_request` refuses a non-GET itself.
+9. m3.1 §7 is on `main`. **Lead:** handled at integration (not the builder's).
+- **The lead's earlier decision stands:** with `--per-page` below 100, L1 scales the store bound to 600 s × 100 / per_page (answers open question 1).
+
 ## 3. Builder report
 
 ## 4. Review
