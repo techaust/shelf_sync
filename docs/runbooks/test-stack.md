@@ -148,15 +148,10 @@ uv run python -m testenv.laragon cert
 uv run python -m testenv.laragon cert --force
 ```
 
-3. **(you)** Reload Apache with Laragon's own command (laragon.org/docs/cli):
-
-```powershell
-C:\laragon\laragon.exe reload apache
-```
-
-   Clicking **Stop**, then **Start All** in Laragon does the same.
+3. **(you)** Restart Apache: in Laragon, click **Stop**, wait until Apache and MySQL show as stopped, then click **Start All**.
+   - Don't rely on `C:\laragon\laragon.exe reload apache` (laragon.org/docs/cli): on 2026-11-17 it didn't restart Apache. Apache's `error_log` showed no restart after it, and the site kept serving Laragon's certificate until Stop and Start All.
 4. **(Claude)** Runs `check` once the site's keys are saved (§3.3). It must say "Connected in <n> ms. WooCommerce <version>, …".
-   - **"The store's security certificate wasn't accepted."** right after step 3 most likely means Laragon's own site file (`auto.shelfsync-test.test.conf`, with Laragon's certificate) answered instead of ours. Check that `00-shelfsync-test.test.conf` is in `C:\laragon\etc\apache2\sites-enabled` and reload Apache again (step 3).
+   - **"The store's security certificate wasn't accepted."** right after step 3 most likely means Apache hasn't restarted, or Laragon's own site file (`auto.shelfsync-test.test.conf`, with Laragon's certificate) answered instead of ours. Check that `00-shelfsync-test.test.conf` is in `C:\laragon\etc\apache2\sites-enabled` and restart Apache again (step 3).
 
 **Why Laragon shouldn't undo this, and what is only assumed:**
 - **Documented by Laragon** (laragon.org/docs/pretty-urls): Laragon writes each site's Apache file itself, named `C:\laragon\etc\apache2\sites-enabled\auto.<site>.test.conf`. The template for every one of them is `C:\laragon\usr\tpl\VirtualHost.tpl`. The `cert` command touches neither.
@@ -209,17 +204,39 @@ uv run python -m testenv.laragon keys
 5. **(Claude)** Runs `check` (§3.5).
 
 ### 3.4 The Amazon S3 Storage extension, pointed at the S3 server
-**Unverified:** the extension's screens haven't been seen on this site yet ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). Claude helps with the exact screen when you get there.
-1. **(you)** Download the extension's ZIP from your woocommerce.com account (My Account › Downloads).
-2. **(you)** In wp-admin, go to **Plugins › Add New Plugin › Upload Plugin**, choose the ZIP, click **Install Now**, then **Activate**.
-3. **(you)** Set its provider to **User defined** (S3-compatible), following the vendor's own instructions on its product page (V6: it needs a small snippet the vendor documents). Use these values, the same as section 2:
-   - **Endpoint:** `http://127.0.0.1:47630`
-   - **Region:** `us-east-1`
-   - **Bucket:** `shelfsync-test-stack`
-   - **Access key ID:** `TESTSTACKREADWRITE`
-   - **Secret:** `TestStackSecretReadWrite1`
+**Verified 2026-11-17** with Amazon S3 Storage for WooCommerce 3.5.5 and WooCommerce 11.3.0 ([04-A V6](../04-architecture-appendix/A-stack-verification.md)).
 
-   These are made-up keys: the S3 server checks none. Never type real AWS keys here.
+**How it reaches the S3 server.** The vendor (Kestrel) supports S3-compatible servers only as an experiment: you choose **User defined (experimental)**, and a small code file supplies the address and keys (kestrelwp.com/docs/s3-compatible-providers/). The settings page then has no endpoint or key fields. ShelfSync's file is [`testenv/wordpress/shelfsync-test-s3.php`](../../testenv/wordpress/shelfsync-test-s3.php). It:
+- follows Kestrel's own snippet, which names one of `backblaze`, `digitalocean` or `wasabi`. None of them is the S3 server, so it names `digitalocean`, whose region stays `us-east-1` like the server's ([11](../11-decisions.md) 2026-11-17);
+- points it at the S3 server (section 1): endpoint `http://127.0.0.1:47630`, region `us-east-1`, the made-up keys `TESTSTACKREADWRITE` / `TestStackSecretReadWrite1`;
+- puts the bucket in the path (`use_path_style_endpoint`), because the server answers only `Host: 127.0.0.1:<port>`;
+- does nothing on any site other than `shelfsync-test.test`.
+
+It goes in as a **must-use plugin**: WordPress loads every file in `wp-content\mu-plugins` by itself, so nothing else needs installing.
+
+1. **(you)** Download the extension's ZIP from your woocommerce.com account (**My Account › Downloads**).
+2. **(you)** In wp-admin, go to **Plugins › Add New Plugin › Upload Plugin**, choose the ZIP, click **Install Now**, then **Activate**.
+3. **(you)** Go to **WooCommerce › S3 storage**, set **Cloud service provider** to **User defined (experimental)**, and click **Save**. The endpoint and key fields disappear; that's expected.
+4. **(you)** In Windows PowerShell (top of §3), make the site's must-use plugins folder:
+
+```powershell
+New-Item -ItemType Directory -Force "C:\laragon\www\shelfsync-test\wp-content\mu-plugins"
+```
+
+5. **(you)** Copy the file in:
+
+```powershell
+Copy-Item "D:\Business\2. GPL Projects\3. Other Assets\Applications\shelf_sync\testenv\wordpress\shelfsync-test-s3.php" "C:\laragon\www\shelfsync-test\wp-content\mu-plugins\"
+```
+
+6. **(you)** With the S3 server running (section 1), reload **WooCommerce › S3 storage**:
+   - Under **Default bucket** ("The default bucket to use when creating a new S3 shortcode"), choose `shelfsync-test-stack`. **This one matters:** every sample's download is `[amazon_s3 object="…"]` with no bucket, like the real stores' links, so the extension takes the bucket from this setting. Left empty, a download says "No file defined" (2026-11-17).
+   - Leave the automatic offloading **Enable** box unticked.
+   - Click **Save**.
+
+   If no bucket is listed, the S3 server isn't running or the file isn't in `mu-plugins`: tell Claude what the page says.
+
+Never type real AWS keys on this site. **After the file in the repo changes,** copy it again (step 5).
 
 ### 3.5 Start the S3 server, add the sample products, check
 1. **(you)** Start the S3 server in its own PowerShell window (section 1) and leave it running.
@@ -243,7 +260,7 @@ uv run python -m testenv.laragon seed
 uv run python -m testenv.laragon check
 ```
 
-   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 10 downloadable products." Settings counts every status except trash (draft, pending and private included), so: aurora, pixel-forms, northwind, harbor, quiet-cache, tidewater-seo, mosaic-gallery, mosaic-gallery-bundle, emberline and lantern. The variable product (its files are on its variations), the service and the trashed one aren't counted. **Unverified** until it runs.
+   It should say "https://shelfsync-test.test: Connected in <n> ms. WooCommerce <version>, 10 downloadable products." Settings counts every status except trash (draft, pending and private included), so: aurora, pixel-forms, northwind, harbor, quiet-cache, tidewater-seo, mosaic-gallery, mosaic-gallery-bundle, emberline and lantern. The variable product (its files are on its variations), the service and the trashed one aren't counted. **Verified 2026-11-17:** "Connected in 1,306 ms. WooCommerce 11.3.0, 10 downloadable products."; `seed` created 13, and a second run left all 13 unchanged.
 
 **The samples** (the full table is in [runs/m2.8](../runs/m2.8-laragon-test-stack.md) §3):
 - simple themes and plugins, and one product with two downloads;
@@ -256,7 +273,7 @@ uv run python -m testenv.laragon check
 Each download is a tiny ZIP holding only a made-up theme or plugin header.
 
 ### 3.6 Try one download (V6)
-**Unverified:** these steps test whether the extension can serve a file from the S3 server ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). That's the point of trying them.
+These steps test whether the extension can serve a file from the S3 server ([04-A V6](../04-architecture-appendix/A-stack-verification.md)). **Verified 2026-11-17:** `aurora-2.4.1.zip` downloaded (after the Default bucket fix in §3.4 step 6).
 1. **(you)** Keep the S3 server running, with `seed` run since its last start.
 2. **(you)** In wp-admin, go to **WooCommerce › Orders › Add order**:
    - Customer: yourself;
@@ -264,7 +281,7 @@ Each download is a tiny ZIP holding only a made-up theme or plugin header.
    - Status: **Completed**;
    - click **Create**.
 
-   Nothing is charged or sent: the site is on this PC only.
+   Nothing is charged: the site is on this PC only. WooCommerce's log records its order emails as "sent"; where Laragon's mail setup takes them wasn't checked (2026-11-17).
 3. **(you)** Open `http://shelfsync-test.test/my-account/downloads/` and click the Aurora download.
 4. **(you)** Note the result and tell Claude:
    - **Expected:** `aurora-2.4.1.zip` downloads, and the S3 server's window shows a `GET /shelfsync-test-stack/productrepo/aurora-2.4.1.zip` line with 200.
@@ -286,3 +303,4 @@ uv run python -m testenv.laragon keys --remove
 ```
 
 - **Undo the certificate (you):** see the end of §3.2.
+- **Remove the S3 server file (you):** delete `C:\laragon\www\shelfsync-test\wp-content\mu-plugins\shelfsync-test-s3.php`. The extension then has no address or keys for the S3 server.
