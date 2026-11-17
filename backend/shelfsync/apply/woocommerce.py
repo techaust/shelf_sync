@@ -76,13 +76,27 @@ def health_for(reason: str | None) -> str:
 
 class ReadRefused(Exception):
     """A request stopped before there was a usable answer. `reason` is one of the fixed reasons, `detail` the host
-    a redirect named (a host name only). The message never holds a URL, key or body."""
+    a redirect named (a host name only). The message never holds a URL, key or body.
 
-    def __init__(self, reason: str, detail: str | None = None, status: int | None = None) -> None:
+    For a `timeout`, `headers_status` is the status of an answer whose headers had arrived before the body stalled
+    (None: nothing came at all), and `received` the body bytes read before it ended. They are for the L1 trace only
+    (t9): `status` stays None for a timeout, so Test connection and the catalog reader read one exactly as before."""
+
+    def __init__(
+        self,
+        reason: str,
+        detail: str | None = None,
+        status: int | None = None,
+        *,
+        headers_status: int | None = None,
+        received: int = 0,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.detail = detail
         self.status = status  # the HTTP status, when an answer arrived (a redirect)
+        self.headers_status = headers_status
+        self.received = received
 
 
 class NonGetRefused(Exception):
@@ -198,15 +212,19 @@ class WooClient:
         `max_bytes` is the most of the answer's body that is read (1 MiB unless the caller asks for another cap).
         Raises `ReadRefused` for a transport failure, a timeout, a redirect and an over-long body. A redirect status
         (301, 302, 303, 307, 308) is refused in the response hook `_refuse_redirect`, before httpx reads `Location`;
-        that `ReadRefused` comes out of `stream` as it was raised."""
+        that `ReadRefused` comes out of `stream` as it was raised. A timeout after the answer's headers arrived carries
+        their status and the body bytes read so far (`headers_status`, `received`; nothing else changes)."""
         if any(name.lower().startswith("consumer_") or "key" in name.lower() for name in params):
             raise ValueError("credentials never go in a query string")
         remaining = deadline - self._monotonic()
         if remaining <= 0:
             raise ReadRefused("timeout")
         timeout = httpx.Timeout(min(READ_SECONDS, remaining), connect=min(CONNECT_SECONDS, remaining))
+        answered: int | None = None  # the status, once the answer's headers have arrived
+        size = 0
         try:
             with self._client.stream("GET", self._base + path, params=params, timeout=timeout) as response:
+                answered = response.status_code
                 declared = response.headers.get("content-length", "")
                 if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
@@ -218,17 +236,16 @@ class WooClient:
                         return WooResponse(response.status_code, response.headers, b"")
                     raise ReadRefused("bad_response")
                 parts: list[bytes] = []
-                size = 0
                 for chunk in response.iter_raw():
                     parts.append(chunk)
                     size += len(chunk)
                     if size > max_bytes:
                         raise ReadRefused("bad_response")
                     if self._monotonic() > deadline:
-                        raise ReadRefused("timeout")
+                        raise ReadRefused("timeout", headers_status=answered, received=size)
                 return WooResponse(response.status_code, response.headers, b"".join(parts))
         except httpx.TimeoutException:
-            raise ReadRefused("timeout") from None
+            raise ReadRefused("timeout", headers_status=answered, received=size) from None
         except httpx.DecodingError:  # not expected (`iter_raw` decodes nothing); a sibling of TransportError
             raise ReadRefused("bad_response") from None
         except httpx.TransportError as error:

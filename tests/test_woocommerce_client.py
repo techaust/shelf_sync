@@ -29,8 +29,10 @@ from tests.store_support import (
     STORE_URL,
     SYSTEM_STATUS,
     FakeWoo,
+    StallingStream,
     html,
     products,
+    stalling,
     system_status,
     wp_error,
 )
@@ -338,6 +340,52 @@ def test_a_slow_body_stops_at_the_deadline() -> None:
     client = WooClient(STORE_URL, KEY, SECRET, transport=woo.transport, monotonic=woo.time.monotonic)
     with client, pytest.raises(ReadRefused, match="timeout"):  # the answer arrives after the deadline
         client.get(SYSTEM_STATUS, {}, deadline=woo.time.now + 60.0)
+
+
+# ---- a timeout's facts, for L1's trace (t9; CAT-01, APL-12) ---------------------------------------------------------
+
+
+def _refused(woo: FakeWoo) -> ReadRefused:
+    client = WooClient(STORE_URL, KEY, SECRET, transport=woo.transport, monotonic=woo.time.monotonic)
+    with client, pytest.raises(ReadRefused) as refused:
+        client.get(SYSTEM_STATUS, {}, deadline=woo.time.now + 60.0)
+    return refused.value
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("slow"), httpx.PoolTimeout("x")])
+def test_a_timeout_before_the_headers_says_nothing_came(error: Exception) -> None:
+    refused = _refused(FakeWoo(status=_raise(error)))
+    assert (refused.reason, refused.status, refused.headers_status, refused.received) == ("timeout", None, None, 0)
+
+
+def test_a_timeout_during_the_body_says_the_headers_had_arrived_and_how_many_bytes_came() -> None:
+    refused = _refused(FakeWoo(status=stalling(200, [b"{" + b" " * 999, b" " * 500])))
+    assert (refused.reason, refused.headers_status, refused.received) == ("timeout", 200, 1500)
+    assert refused.status is None  # what every caller reads stays as before: a timeout has no status
+
+
+def test_a_body_that_passes_the_deadline_says_the_same() -> None:
+    woo = FakeWoo()
+    woo.status = lambda request: httpx.Response(
+        503, stream=StallingStream([b"x" * 700, b"y"], before_chunk=lambda: setattr(woo.time, "now", woo.time.now + 61))
+    )
+    refused = _refused(woo)
+    assert (refused.reason, refused.status, refused.headers_status, refused.received) == ("timeout", None, 503, 700)
+
+
+@pytest.mark.parametrize(
+    ("woo", "expected"),
+    [
+        (FakeWoo(status=stalling(200, [b"{"])), ReadOutcome("timeout")),
+        (
+            FakeWoo(products_answer=stalling(200, [b"[", b"{"])),
+            ReadOutcome("timeout", 200, None, "9.4.1", "6.7.1"),  # the first GET's status, as before t9
+        ),
+    ],
+    ids=["first GET", "second GET"],
+)
+def test_test_connection_reads_a_timeout_during_the_body_exactly_as_before(woo: FakeWoo, expected: ReadOutcome) -> None:
+    assert run(woo) == expected
 
 
 # ---- GET only and HTTPS only ----------------------------------------------------------------------------------------
