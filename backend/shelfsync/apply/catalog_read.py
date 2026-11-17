@@ -31,6 +31,18 @@ Rules this module keeps:
 - **Stop:** the read stops between requests and during every wait when asked (`stopped`).
 - **Logs:** one line per store per read: its code, the outcome, pages, rows, the HTTP status of the last failure, and
   for `bad_response` the field and page. Never an address, key, cookie, query string, header or body.
+
+For the L1 dry read only (t9, to tell why a store stalls; the app's runner never sets any of these, and with their
+defaults nothing changes: the same requests, the same results):
+- **`observe`** is called once per attempt (the first try and each retry) with an `Attempt`: what was asked (and the
+  page), the attempt number, the outcome (`ok`, `past_the_end` or the fixed reason), the HTTP status, the time it took,
+  the body bytes, whether the answer's headers had arrived, and the `ResponseFacts` when `facts` is given.
+- **`facts`**, a `FactsTransport`, is the transport the caller builds its `WooClient` on. `WooClient` wraps it in
+  `GetOnlyTransport`, so it sees each answer's headers **before** `GetOnlyTransport` drops `Set-Cookie`: it keeps only
+  fixed words from them (`response_facts`), never a value, and hands the answer on unchanged. The cookie drop stays as
+  it is, so no cookie is kept, parsed or sent back.
+- **`meta=False`** asks for the products without `meta_data` (no `latest_version` data, no error); **`per_page`**
+  (25 to 100) and **`max_pages`** (at most 4,000 rows in all, as with 40 pages of 100) change the listing's pages.
 """
 
 import html
@@ -92,6 +104,9 @@ RETRY_AFTER_MAX_SECONDS = 60.0
 STORE_SECONDS = 600.0  # one store's whole read
 FAILURES_TO_PAUSE = 10
 LISTING_FIELDS = "id,slug,name,type,status,date_modified_gmt,downloads,meta_data"
+LISTING_FIELDS_NO_META = "id,slug,name,type,status,date_modified_gmt,downloads"  # L1's `meta=False` only
+PER_PAGE_MIN = 25  # L1's smallest page (`per_page`)
+MAX_ROWS = MAX_PAGES * PER_PAGE  # what `max_pages` times `per_page` may reach (L1 only; the app keeps 40 of 100)
 SYSTEM_STATUS_PARAMS = {"_fields": "environment"}  # the first request's query (also what L1 shows)
 WC_ID_MAX = 2**63 - 1
 
@@ -106,17 +121,146 @@ _GMT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 _COUNT = re.compile(r"[0-9]{1,9}")
 
 
-def listing_params(page: int) -> dict[str, str]:
-    """The query of one products page (contract-tested)."""
+def listing_params(page: int, *, per_page: int = PER_PAGE, meta: bool = True) -> dict[str, str]:
+    """The query of one products page (contract-tested). `per_page` and `meta` are L1's options; the app keeps the
+    defaults."""
     return {
         "downloadable": "true",
         "status": "any",
         "orderby": "id",
         "order": "asc",
-        "per_page": str(PER_PAGE),
+        "per_page": str(per_page),
         "page": str(page),
-        "_fields": LISTING_FIELDS,
+        "_fields": LISTING_FIELDS if meta else LISTING_FIELDS_NO_META,
     }
+
+
+# ---- L1's diagnostics (t9): fixed words about each answer and each attempt, never a value ---------------------------
+
+SERVER_WORDS = ("cloudflare", "nginx", "apache", "litespeed", "openresty")  # else `other`, or `none` when absent
+CACHE_WORDS = ("hit", "miss", "dynamic", "bypass", "expired")  # `cf-cache-status`; else `other`, or `none`
+COOKIE_WORDS = (
+    "__cf_bm",
+    "cf_clearance",
+    "_cfuvid",
+    "PHPSESSID",
+    "wordpress_logged_in",
+    "wordpress_sec",
+    "wp-settings",
+)
+# WordPress names these with a suffix (`wordpress_logged_in_<hash of the site address>`, `wp-settings-1`,
+# `wp-settings-time-1`): the family's word is kept, never the suffix (it would identify the store).
+_COOKIE_FAMILIES = (("wordpress_logged_in", "_"), ("wordpress_sec", "_"), ("wp-settings", "-"))
+_COOKIE_EXACT = frozenset({"__cf_bm", "cf_clearance", "_cfuvid", "PHPSESSID"})
+_SERVER_TOKEN = re.compile(r"[^/\s(,;]*")
+
+
+@dataclass(frozen=True)
+class ResponseFacts:
+    """What one answer's headers say, in fixed words only: `cf-ray` present, the `server` header's product
+    (`SERVER_WORDS`, `other` or `none`), `cf-cache-status` (`CACHE_WORDS`, `other` or `none`), the names of the
+    cookies the store set that are in `COOKIE_WORDS` (each once, in that order), and how many others it set."""
+
+    cf_ray: bool
+    server: str
+    cache: str
+    cookies: tuple[str, ...]
+    other_cookies: int
+
+
+def _word_of(value: str | None, words: tuple[str, ...]) -> str:
+    if value is None:
+        return "none"
+    word = value.strip().lower()
+    return word if word in words else "other"
+
+
+def _cookie_word(header: str) -> str | None:
+    """The allowlisted word for one `Set-Cookie` header's cookie name, or None (an unlisted name, or no name)."""
+    name, equals, _ = header.partition("=")
+    name = name.strip()
+    if not equals:
+        return None
+    if name in _COOKIE_EXACT:
+        return name
+    for family, joiner in _COOKIE_FAMILIES:
+        if name == family or name.startswith(family + joiner):
+            return family
+    return None
+
+
+def response_facts(headers: httpx.Headers) -> ResponseFacts:
+    """The facts of one answer's headers, `Set-Cookie` and `Set-Cookie2` included (so this must see them before
+    `GetOnlyTransport` drops them). Nothing from a header is kept but a fixed word or a count."""
+    server = headers.get("server")
+    token = _SERVER_TOKEN.match(server.strip().lower()) if server is not None else None
+    found: set[str] = set()
+    others = 0
+    for header in (*headers.get_list("set-cookie"), *headers.get_list("set-cookie2")):
+        word = _cookie_word(header)
+        if word is None:
+            others += 1
+        else:
+            found.add(word)
+    return ResponseFacts(
+        cf_ray="cf-ray" in headers,
+        server=_word_of(token.group() if token is not None else None, SERVER_WORDS),
+        cache=_word_of(headers.get("cf-cache-status"), CACHE_WORDS),
+        cookies=tuple(word for word in COOKIE_WORDS if word in found),
+        other_cookies=others,
+    )
+
+
+class FactsTransport(httpx.BaseTransport):
+    """L1's transport (t9): the caller builds its `WooClient` on it, and `WooClient` wraps it in `GetOnlyTransport`
+    (`GetOnlyTransport(FactsTransport(real))`). So each answer comes through here first, with its headers and before
+    `GetOnlyTransport` drops its cookies: this keeps `response_facts` of it and hands the answer on unchanged (the
+    body isn't read here). It never sees a request but a GET (`GetOnlyTransport` refuses any other before calling
+    it). `take` returns the facts of the last answer, once."""
+
+    def __init__(self, inner: httpx.BaseTransport) -> None:
+        self._inner = inner
+        self._last: ResponseFacts | None = None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self._last = None
+        response = self._inner.handle_request(request)
+        self._last = response_facts(response.headers)
+        return response
+
+    def seen(self) -> bool:
+        """Whether an answer's headers came through since the last request started."""
+        return self._last is not None
+
+    def take(self) -> ResponseFacts | None:
+        last, self._last = self._last, None
+        return last
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One attempt (the first try or a retry), for L1's trace. `what` is `system_status` or `products` (`page` its
+    number); `attempt` 1 to 4; `outcome` `ok` (an answer the reader takes), `past_the_end` (a 400 on page 2 or later)
+    or the fixed reason; `http_status` when an answer arrived. `headers`: True when the answer's headers arrived,
+    False when nothing came, None when that isn't known (a connection that failed with no `facts` transport).
+    `body_bytes`: the body read (for a timeout, what came before it ended), None when not known. `facts` when the read
+    has a `FactsTransport` and an answer arrived."""
+
+    what: str
+    page: int | None
+    attempt: int
+    outcome: str
+    http_status: int | None
+    elapsed_ms: int
+    body_bytes: int | None
+    headers: bool | None
+    facts: ResponseFacts | None = None
+
+
+Observe = Callable[[Attempt], None]
 
 
 class FailureCount(Protocol):
@@ -242,6 +386,8 @@ class _Session:
         monotonic: Callable[[], float],
         now: Callable[[], datetime],
         deadline: float,
+        observe: Observe | None = None,
+        facts: FactsTransport | None = None,
     ) -> None:
         self._client = client
         self._spacing = spacing_seconds
@@ -250,6 +396,8 @@ class _Session:
         self._monotonic = monotonic
         self._now = now
         self._deadline = deadline
+        self._observe = observe
+        self._facts = facts
         self._sent = False
         self.requests = 0
         self.last_failure_status: int | None = None
@@ -262,6 +410,54 @@ class _Session:
             raise _End("timeout")  # the wait alone would pass the store's bound
         if self._stop.wait(seconds):
             raise _End("stopped")
+
+    def _note_answer(self, page: int | None, attempt: int, started: float, outcome: str, response: WooResponse) -> None:
+        """An answer came (headers and body): hand the attempt to `observe`, when there is one."""
+        if (observe := self._observe) is not None:
+            self._emit(observe, page, attempt, started, outcome, response.status, len(response.body), True)
+
+    def _note_refused(self, page: int | None, attempt: int, started: float, refused: ReadRefused) -> None:
+        """No usable answer: hand the attempt to `observe`, when there is one. A timeout says whether the headers had
+        arrived (`ReadRefused.headers_status`) and the bytes read before it ended; a redirect, and an over-long or
+        unreadable body (`bad_response`), are refused only once the headers are in; for a failed connection it is
+        known only through the `facts` transport (it saw an answer or it didn't), else None."""
+        if (observe := self._observe) is None:
+            return
+        status = refused.status if refused.status is not None else refused.headers_status
+        body_bytes: int | None = None
+        headers: bool | None
+        if refused.reason == "timeout":
+            headers, body_bytes = refused.headers_status is not None, refused.received
+        elif refused.reason in ("redirected", "bad_response"):
+            headers = True
+        else:
+            headers = None if self._facts is None else self._facts.seen()
+        self._emit(observe, page, attempt, started, refused.reason, status, body_bytes, headers)
+
+    def _emit(
+        self,
+        observe: Observe,
+        page: int | None,
+        attempt: int,
+        started: float,
+        outcome: str,
+        status: int | None,
+        body_bytes: int | None,
+        headers: bool | None,
+    ) -> None:
+        observe(
+            Attempt(
+                what="products" if page is not None else "system_status",
+                page=page,
+                attempt=attempt + 1,
+                outcome=outcome,
+                http_status=status,
+                elapsed_ms=max(0, round((self._monotonic() - started) * 1000)),
+                body_bytes=body_bytes,
+                headers=headers,
+                facts=self._facts.take() if self._facts is not None else None,
+            )
+        )
 
     def usable(self) -> None:
         """A products page was read and parsed: the failures in a row go back to 0."""
@@ -282,15 +478,16 @@ class _Session:
         params: dict[str, str],
         max_bytes: int,
         *,
-        page: bool = False,
+        page: int | None = None,
         past_the_end: bool = False,
     ) -> WooResponse:
         """One request with its retries. Only a GET is ever sent or retried: any other method is refused here,
-        before anything is sent (and `GetOnlyTransport` refuses one too). With `page`, a 200 is returned as it is (the
-        caller parses it, and a body that isn't a JSON list is its `bad_response`); otherwise a 200 that isn't JSON is
-        `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and later), a 400 is returned as it is
-        too, neither a success nor a failure: WooCommerce's answer to a page past the last one, which the caller
-        treats as the listing having shrunk while it was read (m3.1 review 2; not verified on a store)."""
+        before anything is sent (and `GetOnlyTransport` refuses one too). With `page` (a products page's number), a
+        200 is returned as it is (the caller parses it, and a body that isn't a JSON list is its `bad_response`);
+        otherwise a 200 that isn't JSON is `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and
+        later), a 400 is returned as it is too, neither a success nor a failure: WooCommerce's answer to a page past
+        the last one, which the caller treats as the listing having shrunk while it was read (m3.1 review 2; not
+        verified on a store). Each attempt goes to `observe` when there is one, before anything else is done with it."""
         if method != "GET":
             raise NonGetRefused("only GET requests are sent or retried")
         delay = self._spacing if self._sent else 0.0
@@ -304,15 +501,19 @@ class _Session:
             self._sent = True
             self.requests += 1
             headers: httpx.Headers | None = None
+            started = self._monotonic() if self._observe is not None else 0.0
             try:
                 response = self._client.get(path, params, self._deadline, max_bytes=max_bytes)
             except ReadRefused as refused:
                 reason = refused.reason
                 status = refused.status
+                self._note_refused(page, attempt, started, refused)
             else:
                 if past_the_end and response.status == 400:
+                    self._note_answer(page, attempt, started, "past_the_end", response)
                     return response
-                answered = None if page and response.status == 200 else classify(response)
+                answered = None if page is not None and response.status == 200 else classify(response)
+                self._note_answer(page, attempt, started, answered or "ok", response)
                 if answered is None:
                     return response  # the caller resets the count once the answer proved usable
                 reason, status, headers = answered, response.status, response.headers
@@ -338,8 +539,17 @@ def read_catalog(
     store_seconds: float = STORE_SECONDS,
     page_max_bytes: int = PAGE_MAX_BYTES,
     listing_max_bytes: int = LISTING_MAX_BYTES,
+    observe: Observe | None = None,
+    facts: FactsTransport | None = None,
+    meta: bool = True,
+    per_page: int = PER_PAGE,
+    max_pages: int = MAX_PAGES,
 ) -> CatalogRead:
-    """Read one store's catalog (the module text says how). Never raises for anything the store answers."""
+    """Read one store's catalog (the module text says how). Never raises for anything the store answers.
+    `observe`, `facts`, `meta`, `per_page` and `max_pages` are L1's (t9; the module text): the app leaves them as
+    they are. A `per_page` outside 25 to 100, or a `max_pages` below 1 or past 4,000 rows, is a `ValueError` before
+    anything is sent."""
+    shape = _Shape(per_page, max_pages, meta)
     session = _Session(
         client,
         spacing_seconds=spacing_ms / 1000,
@@ -348,6 +558,8 @@ def read_catalog(
         monotonic=monotonic,
         now=now,
         deadline=monotonic() + store_seconds,
+        observe=observe,
+        facts=facts,
     )
     wc_version: str | None = None
     state = _Listing()
@@ -355,7 +567,7 @@ def read_catalog(
         wc_version = _check_version(session)
         for _attempt in range(2):
             state = _Listing()
-            _read_listing(session, state, page_max_bytes, listing_max_bytes, progress)
+            _read_listing(session, state, shape, page_max_bytes, listing_max_bytes, progress)
             if state.consistent():
                 return CatalogRead(
                     None,
@@ -430,6 +642,25 @@ def _check_version(session: _Session) -> str:
     return version
 
 
+@dataclass(frozen=True)
+class _Shape:
+    """The listing's pages: `per_page` rows each, at most `max_pages`, with or without `meta_data` (L1's options;
+    the app's are 100, 40 and with)."""
+
+    per_page: int = PER_PAGE
+    max_pages: int = MAX_PAGES
+    meta: bool = True
+
+    def __post_init__(self) -> None:
+        if not PER_PAGE_MIN <= self.per_page <= PER_PAGE:
+            raise ValueError(f"per_page must be {PER_PAGE_MIN} to {PER_PAGE}")
+        if self.max_pages < 1 or self.max_pages * self.per_page > MAX_ROWS:
+            raise ValueError(f"max_pages must be at least 1 and reach at most {MAX_ROWS} rows")
+
+    def params(self, page: int) -> dict[str, str]:
+        return listing_params(page, per_page=self.per_page, meta=self.meta)
+
+
 @dataclass
 class _Listing:
     rows: list[Product] = field(default_factory=list)
@@ -444,14 +675,14 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
-    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int) -> None:
+    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int, shape: _Shape) -> None:
         self.pages = page
         self.largest = max(self.largest, len(body))
         self.size += len(body)
         if self.size > listing_max_bytes:
             session.bad("listing_bytes", page)
         try:
-            rows = parse_page(body)
+            rows = parse_page(body, per_page=shape.per_page, meta=shape.meta)
         except BadAnswer as bad:
             session.bad(bad.field, page)
         self.rows.extend(rows)
@@ -466,38 +697,44 @@ def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
 
 
 def _read_listing(
-    session: _Session, listing: _Listing, page_max_bytes: int, listing_max_bytes: int, progress: Progress | None
+    session: _Session,
+    listing: _Listing,
+    shape: _Shape,
+    page_max_bytes: int,
+    listing_max_bytes: int,
+    progress: Progress | None,
 ) -> None:
-    first = session.request("GET", PRODUCTS_PATH, listing_params(1), page_max_bytes, page=True)
+    first = session.request("GET", PRODUCTS_PATH, shape.params(1), page_max_bytes, page=1)
     listing.total = _count(session, first.headers, "x-wp-total")
     pages = _count(session, first.headers, "x-wp-totalpages")
-    if pages > MAX_PAGES:
+    if pages > shape.max_pages:
         raise _End("too_many_pages")
-    listing.add_page(session, 1, first.body, listing_max_bytes)
+    listing.add_page(session, 1, first.body, listing_max_bytes, shape)
     if listing.total == 0 and not listing.rows:
         raise _End("no_products")
     if progress is not None:
         progress(1, max(pages, 1), len(listing.rows))
     for page in range(2, pages + 1):
         response = session.request(
-            "GET", PRODUCTS_PATH, listing_params(page), page_max_bytes, page=True, past_the_end=True
+            "GET", PRODUCTS_PATH, shape.params(page), page_max_bytes, page=page, past_the_end=True
         )
         if response.status == 400:
             return  # the pages ran out early: the count check reads the listing once more
-        listing.add_page(session, page, response.body, listing_max_bytes)
+        listing.add_page(session, page, response.body, listing_max_bytes, shape)
         if progress is not None:
             progress(page, pages, len(listing.rows))
 
 
-def parse_page(body: bytes) -> list[Product]:
-    """One products page: a JSON list of at most 100 products. `BadAnswer` for anything else."""
+def parse_page(body: bytes, *, per_page: int = PER_PAGE, meta: bool = True) -> list[Product]:
+    """One products page: a JSON list of at most `per_page` products (100 in the app). `BadAnswer` for anything
+    else. With `meta=False` (L1's option), `meta_data` isn't read: the products have no `latest_version` data."""
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError, RecursionError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors; a deep nest recurses
         raise BadAnswer("json") from None
-    if not isinstance(data, list) or len(data) > PER_PAGE:
+    if not isinstance(data, list) or len(data) > per_page:
         raise BadAnswer("page")
-    return [parse_product(raw) for raw in data]
+    return [parse_product(raw, meta=meta) for raw in data]
 
 
 def _clean(value: str, name: str) -> str:
@@ -526,8 +763,9 @@ def _word(raw: dict[str, Any], key: str) -> str:
     return value
 
 
-def parse_product(raw: Any) -> Product:
-    """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value)."""
+def parse_product(raw: Any, *, meta: bool = True) -> Product:
+    """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value). With
+    `meta=False` (L1's option), `meta_data` is neither read nor checked: no `latest_version` data, no error."""
     if not isinstance(raw, dict):
         raise BadAnswer("row")
     wc_id = raw.get("id")
@@ -538,7 +776,7 @@ def parse_product(raw: Any) -> Product:
     title = _clean(html.unescape(raw_title), "name")
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
-    meta, meta_skipped = _meta(raw.get("meta_data"))
+    kept, meta_skipped = _meta(raw.get("meta_data")) if meta else ((), 0)
     if "date_modified_gmt" not in raw:
         raise BadAnswer("date_modified_gmt")
     modified = raw["date_modified_gmt"]
@@ -552,7 +790,7 @@ def parse_product(raw: Any) -> Product:
         status=_word(raw, "status"),
         modified_gmt=modified,
         downloads=_downloads(raw.get("downloads")),
-        meta=meta,
+        meta=kept,
         entities=title != raw_title,
         meta_skipped=meta_skipped,
     )
