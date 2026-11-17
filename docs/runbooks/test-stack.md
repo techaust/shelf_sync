@@ -159,7 +159,7 @@ uv run python -m testenv.laragon cert --force
   - The files in `sites-enabled` are read in alphabetical order. Laragon's `httpd.conf` reads them with `IncludeOptional "C:/laragon/etc/apache2/sites-enabled/*.conf"`, read on this PC on 2026-11-05.
   - The first site whose `ServerName` matches answers.
   - `00-shelfsync-test.test.conf` sorts before `auto.shelfsync-test.test.conf`, so it answers for `shelfsync-test.test` while Laragon's own file stays as Laragon wrote it.
-- **Laragon does rewrite some files that don't start with `auto.`.** When SSL was turned off and on (2026-11-05, 03:54:45 IST), Laragon rewrote its own `00-default.conf` in that folder, along with `httpd-ssl.conf` and `laragon.crt`, and the `sites-enabled` folder changed. Its docs don't say whether it ever removes or rewrites a file it didn't make. **Unverified until step 5.**
+- **Laragon does rewrite some files that don't start with `auto.`.** When SSL was turned off and on (2026-11-05, 03:54:45 IST), Laragon rewrote its own `00-default.conf` in that folder, along with `httpd-ssl.conf` and `laragon.crt`, and the `sites-enabled` folder changed. Its docs don't say whether it ever removes or rewrites a file it didn't make. **Verified 2026-11-17 (step 5):** after SSL off and on, then Stop and Start All, Laragon rewrote `00-default.conf`, both `auto.` files and `laragon.crt` (15:39) and left `00-shelfsync-test.test.conf` unchanged (15:11); `check` still connected.
 5. **(you)** **Check that Laragon keeps it.** In Laragon:
    - turn SSL off and on again (**Menu › Apache › SSL › Enabled**, twice);
    - click **Stop**, then **Start All**;
