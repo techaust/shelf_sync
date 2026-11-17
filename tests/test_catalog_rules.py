@@ -16,7 +16,7 @@ from shelfsync.catalog.names import (
     normalise_title,
     wp_suffix_pair,
 )
-from shelfsync.catalog.slots import SlotRef, main_download, plan_slots
+from shelfsync.catalog.slots import ItemSlotPlan, SlotRef, StoreDownloads, main_download, plan_item_slots
 from tests.catalog_support import NEAR_MISS_PAIRS, product
 
 SLUGS = st.text(alphabet="abc-12", max_size=12)
@@ -243,26 +243,69 @@ def test_the_main_download_is_the_one_named_like_the_stores_button() -> None:
     assert main_download((), "Download") == (None, False)
 
 
+def one(
+    downloads: tuple[Download, ...], button: str = "Download", existing: list[SlotRef] | None = None
+) -> ItemSlotPlan:
+    return plan_item_slots([StoreDownloads(1, downloads, button)], existing or [])
+
+
 def test_new_slots_are_made_once_and_existing_ones_are_reused_by_kind_and_name() -> None:
-    plan = plan_slots((MAIN, DOCS), "Download", [])
+    plan = one((MAIN, DOCS))
     assert [(slot.name, slot.is_main) for slot in plan.new_slots] == [("Download", True), ("Documentation", False)]
-    again = plan_slots((DOCS, MAIN), "Download", [SlotRef(5, "Download", True), SlotRef(6, "Documentation", False)])
+    again = one((DOCS, MAIN), existing=[SlotRef(5, "Download", True), SlotRef(6, "Documentation", False)])
     assert again.new_slots == []
-    assert [(a.download.id, a.slot_id) for a in again.assignments] == [("d", 6), ("m", 5)]
+    assert [(p.download.id, p.slot_id) for p in again.placements] == [("d", 6), ("m", 5)]
 
 
 def test_a_store_with_another_button_name_fills_the_same_main_slot() -> None:
-    plan = plan_slots((Download("p", "Get it", "f"),), "Get it", [SlotRef(5, "Download", True)])
-    assert plan.new_slots == [] and plan.assignments[0].slot_id == 5 and not plan.main_by_single
+    plan = one((Download("p", "Get it", "f"),), "Get it", [SlotRef(5, "Download", True)])
+    assert plan.new_slots == [] and plan.placements[0].slot_id == 5 and not plan.counts[1].main_by_single
 
 
 def test_a_repeated_download_name_on_one_product_is_counted_not_slotted() -> None:
-    plan = plan_slots(
-        (MAIN, Download("m2", "Download", "g"), DOCS, Download("d2", "Documentation", "h")), "Download", []
-    )
-    assert plan.unslotted == 2 and [a.download.id for a in plan.assignments] == ["m", "d"]
+    plan = one((MAIN, Download("m2", "Download", "g"), DOCS, Download("d2", "Documentation", "h")))
+    assert plan.counts[1].unslotted == 2 and [p.download.id for p in plan.placements] == ["m", "d"]
 
 
 def test_with_several_downloads_and_none_named_like_the_button_there_is_no_main_slot() -> None:
-    plan = plan_slots((DOCS, Download("x", "Extra", "f")), "Download", [])
-    assert all(not slot.is_main for slot in plan.new_slots) and len(plan.new_slots) == 2
+    plan = one((DOCS, Download("x", "Extra", "f")))
+    assert all(not slot.is_main for slot in plan.new_slots) and len(plan.new_slots) == 2 and plan.main_name is None
+
+
+PRO = "Pro.zip"
+
+
+def test_a_single_download_named_like_another_stores_extra_goes_to_that_extra_slot() -> None:
+    """Review 1, finding 4: GF has `Download` and `Pro.zip`; PW only `Pro.zip`. PW's goes to the extra slot, not the
+    main one, whichever store's slots were made first."""
+    gf = StoreDownloads(1, (Download("g1", "Download", "a"), Download("g2", PRO, "b")), "Download")
+    pw = StoreDownloads(2, (Download("p2", PRO, "c"),), "Download")
+    for order in ([gf, pw], [pw, gf]):
+        plan = plan_item_slots(order, [])
+        names = [(slot.name, slot.is_main) for slot in plan.new_slots]
+        assert names == [("Download", True), (PRO, False)]
+        placed = {(p.store_id, p.download.id): plan.new_slots[p.new_slot or 0].is_main for p in plan.placements}
+        assert placed == {(1, "g1"): True, (1, "g2"): False, (2, "p2"): False}
+        assert not plan.counts[2].main_by_single and plan.main_name == "Download"
+
+
+def test_pw_saved_first_then_gf_moves_pws_download_to_the_extra_and_renames_the_main_slot() -> None:
+    """The other order with slots already saved: PW's `Pro.zip` made the main slot (the one-download rule, nothing
+    else known); when GF's two downloads arrive, PW's moves to the extra slot and the main slot is renamed."""
+    pw = StoreDownloads(2, (Download("p2", PRO, "c"),), "Download")
+    first = plan_item_slots([pw], [])
+    assert [(slot.name, slot.is_main) for slot in first.new_slots] == [(PRO, True)] and first.counts[2].main_by_single
+    gf = StoreDownloads(1, (Download("g1", "Download", "a"), Download("g2", PRO, "b")), "Download")
+    later = plan_item_slots([pw, gf], [SlotRef(7, PRO, True)])
+    assert [(slot.name, slot.is_main) for slot in later.new_slots] == [(PRO, False)]
+    placed = {(p.store_id, p.download.id): (p.slot_id, p.new_slot) for p in later.placements}
+    assert placed == {(1, "g1"): (7, None), (1, "g2"): (None, 0), (2, "p2"): (None, 0)}
+    assert later.main_name == "Download"
+
+
+def test_the_one_download_rule_still_applies_when_no_store_has_that_name_as_an_extra() -> None:
+    gf = StoreDownloads(1, (Download("g1", "Download", "a"),), "Download")
+    pw = StoreDownloads(2, (Download("p1", "Theme package", "c"),), "Download")
+    plan = plan_item_slots([gf, pw], [])
+    assert [(slot.name, slot.is_main) for slot in plan.new_slots] == [("Download", True)]
+    assert plan.counts[2].main_by_single and plan.main_name == "Download"

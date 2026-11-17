@@ -25,9 +25,10 @@ from shelfsync.logs import QUIET_LOGGERS
 from shelfsync.paths import DataPaths
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.tray.instance import CombinedInstanceLock, FakeInstanceLock
 from tests.catalog_support import NEAR_MISS_PAIRS, FakeCatalogStore, FakeTime, Sites, raw_product
 from tests.report_harness import MARK
-from tests.store_support import KEY, SECRET
+from tests.store_support import KEY, SECRET, FailingSecretStore
 
 REPO = Path(__file__).resolve().parents[1]
 AT = "2026-11-17T12:00:00.000000Z"
@@ -172,6 +173,7 @@ def in_process(
         make_stop=lambda: clock,
         monotonic=clock.monotonic,
         now=clock.wall,
+        instance_lock=options.get("lock", lambda paths: FakeInstanceLock()),
     )
     return code, out.getvalue(), err.getvalue(), sites
 
@@ -226,17 +228,91 @@ def test_a_store_without_keys_is_reported_and_the_others_still_read(data_paths: 
     assert "Store GF: FAILED, keys_missing" in out and "Store PW: FAILED, keys_missing" in out
 
 
-def test_while_the_app_has_the_database_open_its_latest_stores_are_read(data_paths: DataPaths) -> None:
-    """The app running: its `-wal` exists, so a plain read-only open sees a store committed a moment ago (still in
-    the WAL), and the main file isn't written."""
+def test_while_shelfsync_runs_nothing_is_read_and_the_owner_is_told_to_quit_it(data_paths: DataPaths) -> None:
+    """Review 1, finding 5: the app's instance lock is taken (ShelfSync runs): refused before the database is opened,
+    with the plain way to quit it."""
+    make_database(data_paths)
+    before = snapshot(data_paths.root)
+    taken = {"ShelfSync"}
+    code, out, err, sites = in_process(data_paths, "--yes", lock=lambda paths: FakeInstanceLock(taken))
+    assert (code, out, sites.requests) == (1, "", [])
+    assert "ShelfSync is running. Quit it first" in err
+    assert snapshot(data_paths.root) == before
+
+
+def test_the_lock_is_held_for_the_whole_read_and_given_back(data_paths: DataPaths) -> None:
+    make_database(data_paths)
+    taken: set[str] = set()
+    seen: list[set[str]] = []
+    stores = {"GF": FakeCatalogStore(rows=[raw_product(1)]), "PW": FakeCatalogStore(rows=[raw_product(2)])}
+    stores["GF"].before_page = lambda page: seen.append(set(taken))
+    code, _, _, _ = in_process(data_paths, "--yes", stores=stores, lock=lambda paths: FakeInstanceLock(taken))
+    assert code == 0 and seen == [{"ShelfSync"}] and taken == set()
+
+
+def test_a_wal_file_left_by_a_shelfsync_that_did_not_close_cleanly_is_refused(data_paths: DataPaths) -> None:
+    """`immutable=1` would read past the WAL's commits, so a `-wal` file with nothing running is refused."""
     make_database(data_paths)
     with closing(connect(data_paths.database)) as app:
         app.execute("PRAGMA wal_autocheckpoint = 0")
         app.execute("UPDATE store SET name = 'Renamed' WHERE code = 'GF'")
         main_file = hashlib.sha256(data_paths.database.read_bytes()).hexdigest()
-        stores = report.read_stores(data_paths.database)
-        assert [store.code for store in stores] == ["GF", "PW", "TS"]
+        code, _, err, sites = in_process(data_paths, "--yes")
+        assert (code, sites.requests) == (1, [])
+        assert "didn't close cleanly" in err
         assert hashlib.sha256(data_paths.database.read_bytes()).hexdigest() == main_file
+
+
+def test_a_credential_manager_failure_stops_the_command_and_is_not_keys_missing(data_paths: DataPaths) -> None:
+    """Review 1, finding 3."""
+    make_database(data_paths)
+    failing = FailingSecretStore()
+    failing.fail_get = True
+    code, out, err, sites = in_process(data_paths, "--yes", secrets=failing)
+    assert (code, sites.requests) == (1, [])
+    assert "keys_missing" not in out and "Credential Manager couldn't be read" in err
+
+
+def test_the_request_list_shown_is_what_is_sent(data_paths: DataPaths) -> None:
+    """Review 1, finding 7: the list is built from the reader's own parameters (`page` shown as `1..N`)."""
+    make_database(data_paths)
+    code, out, _, sites = in_process(data_paths, "--yes", "--store", "GF")
+    shown = [line.strip().removeprefix("GET ") for line in out.splitlines() if line.strip().startswith("GET ")]
+    sent = [request for request in sites.requests if request.url.host == "store-gf.example"]
+    assert code == 0 and len(shown) == 2 and len(sent) == 2
+
+    def parts(text: str) -> tuple[str, dict[str, str]]:
+        path, _, query = text.partition("?")
+        return path, dict(pair.split("=", 1) for pair in query.split("&"))
+
+    assert parts(shown[0]) == (sent[0].url.path, dict(sent[0].url.params))
+    path, params = parts(shown[1])
+    assert path == sent[1].url.path and params == {**dict(sent[1].url.params), "page": "1..N"}
+
+
+def test_the_apps_own_instance_lock_is_used_and_no_lock_file_is_made(
+    data_paths: DataPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lock a second launch meets (`tray/instance.py`): the per-user mutex, plus `instance.lock` only when that
+    file exists. The Windows classes are faked here (the owner's own ShelfSync may hold the real mutex)."""
+    made: list[str] = []
+
+    def mutex() -> FakeInstanceLock:
+        made.append("mutex")
+        return FakeInstanceLock(name="m")
+
+    def file_lock(path: Path) -> FakeInstanceLock:
+        made.append("file")
+        return FakeInstanceLock(name="f")
+
+    monkeypatch.setattr(report, "WindowsInstanceLock", mutex)
+    monkeypatch.setattr(report, "WindowsFileLock", file_lock)
+    data_paths.root.mkdir(parents=True)
+    assert isinstance(report.app_instance_lock(data_paths), FakeInstanceLock) and made == ["mutex"]
+    assert not data_paths.instance_lock.exists()
+    data_paths.instance_lock.write_bytes(b"")
+    made.clear()
+    assert isinstance(report.app_instance_lock(data_paths), CombinedInstanceLock) and made == ["mutex", "file"]
 
 
 def test_no_database_is_a_clear_message(data_paths: DataPaths) -> None:
@@ -247,7 +323,13 @@ def test_no_database_is_a_clear_message(data_paths: DataPaths) -> None:
 
 def in_process_without_database(paths: DataPaths) -> tuple[int, str, str, None]:
     out, err = io.StringIO(), io.StringIO()
-    code = report.main(["--yes"], secrets_factory=MemorySecretStore, out=out, err=err)
+    code = report.main(
+        ["--yes"],
+        secrets_factory=MemorySecretStore,
+        out=out,
+        err=err,
+        instance_lock=lambda paths: FakeInstanceLock(),
+    )
     return code, out.getvalue(), err.getvalue(), None
 
 

@@ -153,7 +153,7 @@ def test_a_failed_save_changes_nothing_for_that_store(store: Db, monkeypatch: py
     def broken(*_: object) -> object:
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(db, "plan_slots", broken)
+    monkeypatch.setattr(db, "plan_item_slots", broken)
     with pytest.raises(sqlite3.OperationalError):
         save(store, gf, [product(1, "alpha"), product(2, "beta")], at=LATER)
     after = [store.rows(f"SELECT * FROM {table}") for table in ("store_product", "catalog_item", "item_link", "slot")]
@@ -405,3 +405,62 @@ def test_a_store_with_no_catalog_is_never_held_by_the_address_guard(store: Db) -
     gf = store.add_store("GF")
     with closing(store.connect()) as connection:
         assert not db.address_changed(connection, gf, "https://anything.example")
+
+
+# ---- review 1 (m3.1) -----------------------------------------------------------------------------------------------
+
+
+def _remove(rig: Db, store_id: int) -> None:
+    with closing(rig.connect()) as connection:
+        connection.execute("UPDATE store SET removed_at = ? WHERE id = ?", (LATER, store_id))
+
+
+def test_a_store_removed_during_its_read_has_nothing_saved(store: Db) -> None:
+    """Finding 2: `save_store_read` refuses a removed store inside its transaction."""
+    gf = store.add_store("GF")
+    [(url,)] = store.rows("SELECT url FROM store WHERE id = ?", gf)
+    _remove(store, gf)
+    with closing(store.connect()) as connection:
+        with pytest.raises(db.StoreRemoved):
+            db.save_store_read(connection, gf, [product(1, "a")], total=1, pages=1, at=AT, read_url=url)
+        assert not connection.in_transaction
+    for table in ("store_product", "catalog_item", "item_link", "slot", "slot_download", "sync_state"):
+        assert store.rows(f"SELECT COUNT(*) FROM {table}") == [(0,)], table
+
+
+def test_an_item_only_removed_stores_hold_gives_up_its_canonical_slug(store: Db) -> None:
+    """Finding 2 (Lead (proposed)): GF is removed; PW's product with GF's slug gets the canonical slug."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    save(store, gf, [product(1, "alpha")])
+    _remove(store, gf)
+    save(store, pw, [product(2, "alpha")])
+    assert store.rows("SELECT id, canonical_slug FROM catalog_item ORDER BY id") == [(1, None), (2, "alpha")]
+    assert links(store) == [(1, gf, 1), (2, pw, 2)]  # the removed store's link stays, as history
+
+
+def _slot_map(rig: Db) -> dict[tuple[int, str], tuple[str, int]]:
+    rows = rig.rows(
+        "SELECT d.store_id, d.wc_download_id, t.name, t.is_main FROM slot_download d JOIN slot t ON t.id = d.slot_id"
+    )
+    return {(store_id, download): (name, is_main) for store_id, download, name, is_main in rows}
+
+
+@pytest.mark.parametrize("pw_first", [False, True], ids=["GF saved first", "PW saved first"])
+def test_a_single_download_named_like_an_extra_goes_to_that_extra_in_either_save_order(
+    store: Db, pw_first: bool
+) -> None:
+    """Finding 4: GF has `Download` and `Pro.zip`, PW only `Pro.zip`. Whichever store is saved first, PW's goes to the
+    extra slot `Pro.zip` beside GF's, the main slot holds GF's `Download` and is named so, and no slot is made twice."""
+    gf, pw = store.add_store("GF"), store.add_store("PW")
+    gf_save = (gf, [product(1, "foo", downloads=(Download("g1", "Download", "a"), Download("g2", "Pro.zip", "b")))])
+    pw_save = (pw, [product(2, "foo", downloads=(Download("p2", "Pro.zip", "c"),))])
+    for store_id, products in [pw_save, gf_save] if pw_first else [gf_save, pw_save]:
+        save(store, store_id, products)
+    assert _slot_map(store) == {
+        (gf, "g1"): ("Download", 1),
+        (gf, "g2"): ("Pro.zip", 0),
+        (pw, "p2"): ("Pro.zip", 0),
+    }
+    assert store.rows("SELECT COUNT(*) FROM slot") == [(2,)]
+    save(store, pw, pw_save[1], at=LATER)  # and a re-read changes nothing
+    assert _slot_map(store)[(pw, "p2")] == ("Pro.zip", 0)

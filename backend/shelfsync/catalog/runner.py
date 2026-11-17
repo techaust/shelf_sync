@@ -4,8 +4,13 @@ never two at once, and never inside a request (`POST /api/sync` only starts it).
 - Each store's client comes from a **factory** (`ClientFactory`): the app's reads the store's keys from Credential
   Manager; a test (and m3.2's test-only launcher) gives its own, with a fake or the test site's transport. The app
   itself gains no setting.
-- A store the owner paused (`state = 'paused'`) or that is auto-paused (`sync_state.auto_paused_at`) is skipped and
-  shown as such (`paused`, `auto_paused`).
+- **Each store's turn holds its busy slot** (`store_service.BusySlots`, shared with the stores service) for the whole
+  read: an edit of its address or keys, its removal and its Test connection answer `busy` meanwhile, and a Test
+  connection running when the turn comes is waited for (at most `CLAIM_WAIT_SECONDS`, else `busy`), so APL-12's
+  spacing holds. Then, under the secrets lock, the store's row and keys are read **as they are now** (never the list
+  read when the run began): a store removed since is skipped (`store_removed`), a store paused since is skipped
+  (`paused`), and the client, `address_changed` and the save's `read_url` all use that row.
+- A store that is auto-paused (`sync_state.auto_paused_at`) is skipped and shown as such (`auto_paused`).
 - Progress (the store, page of pages, rows) is kept for `GET /api/sync`.
 - **Stop:** `stop()` (the app's shutdown) is seen between requests and during every wait; the store being read is left
   exactly as it was (nothing of a stopped read is saved) and no later store is started.
@@ -32,6 +37,7 @@ from shelfsync.apply.woocommerce import WooClient
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db.catalog import (
     AddressMoved,
+    StoreRemoved,
     address_changed,
     record_failure,
     record_read_failed,
@@ -40,12 +46,18 @@ from shelfsync.db.catalog import (
     save_store_read,
     sync_state,
 )
-from shelfsync.db.stores import StoreRow, list_live
+from shelfsync.db.stores import StoreRow, get_store, list_live
 from shelfsync.platform.secrets import SecretStoreError
+from shelfsync.secure.credentials import SECRETS_WRITE_LOCK
+from shelfsync.store_service import BusySlots
 
 _log = logging.getLogger("shelfsync.catalog")
 
 STOP_WAIT_SECONDS = 2.0  # how long the app's shutdown waits for the run to notice the stop
+# How long a store's turn waits for its busy slot (a Test connection takes at most 60 s plus 1 s of grace), and how
+# often it looks again (Lead (proposed), m3.1 review 1).
+CLAIM_WAIT_SECONDS = 70.0
+CLAIM_POLL_SECONDS = 0.5
 
 
 class KeysMissing(Exception):
@@ -109,9 +121,11 @@ class SyncRunner:
         now: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
+        slots: BusySlots | None = None,
     ) -> None:
         self._open = open_connection
         self._factory = client_factory
+        self._slots = slots
         self._now = now
         self._monotonic = monotonic
         self._make_stop = make_stop
@@ -147,6 +161,12 @@ class SyncRunner:
         if thread is not None:
             thread.join(timeout=wait_seconds)
 
+    def reopen(self) -> None:
+        """The app is starting (again): runs may start. The lifespan calls it, so a second lifespan of one app (tests;
+        never the installed app) isn't left with a closed runner."""
+        with self._lock:
+            self._closed = False
+
     def join(self, timeout: float | None = None) -> None:
         thread = self._thread
         if thread is not None:
@@ -179,31 +199,86 @@ class SyncRunner:
 
         return report
 
-    def _read_one(self, row: StoreRow) -> str | None:
-        """Read and save one store; its outcome. Never raises."""
-        if row.state != "active":
-            _log.info("Store %s catalog read: paused (skipped)", row.code)
-            return "paused"
+    def _read_one(self, listed: StoreRow) -> str | None:
+        """Read and save one store; its outcome. Never raises. The store's busy slot is held for the whole read."""
         with self._lock:
-            self._state = replace(self._state, current=StoreProgress(row.id, 0, 0, 0))
+            self._state = replace(self._state, current=StoreProgress(listed.id, 0, 0, 0))
+        refused = self._claim(listed.id)
+        if refused is not None:
+            _log.info("Store %s catalog read: %s (skipped)", listed.code, refused)
+            return refused
         try:
+            return self._read_claimed(listed)
+        finally:
+            if self._slots is not None:
+                self._slots.release(listed.id)
+
+    def _claim(self, store_id: int) -> str | None:
+        """Take the store's busy slot, waiting while a Test connection or an edit holds it (at most
+        `CLAIM_WAIT_SECONDS`). None when taken; else `busy`, or `stopped` when the app shuts down meanwhile."""
+        if self._slots is None:
+            return None
+        deadline = self._monotonic() + CLAIM_WAIT_SECONDS
+        while not self._slots.claim(store_id):
+            if self._monotonic() >= deadline:
+                return "busy"
+            if self._stop.wait(CLAIM_POLL_SECONDS):
+                return "stopped"
+        return None
+
+    def _current(self, store_id: int) -> tuple[StoreRow | None, WooClient | None, str | None]:
+        """The store's row as it is now and a client built from it with its keys as they are now, read together under
+        the secrets lock, so no edit falls between them (and, with the busy slot held, none can follow until the read
+        ends). The row is None when the store was removed; the client is None for a store that isn't active or whose
+        keys can't be had (the third value says why)."""
+        with SECRETS_WRITE_LOCK:
+            with closing(self._open()) as connection:
+                row = get_store(connection, store_id)
+            if row is None or row.state != "active":
+                return row, None, None
+            try:
+                return row, self._factory(row), None
+            except KeysMissing:
+                return row, None, "keys_missing"
+            except SecretStoreError:
+                return row, None, "secrets_unavailable"
+
+    def _read_claimed(self, listed: StoreRow) -> str | None:
+        row = listed  # the code the log names, until the current row is read
+        client: WooClient | None = None
+        try:
+            current, client, failure = self._current(listed.id)
+            if current is None:
+                _log.info("Store %s catalog read: store_removed (skipped)", listed.code)
+                return "store_removed"
+            row = current
+            if row.state != "active":
+                _log.info("Store %s catalog read: paused (skipped)", row.code)
+                return "paused"
             with closing(self._open()) as connection:
                 state = sync_state(connection, row.id)
                 if state is not None and state.auto_paused_at is not None:
                     _log.info("Store %s catalog read: auto_paused (skipped)", row.code)
                     return "auto_paused"
                 record_read_started(connection, row.id, to_iso(self._now()))
+                if failure is not None or client is None:
+                    return self._failed(connection, row, CatalogRead(failure or "internal"))
                 if address_changed(connection, row.id, row.url):
                     return self._failed(connection, row, CatalogRead("address_changed"))  # no request is sent
-                return self._read_and_save(connection, row)
+                return self._read_and_save(connection, row, client)
         except AddressMoved:
             return self._record_on_fresh_connection(row, "address_changed")
+        except StoreRemoved:
+            return self._record_on_fresh_connection(row, "store_removed")
         except sqlite3.Error as error:
             _log.error("Store %s catalog read: database_error (%s)", row.code, type(error).__name__)
             return self._record_on_fresh_connection(row, "database_error")
         except Exception as error:  # a bug must not stop the other stores; its type is logged, never its text
             _log.error("Store %s catalog read: internal (%s)", row.code, type(error).__name__)
             return self._record_on_fresh_connection(row, "internal")
+        finally:
+            if client is not None:
+                _close_quietly(client)
 
     def _record_on_fresh_connection(self, row: StoreRow, reason: str) -> str:
         """Record an outcome the read's own connection may not be able to (it failed on that connection). A second
@@ -215,27 +290,20 @@ class SyncRunner:
                 )
         except Exception as error:
             _log.error("Store %s: the outcome couldn't be recorded (%s)", row.code, type(error).__name__)
-        if reason == "address_changed":
+        if reason in ("address_changed", "store_removed"):
             log_read(row.code, CatalogRead(reason))
         return reason
 
-    def _read_and_save(self, connection: sqlite3.Connection, row: StoreRow) -> str | None:
-        try:
-            client = self._factory(row)
-        except KeysMissing:
-            return self._failed(connection, row, CatalogRead("keys_missing"))
-        except SecretStoreError:
-            return self._failed(connection, row, CatalogRead("secrets_unavailable"))
-        with client:
-            result = read_catalog(
-                client,
-                spacing_ms=row.spacing_ms,
-                stop=self._stop,
-                failures=_StoredFailures(connection, row.id, self._now),
-                progress=self._progress(row.id),
-                monotonic=self._monotonic,
-                now=self._now,
-            )
+    def _read_and_save(self, connection: sqlite3.Connection, row: StoreRow, client: WooClient) -> str | None:
+        result = read_catalog(
+            client,
+            spacing_ms=row.spacing_ms,
+            stop=self._stop,
+            failures=_StoredFailures(connection, row.id, self._now),
+            progress=self._progress(row.id),
+            monotonic=self._monotonic,
+            now=self._now,
+        )
         if result.ok and self._stop.is_set():
             result = replace(result, reason="stopped", products=())  # the app is shutting down: nothing is saved
         if not result.ok:
@@ -265,3 +333,10 @@ class SyncRunner:
         )
         log_read(row.code, result)
         return reason
+
+
+def _close_quietly(client: WooClient) -> None:
+    try:
+        client.close()
+    except Exception as error:  # a close that fails changes nothing for the run
+        _log.debug("A store client didn't close cleanly (%s)", type(error).__name__)

@@ -33,6 +33,8 @@ from shelfsync.db.stores import StoreRow, get_store, list_live, live_store_count
 from shelfsync.db.wizard import marks, set_mark
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore
 from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.secure.redact import register_secret
+from shelfsync.store_service import BusySlots
 
 
 def store_clients(
@@ -40,20 +42,20 @@ def store_clients(
     transport: Callable[[], httpx.BaseTransport] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> ClientFactory:
-    """The app's client factory: each store's saved key pair from Credential Manager (`KeysMissing` when there is
-    none; `SecretStoreError` when it can't be read). `transport` makes a transport per client (tests only)."""
+    """The app's client factory: each store's saved key pair from Credential Manager. `KeysMissing` when either value
+    isn't saved; `SecretStoreError` (raised by `StoreCredentials.read`, never swallowed) when Credential Manager can't
+    be read, which the runner reports as `secrets_unavailable`. Both values are registered with the log redaction
+    before use. `transport` makes a transport per client (tests only)."""
     credentials = StoreCredentials(secrets)
 
     def build(row: StoreRow) -> WooClient:
-        pair = credentials.pair(row.id)
-        if pair is None:
+        key, secret = credentials.read(row.id)
+        if key is None or secret is None:
             raise KeysMissing
+        register_secret(key)
+        register_secret(secret)
         return WooClient(
-            row.url,
-            pair.consumer_key,
-            pair.consumer_secret,
-            transport=transport() if transport is not None else None,
-            monotonic=monotonic,
+            row.url, key, secret, transport=transport() if transport is not None else None, monotonic=monotonic
         )
 
     return build
@@ -112,10 +114,13 @@ class CatalogService:
         now: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
+        slots: BusySlots | None = None,
     ) -> None:
         self._open = open_connection
         self._slug_lock = threading.Lock()
-        self.runner = SyncRunner(open_connection, client_factory, now=now, monotonic=monotonic, make_stop=make_stop)
+        self.runner = SyncRunner(
+            open_connection, client_factory, now=now, monotonic=monotonic, make_stop=make_stop, slots=slots
+        )
         self._keeper: sqlite3.Connection | None = None  # holds a development database in memory
 
     @classmethod
@@ -136,6 +141,9 @@ class CatalogService:
 
     def stop(self) -> None:
         self.runner.stop()
+
+    def reopen(self) -> None:
+        self.runner.reopen()
 
     def sync_status(self) -> SyncStatus:
         run = self.runner.state()

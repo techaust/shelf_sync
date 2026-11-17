@@ -27,6 +27,7 @@ from shelfsync.db.migrate import migrate
 from shelfsync.db.stores import insert_store
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.store_service import StoreService
 from tests.store_support import KEY, PRODUCTS, SECRET, SYSTEM_STATUS, system_status, unread
 
 # The three near-miss pairs of 01-A section 2 (their slugs are public there); the titles are made up.
@@ -265,6 +266,7 @@ class CatalogRig:
     secrets: MemorySecretStore
     service: CatalogService
     time: FakeTime | None
+    stores: StoreService  # the stores service on the same database and secrets, sharing the busy slots
 
     def add_store(self, code: str, rows: list[dict[str, Any]], **options: Any) -> int:
         store_id = self.db.add_store(code, **options)
@@ -286,6 +288,7 @@ def make_catalog_rig(fake_time: bool = False) -> CatalogRig:
     sites = Sites()
     secrets = MemorySecretStore()
     time = FakeTime() if fake_time else None
+    stores = StoreService(open_connection=db.connect, secrets=secrets, transport=httpx.MockTransport(sites))
     if time is not None:
         clock = time
         service = CatalogService(
@@ -294,7 +297,8 @@ def make_catalog_rig(fake_time: bool = False) -> CatalogRig:
             now=clock.wall,
             monotonic=clock.monotonic,
             make_stop=lambda: clock,
+            slots=stores.slots,
         )
     else:
-        service = CatalogService(db.connect, store_clients(secrets, sites.transport))
-    return CatalogRig(db, sites, secrets, service, time)
+        service = CatalogService(db.connect, store_clients(secrets, sites.transport), slots=stores.slots)
+    return CatalogRig(db, sites, secrets, service, time, stores)

@@ -227,7 +227,7 @@ def _start(
             backups=BackupSettingsService(
                 lambda: connect(paths.database), DailyBackups(paths, lambda: connect(paths.database))
             ),
-            catalog=CatalogService(lambda: connect(paths.database), store_clients(secrets)),
+            catalog=CatalogService(lambda: connect(paths.database), store_clients(secrets), slots=stores.slots),
             wizard=WizardService(lambda: connect(paths.database), storage_ready(storage)),
         )
         serve(app, sock)

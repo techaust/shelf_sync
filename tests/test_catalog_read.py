@@ -231,9 +231,22 @@ def test_a_failure_that_lasts_through_three_retries_ends_the_read_with_its_reaso
     ],
 )
 def test_every_retried_status_is_retried(first: httpx.Response, reason: str) -> None:
+    """Review 1, finding 10: the failed attempt is counted with its reason, and its status is the last failure's."""
+
+    class Recording(MemoryFailureCount):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reasons: list[str] = []
+
+        def failed(self, why: str) -> bool:
+            self.reasons.append(why)
+            return super().failed(why)
+
     store = FakeCatalogStore(rows=rows(2), answers=[first])
-    assert read(store).ok
-    assert len(store.product_requests()) == 2
+    failures = Recording()
+    result = read(store, failures=failures)
+    assert result.ok and len(store.product_requests()) == 2
+    assert failures.reasons == [reason] and result.http_status == first.status_code
 
 
 @pytest.mark.parametrize("error", [httpx.ReadTimeout("slow"), httpx.ConnectError("refused")])

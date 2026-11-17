@@ -18,7 +18,6 @@ from shelfsync.api.app import create_app
 from shelfsync.catalog.service import WizardService
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.token import InstallToken
-from shelfsync.store_service import StoreService
 from tests.catalog_support import NEAR_MISS_PAIRS, CatalogRig, download, make_catalog_rig, raw_product, wait_for
 from tests.store_support import KEY, SECRET, wp_error
 from tests.support import WRITE_HEADERS, FakeClock, Harness
@@ -36,7 +35,7 @@ def make_api_rig(fake_time: bool = True) -> ApiRig:
     rig = make_catalog_rig(fake_time=fake_time)
     storage = {"ready": False}
     wizard = WizardService(rig.db.connect, lambda: storage["ready"])
-    stores = StoreService(open_connection=rig.db.connect, secrets=rig.secrets)
+    stores = rig.stores  # the same busy slots as the runner
     install = MemorySecretStore()
     clock = FakeClock()
     app = create_app(
@@ -312,6 +311,15 @@ def test_the_apps_shutdown_stops_a_running_read_and_changes_nothing() -> None:
     assert api.rig.service.runner.state().outcomes == {1: "stopped"}
     assert api.rig.db.rows("SELECT COUNT(*) FROM store_product") == [(0,)]
     assert api.rig.db.rows("SELECT COUNT(*) FROM catalog_item") == [(0,)]
+    # Review 1, finding 6: after the shutdown no run starts; a second lifespan of the same app opens the runner again.
+    assert api.client.post("/api/sync", headers=WRITE_HEADERS).json() == {"error": "sync_running"}
+    with TestClient(api.harness.app, base_url="http://127.0.0.1:47615") as client:
+        client.cookies.update(api.client.cookies)
+        with closing(api.rig.db.connect()) as connection:
+            connection.execute("UPDATE store SET spacing_ms = 50")
+        assert client.post("/api/sync", headers=WRITE_HEADERS).status_code == 202
+        api.rig.service.runner.join(30.0)
+    assert api.rig.service.runner.state().outcomes == {1: None}
 
 
 # ---- the log -------------------------------------------------------------------------------------------------------

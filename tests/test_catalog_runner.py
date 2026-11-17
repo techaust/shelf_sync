@@ -5,6 +5,7 @@ stop at shutdown changing nothing, and the client factory seam."""
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from contextlib import closing
 
 import httpx
@@ -12,9 +13,13 @@ import pytest
 
 from shelfsync.catalog import runner as runner_module
 from shelfsync.catalog.runner import KeysMissing, SyncRunner
+from shelfsync.catalog.service import store_clients
 from shelfsync.db.catalog import clear_address_guard
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.store_service import StoreError
 from tests.catalog_support import CatalogRig, FakeCatalogStore, make_catalog_rig, raw_product, wait_for
-from tests.store_support import system_status
+from tests.laragon_support import basic
+from tests.store_support import KEY, KEY_2, SECRET, SECRET_2, FailingSecretStore, system_status
 
 
 def test_a_run_reads_every_store_one_after_another_and_links_by_slug() -> None:
@@ -312,3 +317,126 @@ def test_after_stop_no_run_starts() -> None:
     rig.service.stop()
     assert not rig.service.start_sync()
     assert rig.sites.requests == []
+    rig.service.reopen()  # review 1, finding 6: a new lifespan opens it again
+    assert rig.service.start_sync()
+    rig.service.runner.join(30.0)
+
+
+# ---- review 1 (m3.1) -----------------------------------------------------------------------------------------------
+
+
+def _once(action: Callable[[], object]) -> Callable[[int], None]:
+    done: list[bool] = []
+
+    def hook(page: int) -> None:
+        if not done:
+            done.append(True)
+            action()
+
+    return hook
+
+
+def test_an_address_and_keys_move_between_two_stores_sends_the_new_keys_only_to_the_new_host() -> None:
+    """Finding 1 (high): PW's address and keys are changed through the stores service while GF is read. At PW's turn
+    its row and keys are read as they are now, so no request carries the new keys to the old host."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1, "alpha")])
+    pw = rig.add_store("PW", [raw_product(2, "beta")])
+    rig.sites.stores["NW"] = FakeCatalogStore(rows=[raw_product(3, "gamma")])
+    rig.sites.stores["GF"].before_page = _once(
+        lambda: rig.stores.update(pw, {"url": "https://store-nw.example"}, (KEY_2, SECRET_2))
+    )
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None, pw: None}
+    by_host: dict[str, set[str]] = {}
+    for request in rig.sites.requests:
+        by_host.setdefault(request.url.host, set()).add(request.headers["Authorization"])
+    assert by_host == {"store-gf.example": {basic(KEY, SECRET)}, "store-nw.example": {basic(KEY_2, SECRET_2)}}
+    assert rig.db.rows("SELECT slug FROM store_product WHERE store_id = ?", pw) == [("gamma",)]
+
+
+def test_an_edit_a_removal_and_a_test_connection_during_a_stores_read_answer_busy() -> None:
+    """Finding 1: the run holds the store's busy slot for its whole read, and lets it go after."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    refused: list[str] = []
+
+    def meddle() -> None:
+        for action in (
+            lambda: rig.stores.update(gf, {"url": "https://store-zz.example"}, (KEY_2, SECRET_2)),
+            lambda: rig.stores.set_keys(gf, KEY_2, SECRET_2),
+            lambda: rig.stores.delete(gf),
+            lambda: rig.stores.test(gf),
+        ):
+            try:
+                action()
+            except StoreError as error:
+                refused.append(error.code)
+
+    rig.sites.stores["GF"].before_page = _once(meddle)
+    rig.run()
+    assert refused == ["busy"] * 4
+    assert rig.service.runner.state().outcomes == {gf: None}
+    assert rig.stores.slots.ids == set()  # given back
+    assert {request.headers["Authorization"] for request in rig.sites.requests} == {basic(KEY, SECRET)}
+
+
+def test_a_pause_during_store_ones_read_makes_store_two_paused() -> None:
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    pw = rig.add_store("PW", [raw_product(2)])
+    rig.sites.stores["GF"].before_page = _once(lambda: rig.stores.update(pw, {"state": "paused"}, None))
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None, pw: "paused"}
+    assert {request.url.host for request in rig.sites.requests} == {"store-gf.example"}
+
+
+def test_a_store_removed_before_its_turn_is_skipped() -> None:
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    pw = rig.add_store("PW", [raw_product(2)])
+    rig.sites.stores["GF"].before_page = _once(lambda: rig.stores.delete(pw))
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None, pw: "store_removed"}
+    assert {request.url.host for request in rig.sites.requests} == {"store-gf.example"}
+
+
+def test_a_test_connection_holding_the_slot_is_waited_for_then_the_turn_gives_up_busy() -> None:
+    """APL-12's spacing: the read never runs beside a Test connection. It waits (at most 70 s) and then answers busy."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    assert rig.stores.slots.claim(gf)  # a Test connection is running
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "busy"} and rig.sites.requests == []
+    assert rig.time is not None and sum(rig.time.waits) >= runner_module.CLAIM_WAIT_SECONDS
+    rig.stores.slots.release(gf)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None}
+
+
+def test_a_test_connection_that_ends_while_the_turn_waits_lets_the_read_go_ahead() -> None:
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    assert rig.stores.slots.claim(gf)
+    assert rig.time is not None
+    rig.time.on_wait = lambda: rig.stores.slots.release(gf)  # the test ends during the first wait
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: None}
+
+
+def test_a_credential_manager_failure_is_secrets_unavailable_not_keys_missing() -> None:
+    """Finding 3, through the real `store_clients`: a store whose keys can't be read isn't reported as having none."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    failing = FailingSecretStore()
+    failing.fail_get = True
+    rig.service.runner._factory = store_clients(failing, rig.sites.transport)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "secrets_unavailable"} and rig.sites.requests == []
+    missing = MemorySecretStore()
+    rig.service.runner._factory = store_clients(missing, rig.sites.transport)
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "keys_missing"}
+    missing.set("store-1-key", KEY)  # one of the two values only
+    rig.run()
+    assert rig.service.runner.state().outcomes == {gf: "keys_missing"}

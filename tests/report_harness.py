@@ -15,6 +15,7 @@ from shelfsync.catalog import report
 from shelfsync.paths import resolve_data_paths
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.tray.instance import FakeInstanceLock
 from tests.catalog_support import NEAR_MISS_PAIRS, FakeCatalogStore, FakeTime, Sites, download, raw_product
 from tests.store_support import KEY, SECRET
 
@@ -64,6 +65,9 @@ def main() -> int:
         make_stop=lambda: clock,
         monotonic=clock.monotonic,
         now=clock.wall,
+        # A fake of the app's instance lock: the owner's own ShelfSync may be running on this PC, and the
+        # real mutex is per Windows user (tested in process with a lock that is taken).
+        instance_lock=lambda paths: FakeInstanceLock(),
     )
 
 

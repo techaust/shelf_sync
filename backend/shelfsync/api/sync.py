@@ -100,6 +100,7 @@ def sync_response(status: SyncStatus) -> SyncResponse:
 def make_sync_router(service: CatalogService) -> APIRouter:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        service.reopen()  # the app is starting: runs may start (a second lifespan of one app included)
         try:
             yield
         finally:

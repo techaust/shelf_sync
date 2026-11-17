@@ -87,6 +87,7 @@ RETRY_AFTER_MAX_SECONDS = 60.0
 STORE_SECONDS = 600.0  # one store's whole read
 FAILURES_TO_PAUSE = 10
 LISTING_FIELDS = "id,slug,name,type,status,date_modified_gmt,downloads,meta_data"
+SYSTEM_STATUS_PARAMS = {"_fields": "environment"}  # the first request's query (also what L1 shows)
 WC_ID_MAX = 2**63 - 1
 
 # Retried, whatever the status; `blocked` only when it came as a 503 (a 403 firewall page isn't retried).
@@ -388,7 +389,7 @@ def log_read(code: str, result: CatalogRead) -> None:
 
 
 def _check_version(session: _Session) -> str:
-    response = session.request("GET", SYSTEM_STATUS_PATH, {"_fields": "environment"}, 1024 * 1024)
+    response = session.request("GET", SYSTEM_STATUS_PATH, dict(SYSTEM_STATUS_PARAMS), 1024 * 1024)
     data = _json(response.body)
     environment = data.get("environment") if isinstance(data, dict) else None
     if not isinstance(environment, dict):

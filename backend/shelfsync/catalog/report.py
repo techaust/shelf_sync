@@ -4,9 +4,14 @@
 
 Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only after the owner's go-ahead, with
 `Tee-Object` into `.logs\\`. What it does:
+- refuses to run while ShelfSync runs (it takes the app's own instance lock, `tray/instance.py`: the per-user
+  mutex, and `instance.lock` in the data folder when that file exists), and holds that lock until it ends, so the
+  app can't start meanwhile; quit ShelfSync from the tray first;
 - reads the data folder's live stores (`SHELFSYNC_DATA_DIR`, or `%LOCALAPPDATA%\\ShelfSync`) from the database opened
-  **read-only** (a `mode=ro` URI; it never migrates and reads only the `store` table, so an installed app still at
-  schema 2 is fine), and their keys from Credential Manager;
+  **read-only** (`mode=ro&immutable=1`: with nothing running and no `-wal` file, every commit is in the main file,
+  and SQLite then makes no `-wal` or `-shm` file; a `-wal` left by a ShelfSync that didn't close cleanly is refused
+  with a message); it never migrates and reads only the `store` table, so an installed app still at schema 2 is
+  fine; and their keys from Credential Manager (a read failure stops it, never reads as missing keys);
 - prints the requests it will make (paths and parameters, never the address) and waits for Enter (`--yes` skips it);
 - reads every active store one after another with the app's reader (`apply/catalog_read.py`: GET only, retries,
   bounds), at least **1,000 ms** between requests (`--spacing-ms`, never lower; a store's own spacing when higher),
@@ -36,25 +41,33 @@ from typing import TextIO
 import httpx
 
 from shelfsync.apply.catalog_read import (
-    LISTING_FIELDS,
     MAX_PAGES,
-    PER_PAGE,
+    SYSTEM_STATUS_PARAMS,
     CatalogRead,
     MemoryFailureCount,
     Stop,
     describe_bad,
+    listing_params,
     read_store_catalog,
 )
 from shelfsync.apply.woocommerce import PRODUCTS_PATH, SYSTEM_STATUS_PATH, WooClient
 from shelfsync.catalog.linking import KnownLink, Placed, near_misses, plan_links
 from shelfsync.catalog.model import META_PREFIX, Product
-from shelfsync.catalog.names import TRASHED_SUFFIX, is_canonical_slug, is_linkable_slug, normalise_title
-from shelfsync.catalog.slots import main_download, plan_slots
+from shelfsync.catalog.names import (
+    TRASHED_SUFFIX,
+    is_canonical_slug,
+    is_linkable_slug,
+    normalise_title,
+    wp_suffix_pair,
+)
+from shelfsync.catalog.slots import StoreDownloads, main_download, plan_item_slots
 from shelfsync.clock import utc_now
 from shelfsync.logs import QUIET_LOGGERS, redact
-from shelfsync.paths import resolve_data_paths
+from shelfsync.paths import DataPaths, resolve_data_paths
 from shelfsync.platform.secrets import SecretStore, SecretStoreError, default_secret_store
 from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.secure.redact import register_secret
+from shelfsync.tray.instance import CombinedInstanceLock, InstanceLock, WindowsFileLock, WindowsInstanceLock
 
 MIN_SPACING_MS = 1000
 # The three near-miss pairs of 01-A §2 (their slugs are public there). Reported by number, found or not.
@@ -64,7 +77,6 @@ KNOWN_NEAR_MISSES: tuple[frozenset[str], ...] = (
     frozenset({"css-igniter-lense-wordpress-theme", "css-igniter-lense-wordpress-theme-2"}),
 )
 _SHORTCODE = re.compile(r'\[amazon_s3 object="([^"\]]+)"\]')
-_WP_SUFFIX = re.compile(r"(.+)-(?:[2-9]|[1-9][0-9]+)")
 
 
 class ReportError(Exception):
@@ -85,16 +97,19 @@ TransportFactory = Callable[[StoreRef], httpx.BaseTransport]
 
 
 def read_stores(database: Path) -> list[StoreRef]:
-    """The live stores, from the database opened read-only (no migration, the `store` table only).
-
-    `mode=ro` alone would make SQLite create the `-wal` and `-shm` files of a WAL database that has none and leave
-    them behind. With no `-wal` beside it, the app isn't running and everything is in the main file, so `immutable=1`
-    is added and nothing is created (Lead (proposed)); while the app runs, its `-wal` exists and a plain `mode=ro` read
-    sees its latest commits."""
+    """The live stores, from the database opened read-only (no migration, the `store` table only). The caller holds
+    the app's instance lock, so ShelfSync isn't running: with no `-wal` file every commit is in the main file, and
+    `immutable=1` keeps SQLite from making a `-wal` or `-shm` file (`mode=ro` alone makes both and leaves them).
+    A `-wal` file means a ShelfSync that didn't close cleanly: refused, since `immutable=1` would read past its
+    commits (Lead (proposed), m3.1 review 1)."""
     if not database.is_file():
         raise ReportError("ShelfSync's database isn't in the data folder. Start ShelfSync once and add the stores.")
-    wal = database.with_name(database.name + "-wal")
-    uri = database.resolve().as_uri() + ("?mode=ro" if wal.exists() else "?mode=ro&immutable=1")
+    if database.with_name(database.name + "-wal").exists():
+        raise ReportError(
+            "ShelfSync didn't close cleanly last time, so its database has changes not yet merged. Start ShelfSync, "
+            "quit it from the tray, then run this again."
+        )
+    uri = database.resolve().as_uri() + "?mode=ro&immutable=1"
     try:
         connection = sqlite3.connect(uri, uri=True)
     except sqlite3.Error as error:
@@ -113,8 +128,14 @@ def read_stores(database: Path) -> list[StoreRef]:
 # ---- what is printed ------------------------------------------------------------------------------------------------
 
 
+def _query(params: dict[str, str]) -> str:
+    return "&".join(f"{name}={value}" for name, value in params.items())
+
+
 def plan_lines(stores: Sequence[StoreRef], spacing_ms: int) -> list[str]:
-    params = f"downloadable=true&status=any&orderby=id&order=asc&per_page={PER_PAGE}&page=1..N&_fields={LISTING_FIELDS}"
+    """The requests, built from the reader's own parameters (`SYSTEM_STATUS_PARAMS`, `listing_params`), the page
+    shown as `1..N`."""
+    params = _query({**listing_params(1), "page": "1..N"})
     lines = [
         "ShelfSync L1, the dry first read: read-only, nothing is saved. These requests go to each active store, one "
         "store after another:"
@@ -125,7 +146,7 @@ def plan_lines(stores: Sequence[StoreRef], spacing_ms: int) -> list[str]:
             continue
         lines += [
             f"Store {store.code}, at least {max(store.spacing_ms, spacing_ms):,} ms between requests:",
-            f"  GET {SYSTEM_STATUS_PATH}?_fields=environment",
+            f"  GET {SYSTEM_STATUS_PATH}?{_query(SYSTEM_STATUS_PARAMS)}",
             f"  GET {PRODUCTS_PATH}?{params}",
         ]
     lines.append(
@@ -172,7 +193,8 @@ def store_lines(store: StoreRef, result: CatalogRead) -> list[str]:
         named += index is not None and not single
         by_single += single
         no_main += index is None and bool(product.downloads)
-        unslotted += plan_slots(product.downloads, store.main_button, []).unslotted
+        alone = StoreDownloads(store.id, product.downloads, store.main_button)
+        unslotted += plan_item_slots([alone], []).counts[store.id].unslotted
     plain = matched = unmatched = 0
     for product in products:
         bases = _bases(product)
@@ -221,7 +243,7 @@ def _same_title_again(products: Sequence[Product]) -> int:
 
 def _suffix_forms(products: Sequence[Product]) -> int:
     slugs = {product.slug for product in products if is_linkable_slug(product.slug)}
-    return sum(1 for slug in slugs if (match := _WP_SUFFIX.fullmatch(slug)) is not None and match.group(1) in slugs)
+    return sum(1 for slug in slugs if (base := slug.rsplit("-", 1)[0]) in slugs and wp_suffix_pair(base, slug))
 
 
 def cross_lines(reports: Sequence[tuple[StoreRef, CatalogRead]]) -> list[str]:
@@ -329,6 +351,7 @@ def main(
     make_stop: Callable[[], Stop] = threading.Event,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = utc_now,
+    instance_lock: Callable[[DataPaths], InstanceLock] | None = None,
 ) -> int:
     args = parse_args(argv)
     stdout = out if out is not None else sys.stdout
@@ -348,7 +371,16 @@ def main(
     for name, level in QUIET_LOGGERS.items():
         logging.getLogger(name).setLevel(level)
     try:
-        return _run(args, secrets_factory, transport_factory, confirm, say, stderr, make_stop, monotonic, now)
+        paths = resolve_data_paths()
+        if not paths.database.is_file():
+            raise ReportError("ShelfSync's database isn't in the data folder. Start ShelfSync once and add the stores.")
+        lock = _nothing_runs(paths, instance_lock or app_instance_lock)
+        try:
+            return _run(
+                args, paths, secrets_factory, transport_factory, confirm, say, stderr, make_stop, monotonic, now
+            )
+        finally:
+            lock.release()
     except ReportError as error:
         say(str(error), stderr)
         return 1
@@ -362,8 +394,37 @@ def main(
         root.removeHandler(handler)
 
 
+def app_instance_lock(paths: DataPaths) -> InstanceLock:
+    """The running app's own lock (`tray/instance.py`, what a second launch uses to find the running copy): the
+    per-user mutex, and `instance.lock` in the data folder when that file exists (it is opened, never made). Off
+    Windows the mutex refuses to be built (`OSError`)."""
+    mutex = WindowsInstanceLock()
+    if paths.instance_lock.is_file():
+        return CombinedInstanceLock(mutex, WindowsFileLock(paths.instance_lock))
+    return mutex
+
+
+def _nothing_runs(paths: DataPaths, make_lock: Callable[[DataPaths], InstanceLock]) -> InstanceLock:
+    """Take the app's instance lock, or refuse: ShelfSync is running (or whether it is can't be told). The caller
+    holds it to the end, so the app can't start meanwhile."""
+    try:
+        lock = make_lock(paths)
+        taken = lock.acquire()
+    except OSError as error:
+        raise ReportError(
+            f"Couldn't tell whether ShelfSync is running ({type(error).__name__}). Nothing was read."
+        ) from None
+    if not taken:
+        raise ReportError(
+            "ShelfSync is running. Quit it first (right-click its icon in the taskbar's notification area, then "
+            "Quit), then run this again. Nothing was read."
+        )
+    return lock
+
+
 def _run(
     args: argparse.Namespace,
+    paths: DataPaths,
     secrets_factory: Callable[[], SecretStore],
     transport_factory: TransportFactory | None,
     confirm: Callable[[str], str],
@@ -373,7 +434,7 @@ def _run(
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
 ) -> int:
-    stores = read_stores(resolve_data_paths().database)
+    stores = read_stores(paths.database)
     if args.store is not None:
         stores = [store for store in stores if store.code == args.store]
         if not stores:
@@ -392,15 +453,15 @@ def _run(
     for store in stores:
         if store.state != "active":
             continue
-        pair = credentials.pair(store.id)
-        if pair is None:
+        key, secret = credentials.read(store.id)  # a Credential Manager failure stops the command
+        if key is None or secret is None:
             say(f"Store {store.code}: FAILED, keys_missing (no key pair saved in Credential Manager)")
             reports.append((store, CatalogRead("keys_missing")))
             continue
+        register_secret(key)
+        register_secret(secret)
         transport = transport_factory(store) if transport_factory is not None else None
-        with WooClient(
-            store.url, pair.consumer_key, pair.consumer_secret, transport=transport, monotonic=monotonic
-        ) as client:
+        with WooClient(store.url, key, secret, transport=transport, monotonic=monotonic) as client:
             result = read_store_catalog(
                 client,
                 store.code,
