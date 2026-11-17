@@ -147,6 +147,21 @@ def _is_tls_error(error: BaseException) -> bool:
     return False
 
 
+DECLARED_MAX = (
+    10**18
+)  # a `Content-Length` longer than 18 digits reads as this: more than any cap, never converted whole
+
+
+def declared_length(value: str | None) -> int | None:
+    """A `Content-Length` as a number: plain ASCII digits only, else None (absent, as for a chunked answer, or
+    anything else). One longer than 18 digits reads as `DECLARED_MAX`, still more than any body cap, so a hostile
+    value is never converted whole (Python refuses to convert one over 4,300 digits). `WooClient.get`'s cap check and
+    L1's `Wire.declared_bytes` both use it (t9 review 1)."""
+    if value is None or not (value.isascii() and value.isdigit()):
+        return None
+    return int(value) if len(value) <= 18 else DECLARED_MAX
+
+
 def _redirect_host(location: str | None) -> str | None:
     """The host a redirect points at, lowercased, or None. A relative target stays on the store's own host; one that
     can't be parsed (httpx raises `InvalidURL`, and the IDNA codec a `ValueError` subclass, `idna.IDNAError`) names
@@ -232,8 +247,8 @@ class WooClient:
         try:
             with self._client.stream("GET", self._base + path, params=params, timeout=timeout) as response:
                 answered = response.status_code
-                declared = response.headers.get("content-length", "")
-                if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
+                declared = declared_length(response.headers.get("content-length"))
+                if declared is not None and declared > max_bytes:
                     raise ReadRefused("bad_response")  # refused before a byte of it is read
                 encoding = response.headers.get("content-encoding", "identity").strip().lower()
                 if encoding not in ("", "identity"):

@@ -35,7 +35,7 @@ from shelfsync.secure.credentials import StoreCredentials
 from shelfsync.tray.instance import CombinedInstanceLock, FakeInstanceLock
 from tests.catalog_support import NEAR_MISS_PAIRS, FakeCatalogStore, FakeTime, Sites, raw_product
 from tests.report_harness import MARK
-from tests.store_support import KEY, SECRET, FailingSecretStore
+from tests.store_support import KEY, SECRET, STORE_URL, FailingSecretStore
 
 REPO = Path(__file__).resolve().parents[1]
 AT = "2026-11-17T12:00:00.000000Z"
@@ -400,13 +400,14 @@ def test_the_trace_and_summary_in_a_fresh_process_hold_no_host_key_cookie_query_
         traces[1],
     ), traces[1]
     out = done.stdout
-    assert (
-        "Settings: 50 products a page, at most 80 pages; fields id,slug,name,type,status,date_modified_gmt,downloads; "
-        "at most 1,200 s for each store's read and 120 s for one request; read timeout 90 s; one line per request "
-        "(--trace)"
-    ) in out
+    assert re.search(
+        r"Settings: 50 products a page, at most 80 pages; fields id,slug,name,type,status,date_modified_gmt,downloads; "
+        r"at most 1,200 s for each store's read and 120 s for one request, each plus up to the read timeout after the "
+        r"last byte; read timeout 90 s; times are local, [^;]+; one line per request \(--trace\)",
+        out,
+    )
     assert "  meta not asked (--no-meta)" in out and "meta latest_version" not in out
-    assert "Timing, store GF: requests 2, median 0.0 s, slowest 0.0 s; largest page " in out
+    assert "Timing, store GF: read ok; requests 2, median 0.0 s, slowest 0.0 s; largest page " in out
     assert "  timeouts 0: after the headers 0, before them or not known 0; first stall at request none" in out
     assert "  timeouts by stage: none; by what ended them: none" in out
 
@@ -506,14 +507,14 @@ def test_trace_prints_a_line_per_attempt_as_it_ends_with_its_request_number(data
     ]
     assert "connection unknown" in traces[0] and "waited 3,000 ms" in traces[2] and "retry-after yes" in traces[1]
     assert out.index(traces[-1]) < out.index("Store GF: WooCommerce")  # printed as the read goes
-    assert "Timing, store GF: requests 3," in out
+    assert "Timing, store GF: read ok; requests 3," in out
 
 
 def test_without_trace_no_attempt_line_is_printed_but_the_summary_is(data_paths: DataPaths) -> None:
     make_database(data_paths)
     code, out, _, _ = in_process(data_paths, "--yes")
     assert code == 0 and not [line for line in out.splitlines() if TRACE_LINE.match(line)]
-    assert "Timing, store GF: requests 2" in out and "Timing, store PW: requests 2" in out
+    assert "Timing, store GF: read ok; requests 2" in out and "Timing, store PW: read ok; requests 2" in out
 
 
 def test_a_store_without_keys_has_no_timing_line(data_paths: DataPaths) -> None:
@@ -524,7 +525,6 @@ def test_a_store_without_keys_has_no_timing_line(data_paths: DataPaths) -> None:
 
 def _attempt(**changes: Any) -> Attempt:
     base = Attempt(
-        what="products",
         page=13,
         attempt=1,
         outcome="timeout",
@@ -532,9 +532,8 @@ def _attempt(**changes: Any) -> Attempt:
         elapsed_ms=30_960,
         body_bytes=118_400,
         headers=True,
-        facts=ResponseFacts(True, "cloudflare", "dynamic", ("__cf_bm",), 2, "json", False, True, ("x-cache",)),
         wire=Wire(
-            facts=None,
+            facts=ResponseFacts(True, "cloudflare", "dynamic", ("__cf_bm",), 2, "json", False, True, ("x-cache",)),
             stage="body",
             new_connection=False,
             headers_ms=840,
@@ -559,9 +558,10 @@ def test_one_trace_line_holds_fixed_words_and_numbers_only() -> None:
         "content json, cf-mitigated no, retry-after yes, hints x-cache, cookies __cf_bm, other cookies 2"
     )
     nothing = _attempt(
-        page=None, what="system_status", outcome="unreachable", http_status=None, body_bytes=None, headers=None,
-        facts=None, wire=None, ended=None, waited_ms=0,
+        page=None, outcome="unreachable", http_status=None, body_bytes=None, headers=None, wire=None, ended=None,
+        waited_ms=0,
     )  # fmt: skip
+    assert (nothing.what, nothing.facts) == ("system_status", None)  # both follow from `page` and `wire`
     assert report.trace_line("GF", 1, nothing, local) == (
         "09:05:07 GF #1 system_status try 1: unreachable (stage unknown); connection unknown, headers none, "
         "first byte none, longest gap none, bytes unknown, took 31.0 s, waited 0 ms; no answer"
@@ -576,18 +576,132 @@ def test_one_trace_line_holds_fixed_words_and_numbers_only() -> None:
 def test_the_timing_summary_counts_timeouts_by_stage_and_by_what_ended_them() -> None:
     attempts = [
         _attempt(outcome="ok", elapsed_ms=400, ended=None, headers=True),
-        _attempt(outcome="ok", elapsed_ms=600, ended=None, headers=True),
+        _attempt(outcome="ok", elapsed_ms=600, ended=None, headers=True, body_bytes=250_000),
         _attempt(),  # a timeout during the body, 30,960 ms
         _attempt(elapsed_ms=120_000, ended="attempt_bound", headers=True),
         _attempt(
             elapsed_ms=10_000, ended="read_timeout", headers=False, wire=Wire(stage="headers", error="read_timeout")
         ),
-        _attempt(outcome="rate_limited", elapsed_ms=200, ended=None),
+        _attempt(outcome="rate_limited", elapsed_ms=200, ended=None, body_bytes=900_000),  # not a page read
     ]
-    result = CatalogRead("timeout", largest_page_bytes=250_000)
-    assert report.timing_lines("PW", attempts, result) == [
-        "Timing, store PW: requests 6, median 5.3 s, slowest 120.0 s; largest page 250,000 bytes",
+    assert report.timing_lines("PW", attempts, CatalogRead("server_error")) == [
+        "Timing, store PW: read server_error; requests 6, median 5.3 s, slowest 120.0 s; largest page 250,000 bytes",
         "  timeouts 3: after the headers 2, before them or not known 1; first stall at request 3",
         "  timeouts by stage: body 2, headers 1; by what ended them: attempt_bound 1, read_timeout 2",
     ]
-    assert report.timing_lines("GF", [], CatalogRead("stopped")) == ["Timing, store GF: no requests sent"]
+    assert report.timing_lines("GF", [], CatalogRead("stopped")) == ["Timing, store GF: read stopped; no requests sent"]
+
+
+@pytest.mark.parametrize(
+    ("last", "result", "words"),
+    [
+        (_attempt(outcome="ok", ended=None), CatalogRead(None), "ok"),
+        (_attempt(outcome="ok", ended=None), CatalogRead("count_mismatch"), "count_mismatch"),
+        (_attempt(outcome="ok", ended=None), CatalogRead("timeout"), "timeout, between requests at the store's bound"),
+        (_attempt(attempt=2), CatalogRead("timeout"), "timeout, between requests at the store's bound"),
+        (_attempt(attempt=4), CatalogRead("timeout"), "timeout"),
+        (_attempt(attempt=2), CatalogRead("timeout", auto_paused=True), "timeout"),
+        (None, CatalogRead("timeout"), "timeout, between requests at the store's bound"),
+        (_attempt(outcome="ok", ended=None), None, "stopped by Ctrl+C"),
+    ],
+    ids=["ok", "other reason", "after a page", "retry wait", "fourth try", "auto-paused", "no request", "ctrl+c"],
+)
+def test_how_the_read_ended_names_a_timeout_between_requests(
+    last: Attempt | None, result: CatalogRead | None, words: str
+) -> None:
+    """Review 1, finding 3: the reader's own bound checks (the wait before a request, the deadline check before one)
+    end a read with `timeout` without an attempt `observe` sees; the summary says so."""
+    assert report.read_ended([] if last is None else [last], result) == words
+
+
+def test_a_read_ended_by_the_wait_before_a_request_is_reported_between_requests() -> None:
+    """The reader itself: a spacing wait that would pass the store's bound ends the read with no attempt to see."""
+    store = FakeCatalogStore(rows=[raw_product(1)])
+    seen: list[Attempt] = []
+    with WooClient(STORE_URL, KEY, SECRET, transport=store.transport, monotonic=store.time.monotonic) as client:
+        result = catalog_read.read_catalog(
+            client,
+            spacing_ms=1000,
+            stop=store.time,
+            failures=catalog_read.MemoryFailureCount(),
+            monotonic=store.time.monotonic,
+            now=store.time.wall,
+            store_seconds=0.5,
+            observe=seen.append,
+        )
+    assert result.reason == "timeout" and [a.outcome for a in seen] == ["ok"]
+    assert report.timing_lines("GF", seen, result)[0].startswith(
+        "Timing, store GF: read timeout, between requests at the store's bound; requests 1,"
+    )
+
+
+def test_each_stores_summary_follows_its_counts_before_the_next_store(data_paths: DataPaths) -> None:
+    """Review 1, finding 2: a store's summary is printed with its counts, so a later failure can't lose it."""
+    make_database(data_paths)
+    code, out, _, _ = in_process(data_paths, "--yes")
+    assert code == 0
+    assert out.index("Store GF: WooCommerce") < out.index("Timing, store GF:") < out.index("Store PW: WooCommerce")
+    assert out.index("Timing, store PW:") < out.index("Across 2 stores:")
+
+
+def test_ctrl_c_during_a_store_prints_what_was_gathered_so_far(data_paths: DataPaths) -> None:
+    """Review 1, finding 2: Ctrl+C in the middle of PW's read: GF's summary is already out, PW's attempts so far are
+    summed up, the trace lines already printed stay, and the command stops as before."""
+    make_database(data_paths)
+    pw = FakeCatalogStore(rows=[raw_product(2)])
+
+    def interrupt(page: int) -> None:
+        raise KeyboardInterrupt
+
+    pw.before_page = interrupt
+    stores = {"GF": FakeCatalogStore(rows=[raw_product(1)]), "PW": pw}
+    code, out, err, _ = in_process(data_paths, "--yes", "--trace", stores=stores)
+    assert code == 1 and "Stopped. Nothing was saved." in err
+    assert "Timing, store GF: read ok; requests 2," in out
+    assert "Timing, store PW: read stopped by Ctrl+C; requests 1," in out  # system_status; page 1 never answered
+    assert [line[9:].split(":")[0] for line in out.splitlines() if TRACE_LINE.match(line)] == [
+        "GF #1 system_status try 1",
+        "GF #2 products page 1 try 1",
+        "PW #1 system_status try 1",
+    ]
+    assert "Store PW: WooCommerce" not in out and "Across" not in out
+
+
+def test_the_settings_line_names_the_local_zone_and_the_bounds_truthfully(data_paths: DataPaths) -> None:
+    """Review 1, findings 1 and 4: the bounds hold plus up to the read timeout after the last byte; the trace's times
+    are local, and the zone is named once."""
+    make_database(data_paths)
+    _, out, _, _ = in_process(data_paths, "--yes", "--store", "GF")
+    zone = FakeTime().wall().astimezone().tzname()
+    assert (
+        "at most 600 s for each store's read and 120 s for one request, each plus up to the read timeout after the "
+        f"last byte; read timeout 30 s; times are local, {zone}"
+    ) in out
+    settings = report.Settings(1000, catalog_read.ListingShape(), 600.0, 30, 120.0, False, "India Standard Time")
+    assert "times are local, India Standard Time" in report.plan_lines([], settings)[1]
+
+
+class _Closing(httpx.MockTransport):
+    def __init__(self) -> None:
+        super().__init__(lambda request: httpx.Response(200))
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_the_transport_is_closed_when_the_client_refuses_its_arguments() -> None:
+    """Review 1, finding 5: an address that isn't https is refused by `WooClient`; the transport built for it is
+    closed, not left open."""
+    made: list[_Closing] = []
+
+    def factory(store: report.StoreRef) -> httpx.BaseTransport:
+        made.append(_Closing())
+        return made[-1]
+
+    store = report.StoreRef(1, "GF", "http://store-gf.example", 150, "Download", "active")
+    settings = report.Settings(1000, catalog_read.ListingShape(), 600.0, 30, 120.0, False, "UTC")
+    time = FakeTime()
+    with pytest.raises(ValueError, match="https"):
+        report._read_one(store, KEY, SECRET, settings, [], factory, print, time, time.monotonic, time.wall)
+    assert len(made) == 1 and made[0].closed

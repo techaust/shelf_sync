@@ -41,9 +41,9 @@ from shelfsync.apply.catalog_read import (
     read_catalog,
     response_facts,
 )
-from shelfsync.apply.woocommerce import NonGetRefused, WooClient
+from shelfsync.apply.woocommerce import DECLARED_MAX, NonGetRefused, WooClient
 from shelfsync.catalog import runner
-from tests.catalog_support import FakeCatalogStore, make_catalog_rig, raw_product
+from tests.catalog_support import FakeCatalogStore, FakeTime, make_catalog_rig, raw_product
 from tests.store_support import KEY, PRODUCTS, SECRET, STORE_URL, StallingStream, stalling
 
 
@@ -379,10 +379,11 @@ def test_whatever_the_headers_say_the_facts_hold_fixed_words_and_counts_only(
 def test_the_facts_transport_hands_the_answer_on_unchanged_and_its_facts_once() -> None:
     inner = httpx.MockTransport(lambda request: httpx.Response(200, headers=FACT_HEADERS, content=b"[]"))
     facts = FactsTransport(inner)
-    assert facts.take() is None and not facts.seen()
+    assert facts.take() is None
     response = facts.handle_request(httpx.Request("GET", STORE_URL))
     assert response.headers.get_list("set-cookie") == [value for name, value in STORE_COOKIES if name == "Set-Cookie"]
-    assert facts.seen() and facts.take() is not None and facts.take() is None
+    wire = facts.take()
+    assert wire is not None and wire.facts is not None and facts.take() is None
     facts.close()
 
 
@@ -694,9 +695,10 @@ def test_the_facts_transport_refuses_a_request_that_is_not_a_get() -> None:
 
 
 class TimedStream(httpx.SyncByteStream):
-    """A body: each step moves the clock, then sends its chunk, or raises its error."""
+    """A body: each step moves the clock (a `Clock`, or a store's `FakeTime`), then sends its chunk, or raises its
+    error."""
 
-    def __init__(self, clock: Clock, steps: list[tuple[float, bytes | Exception]]) -> None:
+    def __init__(self, clock: Clock | FakeTime, steps: list[tuple[float, bytes | Exception]]) -> None:
         self.clock = clock
         self.steps = steps
 
@@ -709,7 +711,8 @@ class TimedStream(httpx.SyncByteStream):
 
 
 @pytest.mark.parametrize(
-    ("length", "declared"), [("5000", 5000), (None, None), ("abc", None), ("-1", None), ("9" * 20, None)]
+    ("length", "declared"),
+    [("5000", 5000), (None, None), ("abc", None), ("-1", None), (" 5", None), ("9" * 20, DECLARED_MAX)],
 )
 def test_the_body_is_counted_and_timed_as_it_comes(length: str | None, declared: int | None) -> None:
     clock = Clock()
@@ -780,13 +783,93 @@ def _trickle(store: FakeCatalogStore, seconds: float) -> None:
     ]
 
 
-def test_an_attempt_bound_ends_a_trickle_and_says_so_and_the_retry_reads_on() -> None:
+def with_facts(
+    store: FakeCatalogStore, read_seconds: float = 30.0, **options: Any
+) -> tuple[CatalogRead, list[Attempt]]:
+    """A read through a `FactsTransport`, as L1 makes it (the store's own clock), every attempt observed."""
+    time = store.time
+    facts = FactsTransport(store.transport, monotonic=time.monotonic)
+    seen: list[Attempt] = []
+    with WooClient(
+        STORE_URL, KEY, SECRET, transport=facts, monotonic=time.monotonic, read_seconds=read_seconds
+    ) as client:
+        result = read_catalog(
+            client,
+            spacing_ms=1000,
+            stop=time,
+            failures=MemoryFailureCount(),
+            monotonic=time.monotonic,
+            now=time.wall,
+            observe=seen.append,
+            facts=facts,
+            **options,
+        )
+    return result, seen
+
+
+def _stalls_after(store: FakeCatalogStore, every: float, until: float, stall: float) -> None:
+    """Page 1's first answer: a byte every `every` seconds up to `until`, then nothing for `stall` seconds, when httpx's
+    read timeout (restarted at each socket read) fires: the reviewer's probes."""
+    steps: list[tuple[float, bytes | Exception]] = [(every, b"[") for _ in range(round(until / every))]
+    steps.append((stall, httpx.ReadTimeout("no byte within the read timeout")))
+    store.answers = [lambda request: httpx.Response(200, stream=TimedStream(store.time, steps))]
+
+
+def test_a_trickle_past_the_attempt_bound_caught_by_the_clients_own_check_is_attempt_bound() -> None:
+    """WooClient's check between chunks fired (no exception behind the timeout): the attempt's bound ended it, and
+    the retry reads on."""
     store = FakeCatalogStore(rows=rows(3))
     _trickle(store, 130.0)
-    result, seen = observed(store, attempt_seconds=120.0)
+    result, seen = with_facts(store, attempt_seconds=120.0)
     assert result.ok
     assert (seen[1].outcome, seen[1].ended, seen[1].body_bytes) == ("timeout", "attempt_bound", 10)
+    assert seen[1].wire is not None and seen[1].wire.error is None
     assert all(a.ended is None for a in seen if a.outcome != "timeout")
+    store = FakeCatalogStore(rows=rows(3))
+    _trickle(store, 130.0)
+    _, seen = observed(store, attempt_seconds=120.0)
+    assert seen[1].ended == "read_timeout"  # without a facts transport only the slack can tell, and 10 s is past it
+
+
+@pytest.mark.parametrize(
+    ("read_seconds", "every", "until", "stall"),
+    [(30.0, 10.0, 110.0, 30.0), (90.0, 10.0, 40.0, 90.0)],
+    ids=["read 30 s, trickle to 110 s", "read 90 s, trickle to 40 s"],
+)
+def test_a_read_timeout_after_the_last_byte_past_the_attempt_bound_is_read_timeout(
+    read_seconds: float, every: float, until: float, stall: float
+) -> None:
+    """Review 1, finding 1 (the reviewer's two probes): httpx's read timeout fired a whole read timeout after the
+    last byte, past the attempt's deadline but not near it: httpx's own timeout, not the bound."""
+    store = FakeCatalogStore(rows=rows(3))
+    _stalls_after(store, every, until, stall)
+    result, seen = with_facts(store, read_seconds=read_seconds, attempt_seconds=120.0)
+    assert result.ok
+    first = seen[1]
+    assert first.wire is not None
+    assert (first.outcome, first.ended, first.wire.error) == ("timeout", "read_timeout", "read_timeout")
+    assert (first.wire.longest_gap_ms, first.elapsed_ms) == (round(stall * 1000), round((until + stall) * 1000))
+    assert first.elapsed_ms > 120_000
+
+
+def test_the_same_stall_past_the_store_bound_is_read_timeout_and_the_read_ends_between_requests() -> None:
+    store = FakeCatalogStore(rows=rows(3))
+    _stalls_after(store, 10.0, 90.0, 30.0)
+    result, seen = with_facts(store, store_seconds=100.0)
+    assert result.reason == "timeout"
+    assert (seen[-1].outcome, seen[-1].ended, seen[-1].elapsed_ms) == ("timeout", "read_timeout", 120_000)
+    assert len(seen) == 2  # the retry's wait would pass the bound: the read ended between requests
+
+
+def test_a_trickle_past_the_store_bound_caught_by_the_clients_own_check_is_store_bound() -> None:
+    store = FakeCatalogStore(rows=rows(3))
+    _trickle(store, 700.0)
+    result, seen = with_facts(store)  # no attempt bound: client.get has the store's deadline
+    assert result.reason == "timeout" and seen[-1].ended == "store_bound"
+    store = FakeCatalogStore(rows=rows(3))
+    _trickle(store, 700.0)
+    result, seen = with_facts(store, attempt_seconds=120.0)  # the attempt's deadline was the one client.get had
+    assert result.reason == "timeout" and seen[-1].ended == "attempt_bound"
 
 
 def test_the_attempt_bound_is_the_deadline_the_client_gets() -> None:
@@ -798,27 +881,28 @@ def test_the_attempt_bound_is_the_deadline_the_client_gets() -> None:
     assert {request.extensions["timeout"]["read"] for request in plain.requests} == {30.0}
 
 
-def test_a_read_timeout_with_no_bound_reached_is_read_timeout_and_the_store_bound_is_store_bound() -> None:
+def test_a_read_timeout_with_no_bound_near_is_read_timeout() -> None:
     def silent(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("no answer")
 
     store = FakeCatalogStore(rows=rows(3), answers=[silent])
-    _, seen = observed(store, attempt_seconds=120.0)
+    _, seen = with_facts(store, attempt_seconds=120.0)
     assert (seen[1].outcome, seen[1].ended) == ("timeout", "read_timeout")
-    store = FakeCatalogStore(rows=rows(3))
-    _trickle(store, 700.0)
-    result, seen = observed(store, attempt_seconds=120.0)
-    assert result.reason == "timeout" and seen[-1].ended == "store_bound"
 
 
-def test_a_timeout_within_the_slack_of_a_bound_is_labelled_by_the_bound() -> None:
+@pytest.mark.parametrize(("early", "ended"), [(0.1, "attempt_bound"), (0.0, "attempt_bound"), (0.5, "read_timeout")])
+@pytest.mark.parametrize("facts", [True, False], ids=["facts", "no facts"])
+def test_a_timeout_within_the_slack_of_a_bound_is_labelled_by_the_bound(early: float, ended: str, facts: bool) -> None:
+    """A timeout cut short by the deadline fires at it, give or take a timer that wakes early (`BOUND_SLACK_SECONDS`
+    is 0.25 s); 0.5 s early is httpx's own."""
+
     def late(request: httpx.Request) -> httpx.Response:
-        store.time.now += 120.0 - 0.1  # a timer that woke 0.1 s early (within BOUND_SLACK_SECONDS)
+        store.time.now += 120.0 - early
         raise httpx.ReadTimeout("x")
 
     store = FakeCatalogStore(rows=rows(3), answers=[late])
-    _, seen = observed(store, attempt_seconds=120.0)
-    assert seen[1].ended == "attempt_bound"
+    _, seen = with_facts(store, attempt_seconds=120.0) if facts else observed(store, attempt_seconds=120.0)
+    assert seen[1].ended == ended
 
 
 @pytest.mark.parametrize("seconds", [0.0, -1.0])

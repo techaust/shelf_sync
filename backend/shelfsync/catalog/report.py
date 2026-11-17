@@ -22,8 +22,9 @@ Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only a
   libraries held at the app's quiet levels (`logs.QUIET_LOGGERS`) and every line through the log redaction;
 - prints **counts only** (m3.0 §2, "What L1 prints", plus the analyst's additions). No slug, title, address, key or
   file name is printed; the three near-miss pairs of 01-A §2 are reported as found or not, by number;
-- ends with a timing summary per store (t9): requests, the median and slowest attempt, the timeouts by stage and by
-  what ended them, the request number of the first stall, and the largest page.
+- prints a timing summary after each store's counts (t9): how its read ended, requests, the median and slowest
+  attempt, the largest page, the timeouts by stage and by what ended them, and the request number of the first stall;
+  on Ctrl+C, the summary of the attempts made so far in the store being read;
 The diagnostics (t9, to tell why a store stalls; one setting at a time, each run with the owner's go-ahead):
 - `--trace` prints one line per attempt as it ends: local time, the request number in that store's read, what was
   asked, the try, the outcome, which limit ended a timeout and the stage reached, the error word, the connection, the
@@ -58,6 +59,7 @@ import httpx
 from shelfsync.apply.catalog_read import (
     MAX_ROWS,
     PER_PAGE,
+    RETRIES,
     STORE_SECONDS,
     SYSTEM_STATUS_PARAMS,
     Attempt,
@@ -128,7 +130,7 @@ TransportFactory = Callable[[StoreRef], httpx.BaseTransport]
 @dataclass(frozen=True)
 class Settings:
     """What one L1 run reads with: the spacing, the listing's shape, each store's time limit, the read timeout, the
-    bound on one attempt, and whether each attempt is printed."""
+    bound on one attempt, whether each attempt is printed, and the local time zone's name (the trace's times)."""
 
     spacing_ms: int
     shape: ListingShape
@@ -136,11 +138,12 @@ class Settings:
     read_seconds: int
     attempt_seconds: float
     trace: bool
+    zone: str
 
 
-def settings_from(args: argparse.Namespace) -> Settings:
+def settings_from(args: argparse.Namespace, zone: str) -> Settings:
     """The run's settings from its arguments: below 100 a page, the most pages grows to the 4,000-row cap and each
-    store's time limit to 600 s x 100 / per page (the lead's decision)."""
+    store's time limit to 600 s x 100 / per page (the lead's decision). `zone` is the local time zone's name."""
     per_page: int = args.per_page
     return Settings(
         spacing_ms=args.spacing_ms,
@@ -149,6 +152,7 @@ def settings_from(args: argparse.Namespace) -> Settings:
         read_seconds=args.read_seconds,
         attempt_seconds=ATTEMPT_SECONDS,
         trace=args.trace,
+        zone=zone,
     )
 
 
@@ -199,8 +203,8 @@ def plan_lines(stores: Sequence[StoreRef], settings: Settings) -> list[str]:
         "store after another:",
         f"Settings: {shape.per_page} products a page, at most {shape.max_pages} pages; fields {first['_fields']}; at "
         f"most {settings.store_seconds:,.0f} s for each store's read and {settings.attempt_seconds:,.0f} s for one "
-        f"request; read timeout {settings.read_seconds} s"
-        + ("; one line per request (--trace)" if settings.trace else ""),
+        f"request, each plus up to the read timeout after the last byte; read timeout {settings.read_seconds} s; "
+        f"times are local, {settings.zone}" + ("; one line per request (--trace)" if settings.trace else ""),
     ]
     for store in stores:
         if store.state != "active":
@@ -435,12 +439,34 @@ def _counts(counter: Counter[str]) -> str:
     return ", ".join(f"{word} {count:,}" for word, count in sorted(counter.items())) or "none"
 
 
-def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead) -> list[str]:
-    """One store's timing summary: requests, the median and slowest attempt, the timeouts (after the headers or not,
-    by the stage reached and by what ended them), the request number of the first stall, and the largest page."""
+def read_ended(attempts: Sequence[Attempt], result: CatalogRead | None) -> str:
+    """How a store's read ended, for its summary: `ok`, the `CatalogRead` reason, `stopped by Ctrl+C` (no result),
+    and for a `timeout` that the reader's own bound checks raised between requests (the wait before a request, or the
+    deadline check before one, never seen by `observe`; review 1) the words "between requests at the store's bound".
+    A timeout that ended the read itself is the last attempt's: its fourth try, or the one that auto-paused the
+    store."""
+    if result is None:
+        return "stopped by Ctrl+C"
+    if result.reason is None:
+        return "ok"
+    if result.reason != "timeout":
+        return result.reason
+    last = attempts[-1] if attempts else None
+    if last is not None and last.outcome == "timeout" and (last.attempt > RETRIES or result.auto_paused):
+        return "timeout"
+    return "timeout, between requests at the store's bound"
+
+
+def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead | None) -> list[str]:
+    """One store's timing summary: how its read ended (`read_ended`), requests, the median and slowest attempt, the
+    largest products answer, the timeouts (after the headers or not, by the stage reached and by what ended them), and
+    the request number of the first stall. `result` is None when Ctrl+C stopped the read: the summary is of the
+    attempts made so far."""
+    ended = read_ended(attempts, result)
     if not attempts:
-        return [f"Timing, store {code}: no requests sent"]
+        return [f"Timing, store {code}: read {ended}; no requests sent"]
     times = [attempt.elapsed_ms for attempt in attempts]
+    pages = [attempt.body_bytes or 0 for attempt in attempts if attempt.page is not None and attempt.outcome == "ok"]
     timeouts = [attempt for attempt in attempts if attempt.outcome == "timeout"]
     first = next((number for number, attempt in enumerate(attempts, 1) if attempt.outcome == "timeout"), None)
     after_headers = sum(attempt.headers is True for attempt in timeouts)
@@ -450,8 +476,9 @@ def timing_lines(code: str, attempts: Sequence[Attempt], result: CatalogRead) ->
     )
     ends = Counter(attempt.ended or "unknown" for attempt in timeouts)
     return [
-        f"Timing, store {code}: requests {len(attempts):,}, median {statistics.median(times) / 1000:,.1f} s, slowest "
-        f"{max(times) / 1000:,.1f} s; largest page {result.largest_page_bytes:,} bytes",
+        f"Timing, store {code}: read {ended}; requests {len(attempts):,}, median "
+        f"{statistics.median(times) / 1000:,.1f} s, slowest {max(times) / 1000:,.1f} s; largest page "
+        f"{max(pages, default=0):,} bytes",
         f"  timeouts {len(timeouts):,}: after the headers {after_headers:,}, before them or not known "
         f"{len(timeouts) - after_headers:,}; first stall at request {first if first is not None else 'none'}",
         f"  timeouts by stage: {_counts(stages)}; by what ended them: {_counts(ends)}",
@@ -630,7 +657,7 @@ def _run(
     if not stores:
         say("There are no stores to read.", stderr)
         return 1
-    settings = settings_from(args)
+    settings = settings_from(args, now().astimezone().tzname() or "zone unknown")
     for line in plan_lines(stores, settings):
         say(line)
     if not args.yes:
@@ -638,7 +665,6 @@ def _run(
     credentials = StoreCredentials(secrets_factory())
     stop = make_stop()
     reports: list[tuple[StoreRef, CatalogRead]] = []
-    timings: list[tuple[StoreRef, list[Attempt], CatalogRead]] = []
     for store in stores:
         if store.state != "active":
             continue
@@ -650,16 +676,17 @@ def _run(
         register_secret(key)
         register_secret(secret)
         attempts: list[Attempt] = []
-        result = _read_one(store, key, secret, settings, attempts, transport_factory, say, stop, monotonic, now)
+        try:
+            result = _read_one(store, key, secret, settings, attempts, transport_factory, say, stop, monotonic, now)
+        except KeyboardInterrupt:
+            for line in timing_lines(store.code, attempts, None):  # what was gathered before Ctrl+C (review 1)
+                say(line)
+            raise
         reports.append((store, result))
-        timings.append((store, attempts, result))
-        for line in store_lines(store, result, settings.shape.meta):
+        for line in [*store_lines(store, result, settings.shape.meta), *timing_lines(store.code, attempts, result)]:
             say(line)
     for line in cross_lines(reports):
         say(line)
-    for store, attempts, result in timings:
-        for line in timing_lines(store.code, attempts, result):
-            say(line)
     return 0 if reports and all(result.ok for _, result in reports) else 1
 
 
@@ -686,9 +713,14 @@ def _read_one(
     inner = transport_factory(store) if transport_factory is not None else httpx.HTTPTransport()
     facts = FactsTransport(inner, monotonic=monotonic)
     shape = settings.shape
-    with WooClient(
-        store.url, key, secret, transport=facts, monotonic=monotonic, read_seconds=settings.read_seconds
-    ) as client:
+    try:
+        client = WooClient(
+            store.url, key, secret, transport=facts, monotonic=monotonic, read_seconds=settings.read_seconds
+        )
+    except Exception:
+        facts.close()  # WooClient refused its arguments (an address that isn't https): the transport isn't left open
+        raise
+    with client:
         return read_store_catalog(
             client,
             store.code,

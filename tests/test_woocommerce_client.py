@@ -13,12 +13,14 @@ import pytest
 from shelfsync import __version__
 from shelfsync.apply.woocommerce import (
     _REDIRECTS,
+    DECLARED_MAX,
     MAX_BODY_BYTES,
     GetOnlyTransport,
     NonGetRefused,
     ReadOutcome,
     ReadRefused,
     WooClient,
+    declared_length,
     health_for,
     run_read_test,
 )
@@ -287,6 +289,45 @@ def test_a_body_over_one_mebibyte_is_refused() -> None:
     big = httpx.Response(200, content=b"x" * (MAX_BODY_BYTES + 1))
     outcome = run(FakeWoo(status=big))
     assert outcome.reason == "bad_response"
+
+
+@pytest.mark.parametrize(
+    ("value", "number"),
+    [
+        ("0", 0),
+        ("1048576", 1048576),
+        (None, None),
+        ("", None),
+        (" 5", None),
+        ("5 ", None),
+        ("-1", None),
+        ("1e3", None),
+        ("٣", None),  # a digit, but not an ASCII one
+        ("9" * 18, 10**18 - 1),
+        ("9" * 19, DECLARED_MAX),
+        ("9" * 5000, DECLARED_MAX),  # never converted whole (Python refuses past 4,300 digits)
+    ],
+)
+def test_the_shared_content_length_reading(value: str | None, number: int | None) -> None:
+    """t9 review 1: `WooClient.get`'s cap check and L1's `Wire.declared_bytes` read `Content-Length` the same way."""
+    assert declared_length(value) == number
+
+
+@pytest.mark.parametrize(
+    ("length", "reason"),
+    [
+        (str(MAX_BODY_BYTES), None),
+        (str(MAX_BODY_BYTES + 1), "bad_response"),
+        ("9" * 19, "bad_response"),
+        ("9" * 5000, "bad_response"),  # before t9 review 1 this raised a ValueError out of the read
+        ("lots", None),  # not a number: the body is read and capped as it comes, as before
+    ],
+)
+def test_the_cap_on_a_declared_length_is_unchanged(length: str, reason: str | None) -> None:
+    status = httpx.Response(
+        200, headers={"Content-Length": length}, content=b'{"environment":{"version":"9.4.1","wp_version":"6.7"}}'
+    )
+    assert run(FakeWoo(status=status)).reason == reason
 
 
 def test_a_body_of_exactly_one_mebibyte_is_read() -> None:

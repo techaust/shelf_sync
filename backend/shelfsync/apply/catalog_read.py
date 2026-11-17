@@ -74,6 +74,7 @@ from shelfsync.apply.woocommerce import (
     _json,
     _version_tuple,
     classify,
+    declared_length,
 )
 from shelfsync.catalog.model import (
     DOWNLOAD_FILE_MAX,
@@ -290,14 +291,6 @@ def error_word(error: BaseException) -> str:
     return "other"
 
 
-def _declared(value: str | None) -> int | None:
-    """`Content-Length` as a number, or None (absent, as for a chunked answer, or not a plain number)."""
-    if value is None:
-        return None
-    value = value.strip()
-    return int(value) if value.isascii() and value.isdigit() and len(value) <= 15 else None
-
-
 @dataclass(frozen=True)
 class Wire:
     """What `FactsTransport` saw of one request, numbers and fixed words only. `facts` is None when no answer's
@@ -355,7 +348,7 @@ class _WireRecorder:
         self.wire = replace(
             self.wire,
             facts=response_facts(headers),
-            declared_bytes=_declared(headers.get("content-length")),
+            declared_bytes=declared_length(headers.get("content-length")),
             headers_ms=headers_ms if headers_ms is not None else self._ms(self._monotonic()),
         )
 
@@ -435,10 +428,6 @@ class FactsTransport(httpx.BaseTransport):
             response.stream = _CountingStream(response.stream, recorder)
         return response
 
-    def seen(self) -> bool:
-        """Whether an answer's headers came through for the last request."""
-        return self._recorder is not None and self._recorder.wire.facts is not None
-
     def take(self) -> Wire | None:
         """The last request's `Wire` (None when no request went through since the last `take`)."""
         recorder, self._recorder = self._recorder, None
@@ -450,16 +439,16 @@ class FactsTransport(httpx.BaseTransport):
 
 @dataclass(frozen=True)
 class Attempt:
-    """One attempt (the first try or a retry), for L1's trace. `what` is `system_status` or `products` (`page` its
-    number); `attempt` 1 to 4; `outcome` `ok` (an answer the reader takes), `past_the_end` (a 400 on page 2 or later)
-    or the fixed reason; `http_status` when an answer arrived. `headers`: True when the answer's headers arrived,
-    False when nothing came, None when that isn't known (a connection that failed with no `facts` transport).
-    `body_bytes`: the body bytes that came (for a timeout, or with a `facts` transport a dropped connection, what came
-    before it ended), None when not known. `elapsed_ms` is the request alone; `waited_ms` the wait before it (the
-    spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: `read_timeout` (no bound was reached),
-    `attempt_bound` or `store_bound`. `wire` when the read has a `FactsTransport` (and `facts`, its `Wire.facts`)."""
+    """One attempt (the first try or a retry), for L1's trace. `page` is the products page (None: `system_status`;
+    `what` names which); `attempt` 1 to 4; `outcome` `ok` (an answer the reader takes), `past_the_end` (a 400 on page
+    2 or later) or the fixed reason; `http_status` when an answer arrived. `headers`: True when the answer's headers
+    arrived, False when nothing came, None when that isn't known (a connection that failed with no `facts`
+    transport). `body_bytes`: the body bytes that came (for a timeout, or with a `facts` transport a dropped
+    connection, what came before it ended), None when not known. `elapsed_ms` is the request alone; `waited_ms` the
+    wait before it (the spacing, a back-off or a `Retry-After`). `ended`, for a timeout only: `read_timeout` (httpx's
+    own timeout), `attempt_bound` or `store_bound` (`_Session._ended`). `wire` when the read has a `FactsTransport`
+    (`facts` is its `Wire.facts`)."""
 
-    what: str
     page: int | None
     attempt: int
     outcome: str
@@ -467,10 +456,17 @@ class Attempt:
     elapsed_ms: int
     body_bytes: int | None
     headers: bool | None
-    facts: ResponseFacts | None = None
     wire: Wire | None = None
     waited_ms: int = 0
     ended: str | None = None
+
+    @property
+    def what(self) -> str:
+        return "system_status" if self.page is None else "products"
+
+    @property
+    def facts(self) -> ResponseFacts | None:
+        return self.wire.facts if self.wire is not None else None
 
 
 Observe = Callable[[Attempt], None]
@@ -653,22 +649,24 @@ class _Session:
         status = refused.status if refused.status is not None else refused.headers_status
         body_bytes: int | None = None
         headers: bool | None = None
-        ended: str | None = None
-        if refused.reason == "timeout":
-            headers, body_bytes, ended = refused.headers_status is not None, refused.received, self._ended(tried)
+        timeout = refused.reason == "timeout"
+        if timeout:
+            headers, body_bytes = refused.headers_status is not None, refused.received
         elif refused.reason in ("redirected", "bad_response"):
             headers = True
-        self._emit(observe, tried, refused.reason, status, body_bytes, headers, ended)
+        self._emit(observe, tried, refused.reason, status, body_bytes, headers, timeout=timeout)
 
-    def _ended(self, tried: _Try) -> str:
-        """Which limit ended a timed-out attempt: the store's bound, the attempt's, or neither (`read_timeout`: httpx's
-        own timeout, read or connect, fired first). Read from the clock against the deadline `client.get` was given,
-        with `BOUND_SLACK_SECONDS` for a timer that wakes a little early."""
-        moment = self._monotonic() + BOUND_SLACK_SECONDS
-        if moment >= self._deadline:
-            return "store_bound"
-        if tried.deadline < self._deadline and moment >= tried.deadline:
-            return "attempt_bound"
+    def _ended(self, tried: _Try, wire: Wire | None) -> str:
+        """Which limit ended a timed-out attempt (review 1, the lead's decision). httpx's read timeout restarts at each
+        socket read, so a body that trickles and then stalls fails a whole read timeout after its last byte, which
+        can be well past the deadline `client.get` was given: that is `read_timeout`, httpx's own. A bound ended it
+        only when `WooClient`'s own check between chunks fired (a timeout with no exception behind it: the `Wire`
+        holds no error), or when the timeout fired within `BOUND_SLACK_SECONDS` of that deadline (the httpx timeout
+        was cut short by it). Then it is `store_bound` when that deadline was the store's, else `attempt_bound`.
+        Without a `facts` transport, only the second test can be made."""
+        own_check = wire is not None and wire.error is None
+        if own_check or abs(self._monotonic() - tried.deadline) <= BOUND_SLACK_SECONDS:
+            return "store_bound" if tried.deadline >= self._deadline else "attempt_bound"
         return "read_timeout"
 
     def _emit(
@@ -679,7 +677,8 @@ class _Session:
         status: int | None,
         body_bytes: int | None,
         headers: bool | None,
-        ended: str | None = None,
+        *,
+        timeout: bool = False,
     ) -> None:
         """Build the `Attempt` and hand it on. With a `facts` transport its `Wire` gives the body bytes (every byte
         that came, a dropped connection's too) and whether headers arrived."""
@@ -688,7 +687,6 @@ class _Session:
             body_bytes, headers = wire.received, wire.facts is not None
         observe(
             Attempt(
-                what="products" if tried.page is not None else "system_status",
                 page=tried.page,
                 attempt=tried.number,
                 outcome=outcome,
@@ -696,10 +694,9 @@ class _Session:
                 elapsed_ms=max(0, round((self._monotonic() - tried.started) * 1000)),
                 body_bytes=body_bytes,
                 headers=headers,
-                facts=wire.facts if wire is not None else None,
                 wire=wire,
                 waited_ms=tried.waited_ms,
-                ended=ended,
+                ended=self._ended(tried, wire) if timeout else None,
             )
         )
 
