@@ -313,11 +313,32 @@ def test_a_drifted_sample_gets_only_its_differences_and_keeps_its_download_ids(
     ]
     assert sent[0][2]["downloads"][0] == {
         "id": kept_id,
-        "name": "northwind-5.0.2.zip",
+        "name": "Download",  # m3.1: a product's main download is named as on the real stores
         "file": northwind["downloads"][0]["file"],
     }
     assert "id" not in sent[0][2]["downloads"][1]
+    assert sent[0][2]["downloads"][1]["name"] == "northwind-core-5.0.2.zip"  # a second download keeps its own name
     assert store.marked()["northwind"]["downloads"][0]["id"] == kept_id
+
+
+def test_seed_renames_the_main_downloads_of_samples_already_on_the_site(
+    fake: tuple[RunningServer, FakeStore], cert_file: Path
+) -> None:
+    """m3.1 item 7: samples seeded before m3.1 named every download after its file; a re-run renames each main
+    download to `Download` (a PUT of `downloads` only) and leaves variations' downloads as they are."""
+    server, store = fake
+    assert run(server.port, cert_file) == 0
+    for name in ("aurora", "northwind"):
+        first = store.marked()[name]["downloads"][0]
+        first["name"] = first["file"].removeprefix('[amazon_s3 object="').removesuffix('"]').rsplit("/", 1)[-1]
+    count = len(server.record.requests)
+    assert run(server.port, cert_file) == 0
+    sent = [(r.method, json.loads(r.body)) for r in server.record.requests[count:] if r.method != "GET"]
+    assert [(method, sorted(body)) for method, body in sent] == [("PUT", ["downloads"]), ("PUT", ["downloads"])]
+    assert [store.marked()[name]["downloads"][0]["name"] for name in ("aurora", "northwind")] == ["Download"] * 2
+    count = len(server.record.requests)
+    assert run(server.port, cert_file) == 0  # idempotent: nothing more to send
+    assert [r for r in server.record.requests[count:] if r.method != "GET"] == []
 
 
 def test_the_wrong_type_or_trash_state_is_made_again(
