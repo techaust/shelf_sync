@@ -500,7 +500,8 @@ def parse_product(raw: Any) -> Product:
     if type(wc_id) is not int or not 1 <= wc_id <= WC_ID_MAX:
         raise BadAnswer("id")
     slug = _text(raw, "slug", SLUG_MAX)
-    title = _clean(html.unescape(_text(raw, "name", TITLE_MAX)), "name")
+    raw_title = _text(raw, "name", TITLE_MAX)
+    title = _clean(html.unescape(raw_title), "name")
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
     if "date_modified_gmt" not in raw:
@@ -517,6 +518,7 @@ def parse_product(raw: Any) -> Product:
         modified_gmt=modified,
         downloads=_downloads(raw.get("downloads")),
         meta=_meta(raw.get("meta_data")),
+        entities=title != raw_title,
     )
 
 

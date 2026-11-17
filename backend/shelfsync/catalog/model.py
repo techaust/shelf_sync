@@ -47,6 +47,8 @@ class Product:
     modified_gmt: str | None
     downloads: tuple[Download, ...]
     meta: tuple[tuple[str, str], ...]
+    # The store's title held HTML entities (`html.unescape` changed it): counted by L1, never stored.
+    entities: bool = False
 
 
 def downloads_json(downloads: tuple[Download, ...]) -> str:
