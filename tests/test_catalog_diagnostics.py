@@ -831,7 +831,7 @@ def test_a_trickle_past_the_attempt_bound_caught_by_the_clients_own_check_is_att
     store = FakeCatalogStore(rows=rows(3))
     _trickle(store, 130.0)
     _, seen = observed(store, attempt_seconds=120.0)
-    assert seen[1].ended == "read_timeout"  # without a facts transport only the slack can tell, and 10 s is past it
+    assert seen[1].ended == "read_timeout"  # without a facts transport the own check is unseen
 
 
 @pytest.mark.parametrize(
