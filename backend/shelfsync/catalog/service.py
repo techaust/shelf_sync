@@ -28,13 +28,15 @@ from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog.runner import ClientFactory, KeysMissing, RunState, StopSignal, SyncRunner
 from shelfsync.clock import utc_now
 from shelfsync.db import catalog as db
+from shelfsync.db.connection import connect
 from shelfsync.db.migrate import migrate
 from shelfsync.db.stores import StoreRow, get_store, list_live, live_store_count
 from shelfsync.db.wizard import marks, set_mark
+from shelfsync.paths import DataPaths
 from shelfsync.platform.secrets import MemorySecretStore, SecretStore
 from shelfsync.secure.credentials import StoreCredentials
 from shelfsync.secure.redact import register_secret
-from shelfsync.store_service import BusySlots
+from shelfsync.store_service import BusySlots, StoreService
 
 
 def store_clients(
@@ -59,6 +61,14 @@ def store_clients(
         )
 
     return build
+
+
+def build_catalog_service(paths: DataPaths, secrets: SecretStore, stores: StoreService) -> CatalogService:
+    """The service the running app uses: the data folder's database, the stores' keys in Credential Manager, and
+    **the stores service's own busy slots**, so the runner holds a store's slot for its whole read and an edit, a
+    removal or a Test connection of that store answers `busy` meanwhile (m3.1 review 1, finding 1; review 2,
+    finding 1: built here, in one place, so no caller can leave the slots out)."""
+    return CatalogService(lambda: connect(paths.database), store_clients(secrets), slots=stores.slots)
 
 
 def _memory_database(name: str) -> tuple[Callable[[], sqlite3.Connection], sqlite3.Connection]:
@@ -111,10 +121,10 @@ class CatalogService:
         open_connection: Callable[[], sqlite3.Connection],
         client_factory: ClientFactory,
         *,
+        slots: BusySlots,
         now: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
-        slots: BusySlots | None = None,
     ) -> None:
         self._open = open_connection
         self._slug_lock = threading.Lock()
@@ -128,7 +138,11 @@ class CatalogService:
         """A service on a private in-memory database (no stores, so a run reads nothing): what `create_app` uses when
         it isn't given one, so no test touches a file, Credential Manager or a network by accident."""
         open_connection, keeper = _memory_database("catalog")
-        service = cls(open_connection, store_clients(secrets if secrets is not None else MemorySecretStore()))
+        service = cls(
+            open_connection,
+            store_clients(secrets if secrets is not None else MemorySecretStore()),
+            slots=BusySlots(),  # its own: there is no stores service beside it
+        )
         service._keeper = keeper
         weakref.finalize(service, keeper.close)
         return service
@@ -144,6 +158,10 @@ class CatalogService:
 
     def reopen(self) -> None:
         self.runner.reopen()
+
+    @property
+    def closed(self) -> bool:
+        return self.runner.closed
 
     def sync_status(self) -> SyncStatus:
         run = self.runner.state()
@@ -182,17 +200,28 @@ class CatalogService:
         return ItemSummary(row, links, slots, bool(active) and active <= present)
 
     def item(self, item_id: int) -> ItemDetail | None:
+        """One item, or None when there is none or no store that isn't removed holds it (as `GET /api/catalog`
+        leaves it out)."""
         with closing(self._open()) as connection:
             row = db.item(connection, item_id)
-            if row is None:
+            links = db.links(connection, item_id) if row is not None else []
+            if row is None or not links:
                 return None
-            return ItemDetail(row, db.links(connection, item_id), db.slots(connection, item_id))
+            return ItemDetail(row, links, db.slots(connection, item_id))
 
     def set_slug(self, item_id: int, slug: str) -> ItemSummary | None:
-        """CAT-04: the canonical slug only; nothing changes on any store. None when there is no such item;
-        `db.SlugTaken` when another item has it."""
+        """CAT-04: the canonical slug only; nothing changes on any store. None when there is no such item, or no
+        store that isn't removed holds it; `db.SlugTaken` when another item has it."""
         with self._slug_lock, closing(self._open()) as connection:
-            if not db.set_canonical_slug(connection, item_id, slug):
+            connection.execute("BEGIN IMMEDIATE")  # the check and the change together
+            try:
+                held = bool(db.links(connection, item_id))
+                changed = held and db.set_canonical_slug(connection, item_id, slug)
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+            if not changed:
                 return None
             row = db.item(connection, item_id)
             links = db.links(connection, item_id)

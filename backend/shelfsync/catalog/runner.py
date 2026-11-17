@@ -118,10 +118,10 @@ class SyncRunner:
         open_connection: Callable[[], sqlite3.Connection],
         client_factory: ClientFactory,
         *,
+        slots: BusySlots,
         now: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
-        slots: BusySlots | None = None,
     ) -> None:
         self._open = open_connection
         self._factory = client_factory
@@ -160,6 +160,12 @@ class SyncRunner:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=wait_seconds)
+
+    @property
+    def closed(self) -> bool:
+        """The app is shutting down (`stop()` was called and no lifespan has opened it again)."""
+        with self._lock:
+            return self._closed
 
     def reopen(self) -> None:
         """The app is starting (again): runs may start. The lifespan calls it, so a second lifespan of one app (tests;
@@ -203,6 +209,14 @@ class SyncRunner:
         """Read and save one store; its outcome. Never raises. The store's busy slot is held for the whole read."""
         with self._lock:
             self._state = replace(self._state, current=StoreProgress(listed.id, 0, 0, 0))
+        try:
+            skipped = self._skip_reason(listed.id)  # before the slot: a skipped store never waits for it
+        except sqlite3.Error as error:
+            _log.error("Store %s catalog read: database_error (%s)", listed.code, type(error).__name__)
+            return self._record_on_fresh_connection(listed, "database_error")
+        if skipped is not None:
+            _log.info("Store %s catalog read: %s (skipped)", listed.code, skipped)
+            return skipped
         refused = self._claim(listed.id)
         if refused is not None:
             _log.info("Store %s catalog read: %s (skipped)", listed.code, refused)
@@ -210,14 +224,23 @@ class SyncRunner:
         try:
             return self._read_claimed(listed)
         finally:
-            if self._slots is not None:
-                self._slots.release(listed.id)
+            self._slots.release(listed.id)
+
+    def _skip_reason(self, store_id: int) -> str | None:
+        """Why the store is skipped as it is now (`store_removed`, `paused`, `auto_paused`), or None. Checked before
+        its busy slot is taken and again after (`_read_claimed`), since it can change while the turn waits."""
+        with closing(self._open()) as connection:
+            row = get_store(connection, store_id)
+            if row is None:
+                return "store_removed"
+            if row.state != "active":
+                return "paused"
+            state = sync_state(connection, store_id)
+        return "auto_paused" if state is not None and state.auto_paused_at is not None else None
 
     def _claim(self, store_id: int) -> str | None:
         """Take the store's busy slot, waiting while a Test connection or an edit holds it (at most
         `CLAIM_WAIT_SECONDS`). None when taken; else `busy`, or `stopped` when the app shuts down meanwhile."""
-        if self._slots is None:
-            return None
         deadline = self._monotonic() + CLAIM_WAIT_SECONDS
         while not self._slots.claim(store_id):
             if self._monotonic() >= deadline:

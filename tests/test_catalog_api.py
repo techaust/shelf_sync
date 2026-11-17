@@ -294,6 +294,12 @@ def test_an_item_whose_only_links_are_on_removed_stores_is_left_out(api: ApiRig)
     with closing(api.rig.db.connect()) as connection:
         connection.execute("UPDATE store SET removed_at = '2026-11-17T13:00:00.000000Z' WHERE id = ?", (gf,))
     assert [item["canonical_slug"] for item in api.client.get("/api/catalog").json()["items"]] == ["beta"]
+    # Review 2, finding 5: the same item can't be read or edited by its id either
+    assert api.client.get("/api/catalog/1").json() == {"error": "not_found"}
+    edit = api.client.patch("/api/catalog/1", headers=WRITE_HEADERS, json={"canonical_slug": "renamed"})
+    assert (edit.status_code, edit.json()) == (404, {"error": "not_found"})
+    assert api.rig.db.rows("SELECT canonical_slug FROM catalog_item WHERE id = 1") == [("alpha",)]  # unchanged
+    assert api.client.get("/api/catalog/2").status_code == 200
 
 
 # ---- the shutdown --------------------------------------------------------------------------------------------------
@@ -312,7 +318,8 @@ def test_the_apps_shutdown_stops_a_running_read_and_changes_nothing() -> None:
     assert api.rig.db.rows("SELECT COUNT(*) FROM store_product") == [(0,)]
     assert api.rig.db.rows("SELECT COUNT(*) FROM catalog_item") == [(0,)]
     # Review 1, finding 6: after the shutdown no run starts; a second lifespan of the same app opens the runner again.
-    assert api.client.post("/api/sync", headers=WRITE_HEADERS).json() == {"error": "sync_running"}
+    after = api.client.post("/api/sync", headers=WRITE_HEADERS)  # review 2, finding 7
+    assert (after.status_code, after.json()) == (503, {"error": "shutting_down"})
     with TestClient(api.harness.app, base_url="http://127.0.0.1:47615") as client:
         client.cookies.update(api.client.cookies)
         with closing(api.rig.db.connect()) as connection:

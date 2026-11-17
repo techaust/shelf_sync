@@ -162,8 +162,7 @@ class StoreService:
         self._sleep = sleep
         self._monotonic = monotonic
         self.slots = slots if slots is not None else BusySlots()
-        self._busy: set[int] = self.slots.ids  # the same set and lock as the shared slots
-        self._busy_lock = self.slots.lock
+        self._busy: set[int] = self.slots.ids  # the shared set itself, read by tests; changed only through `slots`
         self._limit_seconds = TOTAL_SECONDS  # a test seam: the whole read test's time limit
         self._grace_seconds = 1.0  # how long past the limit the request waits for the worker to report
         self._keeper: sqlite3.Connection | None = None  # holds a development database in memory
@@ -282,14 +281,11 @@ class StoreService:
     def _claim(self, store_id: int) -> None:
         """Take the store's busy slot, or `busy`. A read test, an edit of the address or the keys, a key replacement
         and a removal each hold it, so none of them can change what another one is working on."""
-        with self._busy_lock:
-            if store_id in self._busy:
-                raise StoreError(409, "busy")
-            self._busy.add(store_id)
+        if not self.slots.claim(store_id):
+            raise StoreError(409, "busy")
 
     def _release(self, store_id: int) -> None:
-        with self._busy_lock:
-            self._busy.discard(store_id)
+        self.slots.release(store_id)
 
     def update(self, store_id: int, changes: Mapping[str, Any], keys: tuple[str, str] | None) -> StoreView:
         fields = dict(changes)
@@ -474,10 +470,10 @@ class StoreService:
                     result["error"] = error
                 finally:
                     _close_quietly(client)
-                    with self._busy_lock:
+                    with self.slots.lock:
                         finished.set()
                         if overrun["yes"]:  # the request gave up waiting: only now is the store free
-                            self._busy.discard(store_id)
+                            self.slots.ids.discard(store_id)
 
             threading.Thread(target=work, name=f"store-test-{store_id}", daemon=True).start()
             handed_over = True
@@ -512,9 +508,9 @@ class StoreService:
             if not handed_over or completed:
                 self._release(store_id)  # after the result is saved
             else:  # no answer in time: the worker lets go when it ends (or has, in the meantime)
-                with self._busy_lock:
+                with self.slots.lock:
                     if finished.is_set():
-                        self._busy.discard(store_id)
+                        self.slots.ids.discard(store_id)
                     else:
                         overrun["yes"] = True
 

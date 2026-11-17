@@ -12,17 +12,22 @@ Rules this module keeps:
   `blocked` when it came as a 503), and `timeout` and `unreachable` (Lead (proposed): a GET changes nothing), are
   retried up to 3 times, waiting 2, 4 and 8 s, or the `Retry-After` (seconds or an HTTP date) when given, never more
   than 60 s. Nothing else is retried. `_Session.request` refuses any method but GET before it sends or retries anything.
-- **Failures in a row:** every failed attempt is counted and a success resets the count (`FailureCount`, which the
-  runner keeps in `sync_state` across runs); at 10 the store is auto-paused and the read ends.
+- **Failures in a row:** every failed attempt is counted, and so is a 200 the reader can't use; a **usable products
+  page** resets the count (`FailureCount`, which the runner keeps in `sync_state` across runs). `system_status`
+  answering doesn't reset it, so a store that answers it but keeps sending a bad page still reaches 10 (m3.1
+  review 2). At 10 the store is auto-paused and the read ends.
 - **The count check:** the rows read must equal page 1's `X-WP-Total`, with no id seen twice and the ids ascending
   across the pages. If not, the whole listing is read once more; if it still doesn't match, `count_mismatch`.
 - **Bounds:** 10 minutes for one store's whole read (`timeout`); 8 MiB per page (`PAGE_MAX_BYTES`) and 64 MiB per
   listing (`LISTING_MAX_BYTES`), both Lead (proposed); the field limits of `catalog/model.py`. A hostile answer ends
   the read with `bad_response`: a page that isn't a JSON list, more than 100 rows on a page, a row without an integer
-  `id`, a wrong type, an over-long field, a text with a NUL or a lone surrogate, a download or meta list whose stored
-  JSON would pass its limit, or a bad `X-WP-Total` / `X-WP-TotalPages`. The result names the failing field (a fixed
-  identifier from this code, never a value) and the page. A failed or stopped read returns no products: the caller
-  saves nothing.
+  `id`, a wrong type, an over-long field, a text with a NUL or a lone surrogate, a download list whose stored JSON
+  would pass its limit, or a bad `X-WP-Total` / `X-WP-TotalPages`. Such a 200 counts as a failed request for the
+  failures in a row (`_Session.bad`). The result names the failing field (a fixed identifier from this code, never a
+  value) and the page. A failed or stopped read returns no products: the caller saves nothing. A `latest_version*`
+  meta entry that can't be kept is skipped and counted instead (`Product.meta_skipped`; Lead (proposed)).
+- **Pages that run out:** a 400 on page 2 or later (WooCommerce's answer past the last page, not verified on a store)
+  ends that listing early, so the count check reads it once more.
 - **Stop:** the read stops between requests and during every wait when asked (`stopped`).
 - **Logs:** one line per store per read: its code, the outcome, pages, rows, the HTTP status of the last failure, and
   for `bad_response` the field and page. Never an address, key, cookie, query string, header or body.
@@ -38,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from itertools import pairwise
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 import httpx
 
@@ -258,13 +263,34 @@ class _Session:
         if self._stop.wait(seconds):
             raise _End("stopped")
 
+    def usable(self) -> None:
+        """A products page was read and parsed: the failures in a row go back to 0."""
+        self._failures.succeeded()
+
+    def bad(self, field: str, page: int | None) -> NoReturn:
+        """An answer came (a 200) but can't be used: it counts as a failed request for APL-12 (a store that keeps
+        sending a bad page is auto-paused after 10 in a row, m3.1 review 2), then the read ends with
+        `bad_response`, naming the field and the page."""
+        if self._failures.failed("bad_response"):
+            self.auto_paused = True
+        raise _End("bad_response", field, page)
+
     def request(
-        self, method: str, path: str, params: dict[str, str], max_bytes: int, *, page: bool = False
+        self,
+        method: str,
+        path: str,
+        params: dict[str, str],
+        max_bytes: int,
+        *,
+        page: bool = False,
+        past_the_end: bool = False,
     ) -> WooResponse:
         """One request with its retries. Only a GET is ever sent or retried: any other method is refused here,
         before anything is sent (and `GetOnlyTransport` refuses one too). With `page`, a 200 is returned as it is (the
         caller parses it, and a body that isn't a JSON list is its `bad_response`); otherwise a 200 that isn't JSON is
-        `not_woocommerce`, as in Test connection."""
+        `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and later), a 400 is returned as it is
+        too, neither a success nor a failure: WooCommerce's answer to a page past the last one, which the caller
+        treats as the listing having shrunk while it was read (m3.1 review 2; not verified on a store)."""
         if method != "GET":
             raise NonGetRefused("only GET requests are sent or retried")
         delay = self._spacing if self._sent else 0.0
@@ -284,10 +310,11 @@ class _Session:
                 reason = refused.reason
                 status = refused.status
             else:
+                if past_the_end and response.status == 400:
+                    return response
                 answered = None if page and response.status == 200 else classify(response)
                 if answered is None:
-                    self._failures.succeeded()
-                    return response
+                    return response  # the caller resets the count once the answer proved usable
                 reason, status, headers = answered, response.status, response.headers
             self.last_failure_status = status
             if self._failures.failed(reason):
@@ -393,11 +420,11 @@ def _check_version(session: _Session) -> str:
     data = _json(response.body)
     environment = data.get("environment") if isinstance(data, dict) else None
     if not isinstance(environment, dict):
-        raise _End("bad_response", "environment")
+        session.bad("environment", None)
     version = _clean_version(environment.get("version"))
     parsed = _version_tuple(version) if version else None
     if version is None or parsed is None:
-        raise _End("bad_response", "version")
+        session.bad("version", None)
     if parsed < MIN_WC_VERSION:
         raise _End("wc_too_old")
     return version
@@ -417,22 +444,24 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
-    def add_page(self, page: int, body: bytes, listing_max_bytes: int) -> None:
+    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int) -> None:
         self.pages = page
         self.largest = max(self.largest, len(body))
         self.size += len(body)
         if self.size > listing_max_bytes:
-            raise _End("bad_response", "listing_bytes", page)
+            session.bad("listing_bytes", page)
         try:
-            self.rows.extend(parse_page(body))
+            rows = parse_page(body)
         except BadAnswer as bad:
-            raise _End("bad_response", bad.field, page) from None
+            session.bad(bad.field, page)
+        self.rows.extend(rows)
+        session.usable()
 
 
-def _count(headers: httpx.Headers, name: str) -> int:
+def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
     value = headers.get(name)
     if value is None or _COUNT.fullmatch(value) is None:
-        raise _End("bad_response", name, 1)
+        session.bad(name, 1)
     return int(value)
 
 
@@ -440,18 +469,22 @@ def _read_listing(
     session: _Session, listing: _Listing, page_max_bytes: int, listing_max_bytes: int, progress: Progress | None
 ) -> None:
     first = session.request("GET", PRODUCTS_PATH, listing_params(1), page_max_bytes, page=True)
-    listing.total = _count(first.headers, "x-wp-total")
-    pages = _count(first.headers, "x-wp-totalpages")
+    listing.total = _count(session, first.headers, "x-wp-total")
+    pages = _count(session, first.headers, "x-wp-totalpages")
     if pages > MAX_PAGES:
         raise _End("too_many_pages")
-    listing.add_page(1, first.body, listing_max_bytes)
+    listing.add_page(session, 1, first.body, listing_max_bytes)
     if listing.total == 0 and not listing.rows:
         raise _End("no_products")
     if progress is not None:
         progress(1, max(pages, 1), len(listing.rows))
     for page in range(2, pages + 1):
-        response = session.request("GET", PRODUCTS_PATH, listing_params(page), page_max_bytes, page=True)
-        listing.add_page(page, response.body, listing_max_bytes)
+        response = session.request(
+            "GET", PRODUCTS_PATH, listing_params(page), page_max_bytes, page=True, past_the_end=True
+        )
+        if response.status == 400:
+            return  # the pages ran out early: the count check reads the listing once more
+        listing.add_page(session, page, response.body, listing_max_bytes)
         if progress is not None:
             progress(page, pages, len(listing.rows))
 
@@ -505,6 +538,7 @@ def parse_product(raw: Any) -> Product:
     title = _clean(html.unescape(raw_title), "name")
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
+    meta, meta_skipped = _meta(raw.get("meta_data"))
     if "date_modified_gmt" not in raw:
         raise BadAnswer("date_modified_gmt")
     modified = raw["date_modified_gmt"]
@@ -518,8 +552,9 @@ def parse_product(raw: Any) -> Product:
         status=_word(raw, "status"),
         modified_gmt=modified,
         downloads=_downloads(raw.get("downloads")),
-        meta=_meta(raw.get("meta_data")),
+        meta=meta,
         entities=title != raw_title,
+        meta_skipped=meta_skipped,
     )
 
 
@@ -543,22 +578,31 @@ def _downloads(value: Any) -> tuple[Download, ...]:
     return downloads
 
 
-def _meta(value: Any) -> tuple[tuple[str, str], ...]:
-    """Only the entries whose key starts with `latest_version` are kept; every entry must still be an object with a
-    text key (the rest of `meta_data` is never stored)."""
+def _meta(value: Any) -> tuple[tuple[tuple[str, str], ...], int]:
+    """The entries whose key starts with `latest_version`, and how many such entries were skipped (Lead
+    (proposed), m3.1 review 2): one whose key or value can't be kept (a value that isn't text or is longer than
+    200, a key longer than 255, a NUL or a lone surrogate in either), any past the 50 kept, and the last ones while
+    the stored JSON would pass its limit. A bad entry costs only itself, never the store's read. `meta_data` must
+    still be a list of objects with a text key (the rest of it is never stored)."""
     if not isinstance(value, list):
         raise BadAnswer("meta_data")
     kept: list[tuple[str, str]] = []
+    skipped = 0
     for raw in value:
         if not isinstance(raw, dict) or not isinstance(raw.get("key"), str):
             raise BadAnswer("meta_data")
         key: str = raw["key"]
         if not key.startswith(META_PREFIX):
             continue
-        if len(key) > META_KEY_MAX or len(kept) >= META_KEPT_MAX:
-            raise BadAnswer("meta_data.key")
-        kept.append((_clean(key, "meta_data.key"), _text(raw, "value", META_VALUE_MAX, name="meta_data.value")))
-    meta = tuple(kept)
-    if len(meta_json(meta)) > META_JSON_MAX:
-        raise BadAnswer("meta_json")
-    return meta
+        try:
+            if len(key) > META_KEY_MAX or len(kept) >= META_KEPT_MAX:
+                raise BadAnswer("meta_data.key")
+            entry = (_clean(key, "meta_data.key"), _text(raw, "value", META_VALUE_MAX, name="meta_data.value"))
+        except BadAnswer:
+            skipped += 1
+            continue
+        kept.append(entry)
+    while kept and len(meta_json(tuple(kept))) > META_JSON_MAX:
+        kept.pop()
+        skipped += 1
+    return tuple(kept), skipped

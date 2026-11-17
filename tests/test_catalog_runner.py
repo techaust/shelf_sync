@@ -2,6 +2,7 @@
 another, links by slug, progress, paused and auto-paused stores skipped, the failure count across runs, resume, the
 stop at shutdown changing nothing, and the client factory seam."""
 
+import inspect
 import logging
 import sqlite3
 import threading
@@ -13,10 +14,12 @@ import pytest
 
 from shelfsync.catalog import runner as runner_module
 from shelfsync.catalog.runner import KeysMissing, SyncRunner
-from shelfsync.catalog.service import store_clients
+from shelfsync.catalog.service import CatalogService, build_catalog_service, store_clients
 from shelfsync.db.catalog import clear_address_guard
+from shelfsync.db.stores import get_store
+from shelfsync.paths import DataPaths
 from shelfsync.platform.secrets import MemorySecretStore
-from shelfsync.store_service import StoreError
+from shelfsync.store_service import StoreError, build_store_service
 from tests.catalog_support import CatalogRig, FakeCatalogStore, make_catalog_rig, raw_product, wait_for
 from tests.laragon_support import basic
 from tests.store_support import KEY, KEY_2, SECRET, SECRET_2, FailingSecretStore, system_status
@@ -440,3 +443,41 @@ def test_a_credential_manager_failure_is_secrets_unavailable_not_keys_missing() 
     missing.set("store-1-key", KEY)  # one of the two values only
     rig.run()
     assert rig.service.runner.state().outcomes == {gf: "keys_missing"}
+
+
+# ---- review 2 (m3.1) -----------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("skip", ["paused", "auto_paused", "store_removed"])
+def test_a_skipped_store_never_waits_for_its_busy_slot(skip: str) -> None:
+    """Finding 6: a store that will be skipped is skipped before its slot is claimed, so a Test connection holding
+    the slot costs the run no wait."""
+    rig = make_catalog_rig(fake_time=True)
+    gf = rig.add_store("GF", [raw_product(1)])
+    with closing(rig.db.connect()) as connection:
+        listed = get_store(connection, gf)  # the row as the run listed it, before the change
+        if skip == "paused":
+            connection.execute("UPDATE store SET state = 'paused' WHERE id = ?", (gf,))
+        elif skip == "auto_paused":
+            connection.execute(
+                "INSERT INTO sync_state (store_id, auto_paused_at, auto_pause_reason) VALUES (?, 'x', 'server_error')",
+                (gf,),
+            )
+        else:
+            connection.execute("UPDATE store SET removed_at = 'x' WHERE id = ?", (gf,))
+    assert listed is not None
+    assert rig.stores.slots.claim(gf)  # a Test connection holds the slot
+    assert rig.service.runner._read_one(listed) == skip
+    assert rig.time is not None and rig.time.waits == []  # no wait for the slot
+    assert rig.stores.slots.ids == {gf}  # untouched: still the Test connection's
+
+
+def test_the_app_builds_its_catalog_service_with_the_stores_services_own_busy_slots(data_paths: DataPaths) -> None:
+    """Finding 1: one place wires the runner to the stores service's slots (server.py calls it), and `slots` is a
+    required argument, so no caller can leave the protection out by accident."""
+    stores = build_store_service(data_paths, MemorySecretStore())
+    catalog = build_catalog_service(data_paths, MemorySecretStore(), stores)
+    assert catalog.runner._slots is stores.slots
+    for constructor in (CatalogService, SyncRunner):
+        assert inspect.signature(constructor).parameters["slots"].default is inspect.Parameter.empty
+    assert CatalogService.in_memory().runner._slots is not stores.slots  # its own

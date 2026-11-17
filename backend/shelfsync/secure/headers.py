@@ -65,6 +65,8 @@ ErrorCode = Literal[
     "sync_running",
     "slug_taken",
     "wizard_step_from_state",
+    # M3.1 review 2: 503 `shutting_down` (POST /api/sync while the app stops)
+    "shutting_down",
 ]
 
 CONTENT_SECURITY_POLICY = (

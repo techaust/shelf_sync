@@ -59,6 +59,8 @@ const KNOWN_CODES: Record<ErrorCode, true> = {
   sync_running: true,
   slug_taken: true,
   wizard_step_from_state: true,
+  // M3.1 review 2: 503 shutting_down (POST /sync while the app stops)
+  shutting_down: true,
 };
 export const ERROR_CODES = Object.keys(KNOWN_CODES) as readonly ErrorCode[];
 

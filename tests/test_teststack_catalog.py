@@ -19,6 +19,7 @@ import pytest
 
 from shelfsync.catalog.service import CatalogService
 from shelfsync.platform.secrets import KeyringSecretStore, MemorySecretStore
+from shelfsync.store_service import BusySlots
 from testenv import laragon
 from testenv.catalog import site_clients
 from tests.catalog_support import Db, FakeCatalogStore, make_db, raw_product
@@ -63,7 +64,9 @@ def test_the_seam_reads_the_site_with_its_read_pair_through_a_new_transport_per_
     db = make_db()
     store_id = site_store(db)
     service = CatalogService(
-        db.connect, site_clients(laragon.parse_site(SITE_URL), cert_file, store_with_keys(), transports)
+        db.connect,
+        site_clients(laragon.parse_site(SITE_URL), cert_file, store_with_keys(), transports),
+        slots=BusySlots(),
     )
     run_once(service)
     assert service.runner.state().outcomes == {store_id: None}
@@ -82,7 +85,9 @@ def test_the_seam_serves_the_test_site_only(cert_file: Path) -> None:
         return httpx.MockTransport(lambda request: httpx.Response(500))
 
     service = CatalogService(
-        db.connect, site_clients(laragon.parse_site(SITE_URL), cert_file, store_with_keys(), transports)
+        db.connect,
+        site_clients(laragon.parse_site(SITE_URL), cert_file, store_with_keys(), transports),
+        slots=BusySlots(),
     )
     run_once(service)
     assert service.runner.state().outcomes == {other: "internal"} and calls == []
@@ -102,7 +107,7 @@ def test_the_test_sites_catalog_is_read_and_counted_against_x_wp_total() -> None
     secrets = KeyringSecretStore(laragon.SERVICE)
     db = make_db()
     store_id = site_store(db)
-    service = CatalogService(db.connect, site_clients(site, laragon.default_cert(site), secrets))
+    service = CatalogService(db.connect, site_clients(site, laragon.default_cert(site), secrets), slots=BusySlots())
     run_once(service)
     assert service.runner.state().outcomes == {store_id: None}
     [(rows, total, reason)] = db.rows("SELECT read_rows, read_total, read_reason FROM sync_state")
@@ -131,12 +136,16 @@ def test_a_second_read_of_the_test_site_keeps_every_id() -> None:
     db = make_db()
     site_store(db)
     service = CatalogService(
-        db.connect, site_clients(site, laragon.default_cert(site), KeyringSecretStore(laragon.SERVICE))
+        db.connect,
+        site_clients(site, laragon.default_cert(site), KeyringSecretStore(laragon.SERVICE)),
+        slots=BusySlots(),
     )
     run_once(service)
     first = db.rows("SELECT * FROM item_link ORDER BY wc_id"), db.rows("SELECT id, catalog_item_id, name FROM slot")
     service = CatalogService(
-        db.connect, site_clients(site, laragon.default_cert(site), KeyringSecretStore(laragon.SERVICE))
+        db.connect,
+        site_clients(site, laragon.default_cert(site), KeyringSecretStore(laragon.SERVICE)),
+        slots=BusySlots(),
     )
     run_once(service)
     assert (

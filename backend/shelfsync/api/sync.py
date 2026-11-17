@@ -4,7 +4,8 @@ whose sync was auto-paused.
 Every route sits behind the guard in `secure/middleware.py` (a session, and Origin plus `X-ShelfSync: 1` for the
 writes). Nothing here reads a store inside the request: `POST` only starts the background run (`catalog/runner.py`).
 
-    POST /api/sync                       202 SyncResponse (started); 409 sync_running
+    POST /api/sync                       202 SyncResponse (started); 409 sync_running; 503 shutting_down (the app
+                                         is stopping: no run starts)
     GET  /api/sync                       200 SyncResponse
     POST /api/sync/stores/{id}/resume    204 (the auto-pause and the failures in a row are cleared); 404 not_found
 
@@ -17,9 +18,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
-import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Path, Response
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from shelfsync.api.errors import ApiError, ErrorResponse
 from shelfsync.catalog.service import CatalogService, StoreSync, SyncStatus
@@ -106,15 +107,15 @@ def make_sync_router(service: CatalogService) -> APIRouter:
         finally:
             # the app is shutting down: no run starts from now on, a running read stops and saves nothing. The stop
             # waits up to 2 s for the run, so it runs on a worker thread, never on the event loop.
-            await anyio.to_thread.run_sync(service.stop)
+            await run_in_threadpool(service.stop)
 
     router = APIRouter(lifespan=lifespan)
-    errors: dict[int | str, dict[str, Any]] = {409: {"model": ErrorResponse}}
+    errors: dict[int | str, dict[str, Any]] = {409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}}
 
     @router.post(SYNC_PATH, status_code=202, response_model=SyncResponse, responses=errors)
     def start_sync() -> SyncResponse:
         if not service.start_sync():
-            raise ApiError(409, "sync_running")
+            raise ApiError(503, "shutting_down") if service.closed else ApiError(409, "sync_running")
         return sync_response(service.sync_status())
 
     @router.get(SYNC_PATH, response_model=SyncResponse)

@@ -49,6 +49,9 @@ class Product:
     meta: tuple[tuple[str, str], ...]
     # The store's title held HTML entities (`html.unescape` changed it): counted by L1, never stored.
     entities: bool = False
+    # `latest_version*` entries skipped as unusable (a value that isn't text, too long, with a NUL or a lone
+    # surrogate, a key too long, past the 50 kept, or past the stored JSON's limit): counted by L1, not stored.
+    meta_skipped: int = 0
 
 
 def downloads_json(downloads: tuple[Download, ...]) -> str:

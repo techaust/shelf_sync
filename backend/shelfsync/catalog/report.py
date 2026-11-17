@@ -223,7 +223,7 @@ def store_lines(store: StoreRef, result: CatalogRead) -> list[str]:
         f"  downloads in no slot (a name repeated on one product) {unslotted:,}",
         f"  download links: shortcode {shortcodes:,}, other {len(downloads) - shortcodes:,}",
         f"  meta latest_version {plain:,}; latest_version_<x> matching a file stem {matched:,}, matching none "
-        f"{unmatched:,}",
+        f"{unmatched:,}; skipped as unusable {sum(product.meta_skipped for product in products):,}",
         f"  titles with HTML entities {sum(product.entities for product in products):,}",
         f"  slugs outside the canonical pattern {sum(not is_canonical_slug(p.slug) for p in products):,}, of them "
         f"empty {sum(not p.slug for p in products):,} and trashed {_trashed(products):,}",

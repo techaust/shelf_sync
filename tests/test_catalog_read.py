@@ -28,6 +28,7 @@ from shelfsync.apply.catalog_read import (
     retry_delay,
 )
 from shelfsync.apply.woocommerce import MAX_BODY_BYTES, NonGetRefused, ReadRefused, WooClient, run_read_test
+from shelfsync.catalog.model import META_JSON_MAX, meta_json
 from tests.catalog_support import FakeCatalogStore, FakeTime, download, raw_product
 from tests.store_support import (
     KEY,
@@ -440,8 +441,6 @@ HOSTILE: list[tuple[str, httpx.Response]] = [
     ("file too long", page_of([_with(downloads=[{"id": "a", "name": "Download", "file": "f" * 2049}])])),
     ("meta not a list", page_of([_with(meta_data={"key": "x"})])),
     ("meta without key", page_of([_with(meta_data=[{"value": "x"}])])),
-    ("latest_version not text", page_of([_with(meta_data=[{"key": "latest_version", "value": ["1"]}])])),
-    ("latest_version too long", page_of([_with(meta_data=[{"key": "latest_version", "value": "1" * 201}])])),
     ("no total", httpx.Response(200, headers={"X-WP-TotalPages": "1"}, content=b"[]")),
     ("odd total", page_of(rows(1), total="1e3")),
     ("negative total", page_of(rows(1), total="-1")),
@@ -466,17 +465,10 @@ TEXT_PROBES: list[tuple[str, dict[str, Any], str]] = [
         {"downloads": [{"id": f"{n:032x}", "name": "\x01" * 200, "file": "\x01" * 2048} for n in range(50)]},
         "downloads_json",
     ),
-    (
-        "control characters in meta",
-        {"meta_data": [{"key": "latest_version" + "\x01" * 200 + str(n), "value": "\x01" * 200} for n in range(50)]},
-        "meta_json",
-    ),
     ("NUL in a slug", {"slug": "a\x00b"}, "slug"),
     ("NUL in a title by entity", {"name": "a&#0;b\x00"}, "name"),
     ("lone surrogate in a file", {"downloads": [{"id": "a", "name": "Download", "file": "\udfff"}]}, "downloads.file"),
     ("NUL in a download id", {"downloads": [{"id": "a\x00", "name": "Download", "file": "f"}]}, "downloads.id"),
-    ("NUL in a meta key", {"meta_data": [{"key": "latest_version\x00", "value": "1"}]}, "meta_data.key"),
-    ("surrogate in a meta value", {"meta_data": [{"key": "latest_version", "value": "\ud83d"}]}, "meta_data.value"),
 ]
 
 
@@ -648,3 +640,75 @@ def test_the_transport_drops_every_set_cookie_header_and_keeps_the_rest() -> Non
     assert "set-cookie" not in response.headers and "set-cookie2" not in response.headers
     assert response.headers["x-wp-total"] == "1"
     transport.close()
+
+
+# ---- review 2 (m3.1) -----------------------------------------------------------------------------------------------
+
+META_SKIPS: list[tuple[str, list[dict[str, Any]], int | None]] = [
+    # (id, meta_data, entries skipped): the analyst's meta probe, and the cases that used to fail the whole read
+    (
+        "control characters in meta",
+        [{"key": "latest_version" + "\x01" * 200 + str(n), "value": "\x01" * 200} for n in range(50)],
+        None,  # some are skipped until the stored JSON fits
+    ),
+    ("NUL in a meta key", [{"key": "latest_version\x00", "value": "1"}], 1),
+    ("surrogate in a meta value", [{"key": "latest_version", "value": "\ud83d"}], 1),
+    ("latest_version not text", [{"key": "latest_version", "value": ["1"]}], 1),
+    ("latest_version too long", [{"key": "latest_version", "value": "1" * 201}], 1),
+    ("a key too long", [{"key": "latest_version" + "k" * 300, "value": "1"}], 1),
+    ("past the 50 kept", [{"key": f"latest_version_{n}", "value": "1"} for n in range(52)], 3),  # 1 + 52 - 50
+]
+
+
+@pytest.mark.parametrize(("meta", "skipped"), [m[1:] for m in META_SKIPS], ids=[m[0] for m in META_SKIPS])
+def test_an_unusable_latest_version_entry_is_skipped_and_counted_not_the_whole_read(
+    meta: list[dict[str, Any]], skipped: int | None
+) -> None:
+    """Review 2, finding 4 (Lead (proposed)): a bad `latest_version*` entry costs only itself; good ones stay."""
+    good = {"id": 9, "key": "latest_version", "value": "2.0"}
+    result = read(FakeCatalogStore(rows=[raw_product(1, meta=[good, *meta])])).products
+    [found] = result
+    assert found.meta[0] == ("latest_version", "2.0")
+    if skipped is None:
+        assert found.meta_skipped > 0 and len(meta_json(found.meta)) <= META_JSON_MAX
+    else:
+        assert found.meta_skipped == skipped and len(found.meta) == 1 + len(meta) - skipped
+
+
+def test_a_store_that_keeps_sending_a_bad_page_is_auto_paused_after_ten() -> None:
+    """Review 2, finding 2: a 200 the reader can't use counts as a failed request for APL-12, and `system_status`
+    answering doesn't reset the count, so ten reads that each get a bad page auto-pause the store."""
+    failures = MemoryFailureCount()
+    for run in range(1, 11):
+        result = read(FakeCatalogStore(rows=rows(1), answers=[page_of({"id": 1})]), failures=failures)
+        assert (result.reason, result.bad_field, failures.count) == ("bad_response", "page", run)
+    assert result.auto_paused and failures.paused_reason == "bad_response"
+    failures = MemoryFailureCount()
+    for run in range(1, 4):
+        store = FakeCatalogStore(rows=rows(1), status_answer=page_of({"theme": {}}))  # a 200 with no environment
+        result = read(store, failures=failures)
+        assert (result.reason, result.bad_field, failures.count) == ("bad_response", "environment", run)
+    assert read(FakeCatalogStore(rows=rows(1)), failures=failures).ok and failures.count == 0  # a usable page
+
+
+def test_a_400_on_a_later_page_is_read_as_the_listing_shrinking_and_read_once_more() -> None:
+    """Review 2, finding 3: WooCommerce answers 400 for a page past the last (not verified on a store): the listing
+    ended early, so the count check reads it again; a second short listing is `count_mismatch`."""
+    store = FakeCatalogStore(rows=rows(150))
+    calls: list[int] = []
+
+    def page_two_gone(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"code": "rest_post_invalid_page_number", "message": "x", "data": {}})
+
+    def before(page: int) -> None:
+        calls.append(page)
+        if page == 1 and len(calls) == 1:
+            store.answers.append(page_two_gone)
+
+    store.before_page = before
+    failures = MemoryFailureCount()
+    result = read(store, failures=failures)
+    assert result.ok and len(result.products) == 150 and failures.count == 0
+    always = FakeCatalogStore(rows=rows(150))
+    always.before_page = lambda page: always.answers.append(page_two_gone) if page == 1 else None
+    assert read(always).reason == "count_mismatch"
