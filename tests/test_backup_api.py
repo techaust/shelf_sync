@@ -94,7 +94,7 @@ def test_a_plain_export_holds_settings_stores_and_storage_and_no_secret(source: 
     assert envelope["format"] == "shelfsync-export" and envelope["version"] == 1
     assert envelope["encryption"] is None and "ciphertext" not in envelope
     assert envelope["created_at"] == "2026-10-28T10:00:00.000000Z"
-    assert envelope["schema"] == 2
+    assert envelope["schema"] == 3  # 0003 (m3.1) added the catalog tables
     payload = envelope["payload"]
     assert set(payload) == {"settings", "stores", "storage", "catalog"}  # no `secrets` in a plain file
     assert payload["catalog"] is None
@@ -459,10 +459,10 @@ def test_raised_kdf_costs_are_refused_before_any_derivation(
 def test_a_newer_format_version_or_schema_is_too_new(source: Install, target: Install) -> None:
     before = snapshot(target)
     text = export_text(source, PASSPHRASE)
-    for change in (lambda e: e.update(version=2), lambda e: e.update(schema=3), lambda e: e.update(schema=99)):
+    for change in (lambda e: e.update(version=2), lambda e: e.update(schema=4), lambda e: e.update(schema=99)):
         response = import_response(target, tampered(text, change), PASSPHRASE)
         assert (response.status_code, response.json()) == (409, {"error": "export_too_new"})
-    plain = tampered(export_text(source), lambda e: e.update(schema=3))
+    plain = tampered(export_text(source), lambda e: e.update(schema=4))
     assert import_response(target, plain).json() == {"error": "export_too_new"}
     assert snapshot(target) == before
 
