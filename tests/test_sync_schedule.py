@@ -5,6 +5,7 @@ holding up the other, the auto-pause rule for snapshot attempts, paused and auto
 incremental's cadence, and never two runs at once."""
 
 import threading
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -236,7 +237,7 @@ def test_a_store_down_all_night_isnt_auto_paused_by_the_nights_attempts_but_is_b
 def test_a_store_slow_for_the_first_two_attempts_ends_the_night_with_its_count_back_at_zero() -> None:
     rig = make_sync_rig(utc(18, 2, 0, 5))
     ids = built(rig, "GF")
-    with rig.db.connect() as connection:
+    with closing(rig.db.connect()) as connection:
         connection.execute("UPDATE sync_state SET failures_in_row = 6 WHERE store_id = ?", (ids["GF"],))
     rig.store("GF").fail = failing
     rig.tick()
@@ -253,7 +254,7 @@ def test_a_store_slow_for_the_first_two_attempts_ends_the_night_with_its_count_b
 def test_paused_auto_paused_and_unread_stores_are_skipped_and_the_night_says_why() -> None:
     rig = make_sync_rig(utc(18, 2, 0, 5))
     ids = built(rig, "GF", "PW", "TS")
-    with rig.db.connect() as connection:
+    with closing(rig.db.connect()) as connection:
         connection.execute("UPDATE store SET state = 'paused' WHERE id = ?", (ids["GF"],))
         connection.execute(
             "UPDATE sync_state SET auto_paused_at = 'x', auto_pause_reason = 'timeout' WHERE store_id = ?",
@@ -326,7 +327,7 @@ def test_the_scheduler_never_starts_a_run_while_another_runs() -> None:
 def test_a_night_whose_last_attempt_was_cut_off_is_closed_not_run_again() -> None:
     rig = make_sync_rig(utc(18, 2, 5))
     ids = built(rig, "GF")
-    with rig.db.connect() as connection:
+    with closing(rig.db.connect()) as connection:
         connection.execute(
             "INSERT INTO snapshot_night (store_id, night, state, attempts) VALUES (?, '2026-11-18', 'running', 3)",
             (ids["GF"],),
