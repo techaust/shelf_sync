@@ -10,6 +10,7 @@ import os
 import ssl
 import sys
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 from types import ModuleType
 
@@ -17,6 +18,9 @@ import httpx
 import pytest
 
 from shelfsync.catalog.runner import RunPlan
+from shelfsync.db.connection import connect
+from shelfsync.db.stores import insert_store
+from shelfsync.logs import remove_logging
 from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 from testenv import laragon, launch
 from tests.laragon_support import RO_KEY, RO_SECRET, SITE, store_with_keys, write_site_cert
@@ -106,7 +110,7 @@ def fake_transports(store: FakeSyncStore) -> laragon.TransportFactory:
 def test_it_builds_shelfsync_on_a_throwaway_folder_with_its_scheduler_on(tmp_path: Path, cert: Path) -> None:
     store = FakeSyncStore(rows=[row(1, "aurora")])
     harness = store_with_keys()
-    before = dict(harness._values)  # type: ignore[attr-defined]
+    before = dict(harness._values)
     made = launch.build(
         laragon.parse_site(SITE_URL),
         cert,
@@ -128,10 +132,10 @@ def test_it_builds_shelfsync_on_a_throwaway_folder_with_its_scheduler_on(tmp_pat
         auth = {request.headers["Authorization"] for request in store.requests}
         assert len(auth) == 1  # the site's Read pair, and nothing else
         assert made.stores.test(made.store_id).outcome.ok  # Test connection through the site's transport too
-        assert dict(harness._values) == before  # type: ignore[attr-defined]  # the harness's keys never written
+        assert dict(harness._values) == before  # the harness's keys never written
     finally:
         made.sock.close()
-        launch.remove_logging(made.handler)
+        remove_logging(made.handler)
 
 
 def test_it_reads_no_store_but_the_test_site(tmp_path: Path, cert: Path) -> None:
@@ -144,8 +148,8 @@ def test_it_reads_no_store_but_the_test_site(tmp_path: Path, cert: Path) -> None
         transport_factory=fake_transports(store),
     )
     try:
-        with launch.closing(launch.connect(made.paths.database)) as connection:
-            other = launch.insert_store(
+        with closing(connect(made.paths.database)) as connection:
+            other = insert_store(
                 connection,
                 name="A real store",
                 url="https://store-a.example",
@@ -162,7 +166,7 @@ def test_it_reads_no_store_but_the_test_site(tmp_path: Path, cert: Path) -> None
         assert store.requests == []
     finally:
         made.sock.close()
-        launch.remove_logging(made.handler)
+        remove_logging(made.handler)
 
 
 @pytest.mark.parametrize("where", ["itself", "inside", "holding"])
