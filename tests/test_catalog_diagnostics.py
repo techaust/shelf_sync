@@ -35,7 +35,6 @@ from shelfsync.apply.catalog_read import (
     Attempt,
     CatalogRead,
     FactsTransport,
-    MemoryFailureCount,
     ResponseFacts,
     Wire,
     error_word,
@@ -66,7 +65,6 @@ def read(
             client,
             spacing_ms=150,
             stop=time,
-            failures=MemoryFailureCount(),
             monotonic=time.monotonic,
             now=time.wall,
             **options,
@@ -192,21 +190,22 @@ def test_a_400_past_the_last_page_is_recorded_as_past_the_end() -> None:
     assert ("products", 2, 1, "past_the_end", 400, True) in [brief(a) for a in seen]
 
 
-def test_an_auto_pause_still_records_the_attempt_that_caused_it() -> None:
+def test_l1_never_pauses_it_records_every_attempt_of_a_failing_request() -> None:
+    """m3.2 F1: L1 counts nothing and never touches `sync_state`; a request failing all 4 tries shows all 4."""
     store = FakeCatalogStore(rows=rows(2), status_answer=httpx.Response(500))
     seen: list[Attempt] = []
-    result = read_catalog_with(store, MemoryFailureCount(start=9), seen)
-    assert result.auto_paused and [brief(a) for a in seen] == [("system_status", None, 1, "server_error", 500, True)]
+    result = read_catalog_with(store, seen)
+    assert result.reason == "server_error"
+    assert [brief(a) for a in seen] == [("system_status", None, n, "server_error", 500, True) for n in (1, 2, 3, 4)]
 
 
-def read_catalog_with(store: FakeCatalogStore, failures: MemoryFailureCount, seen: list[Attempt]) -> CatalogRead:
+def read_catalog_with(store: FakeCatalogStore, seen: list[Attempt]) -> CatalogRead:
     time = store.time
     with WooClient(STORE_URL, KEY, SECRET, transport=store.transport, monotonic=time.monotonic) as client:
         return read_catalog(
             client,
             spacing_ms=150,
             stop=time,
-            failures=failures,
             monotonic=time.monotonic,
             now=time.wall,
             observe=seen.append,
@@ -256,7 +255,6 @@ def test_the_facts_are_read_before_the_cookie_drop_and_no_cookie_is_kept_or_sent
             client,
             spacing_ms=150,
             stop=time,
-            failures=MemoryFailureCount(),
             monotonic=time.monotonic,
             now=time.wall,
             observe=seen.append,
@@ -800,7 +798,6 @@ def with_facts(
             client,
             spacing_ms=1000,
             stop=time,
-            failures=MemoryFailureCount(),
             monotonic=time.monotonic,
             now=time.wall,
             observe=seen.append,

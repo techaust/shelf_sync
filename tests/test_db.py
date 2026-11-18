@@ -30,8 +30,8 @@ def test_connection_pragmas(connection: sqlite3.Connection) -> None:
 
 
 def test_fresh_database_gets_every_migration(connection: sqlite3.Connection) -> None:
-    assert migrate(connection) == [1, 2, 3]
-    assert applied_versions(connection) == {1, 2, 3}
+    assert migrate(connection) == [1, 2, 3, 4]
+    assert applied_versions(connection) == {1, 2, 3, 4}
     assert tables(connection) == {
         "schema_migration",
         "setting",
@@ -45,6 +45,9 @@ def test_fresh_database_gets_every_migration(connection: sqlite3.Connection) -> 
         "slot_download",
         "sync_state",
         "wizard",
+        # 0004 (m3.2): the nightly snapshot
+        "snapshot_night",
+        "snapshot_state",
     }
     applied_at = connection.execute("SELECT applied_at FROM schema_migration").fetchone()[0]
     assert applied_at.endswith("Z")
@@ -53,7 +56,7 @@ def test_fresh_database_gets_every_migration(connection: sqlite3.Connection) -> 
 def test_second_run_applies_nothing(connection: sqlite3.Connection) -> None:
     migrate(connection)
     assert migrate(connection) == []
-    assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 3
+    assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 4
 
 
 def test_broken_migration_rolls_back_and_leaves_versions_unchanged(
@@ -125,6 +128,8 @@ def test_settings_default_in_code_and_store_json(connection: sqlite3.Connection)
         "log_retention_days": 30,
         "db_backups_kept": 7,
         "snapshot_retention_days": 30,
+        "sync_interval_minutes": 15,
+        "snapshot_time": "02:00",
         "s3_endpoint": "",
         "s3_region": "",
         "s3_bucket": "",
@@ -158,6 +163,8 @@ def test_settings_refuse_unknown_keys_and_wrong_types(connection: sqlite3.Connec
         "log_retention_days",
         "db_backups_kept",
         "snapshot_retention_days",
+        "sync_interval_minutes",
+        "snapshot_time",
         "s3_endpoint",
         "s3_region",
         "s3_bucket",

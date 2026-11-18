@@ -12,20 +12,19 @@ Rules this module keeps:
   `blocked` when it came as a 503), and `timeout` and `unreachable` (Lead (proposed): a GET changes nothing), are
   retried up to 3 times, waiting 2, 4 and 8 s, or the `Retry-After` (seconds or an HTTP date) when given, never more
   than 60 s. Nothing else is retried. `_Session.request` refuses any method but GET before it sends or retries anything.
-- **Failures in a row:** every failed attempt is counted, and so is a 200 the reader can't use; a **usable products
-  page** resets the count (`FailureCount`, which the runner keeps in `sync_state` across runs). `system_status`
-  answering doesn't reset it, so a store that answers it but keeps sending a bad page still reaches 10 (m3.1
-  review 2). At 10 the store is auto-paused and the read ends.
+- **Failures in a row (APL-12; the owner, 11 2026-11-18):** counted per **read**, not per request, by the runner when
+  it records the read's outcome (`db.catalog.count_failed_read`); this module never counts. A read that still fails
+  after its retries counts once.
 - **The count check:** the rows read must equal page 1's `X-WP-Total`, with no id seen twice and the ids ascending
   across the pages. If not, the whole listing is read once more; if it still doesn't match, `count_mismatch`.
 - **Bounds:** 10 minutes for one store's whole read (`timeout`); 8 MiB per page (`PAGE_MAX_BYTES`) and 64 MiB per
   listing (`LISTING_MAX_BYTES`), both Lead (proposed); the field limits of `catalog/model.py`. A hostile answer ends
   the read with `bad_response`: a page that isn't a JSON list, more than 100 rows on a page, a row without an integer
   `id`, a wrong type, an over-long field, a text with a NUL or a lone surrogate, a download list whose stored JSON
-  would pass its limit, or a bad `X-WP-Total` / `X-WP-TotalPages`. Such a 200 counts as a failed request for the
-  failures in a row (`_Session.bad`). The result names the failing field (a fixed identifier from this code, never a
-  value) and the page. A failed or stopped read returns no products: the caller saves nothing. A `latest_version*`
-  meta entry that can't be kept is skipped and counted instead (`Product.meta_skipped`; Lead (proposed)).
+  would pass its limit, or a bad `X-WP-Total` / `X-WP-TotalPages` (`_Session.bad`). The result names the failing
+  field (a fixed identifier from this code, never a value) and the page. A failed or stopped read returns no
+  products: the caller saves nothing. A `latest_version*` meta entry that can't be kept is skipped and counted
+  instead (`Product.meta_skipped`; Lead (proposed)).
 - **Pages that run out:** a 400 on page 2 or later (WooCommerce's answer past the last page, not verified on a store)
   ends that listing early, so the count check reads it once more.
 - **Stop:** the read stops between requests and during every wait when asked (`stopped`).
@@ -51,9 +50,10 @@ defaults nothing changes: the same requests, the same results):
 import html
 import json
 import logging
+import math
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -94,6 +94,7 @@ from shelfsync.catalog.model import (
     downloads_json,
     meta_json,
 )
+from shelfsync.catalog.watermark import modified_after
 from shelfsync.clock import utc_now
 
 _log = logging.getLogger("shelfsync.catalog")
@@ -106,7 +107,6 @@ RETRIES = 3
 BACKOFF_SECONDS = (2.0, 4.0, 8.0)
 RETRY_AFTER_MAX_SECONDS = 60.0
 STORE_SECONDS = 600.0  # one store's whole read
-FAILURES_TO_PAUSE = 10
 LISTING_FIELDS = "id,slug,name,type,status,date_modified_gmt,downloads,meta_data"
 LISTING_FIELDS_NO_META = "id,slug,name,type,status,date_modified_gmt,downloads"  # L1's `meta=False` only
 PER_PAGE_MIN = 25  # L1's smallest page (`per_page`)
@@ -118,10 +118,10 @@ WC_ID_MAX = 2**63 - 1
 RETRIED_REASONS = frozenset({"rate_limited", "cloudflare_52x", "server_error", "timeout", "unreachable"})
 
 # The outcomes this module adds to woocommerce.py's reasons (fixed words; the screens' text is in docs/13).
-READ_REASONS = frozenset({"too_many_pages", "count_mismatch", "no_products", "auto_paused", "stopped"})
+READ_REASONS = frozenset({"too_many_pages", "count_mismatch", "no_products", "stopped"})
 
 _WORD = re.compile(r"[a-z0-9_-]{1,40}")
-_GMT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_GMT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}")  # ASCII digits only (F7)
 _COUNT = re.compile(r"[0-9]{1,9}")
 
 
@@ -497,37 +497,6 @@ class Attempt:
 Observe = Callable[[Attempt], None]
 
 
-class FailureCount(Protocol):
-    """Failed requests in a row for one store (APL-12), kept across runs by the caller."""
-
-    def failed(self, reason: str) -> bool:
-        """Count one failed attempt; True when the store is now auto-paused (the read then ends)."""
-        ...
-
-    def succeeded(self) -> None:
-        """A request worked: the count goes back to 0."""
-        ...
-
-
-class MemoryFailureCount:
-    """A count kept in memory only (the L1 dry read, tests)."""
-
-    def __init__(self, start: int = 0, limit: int = FAILURES_TO_PAUSE) -> None:
-        self.count = start
-        self.limit = limit
-        self.paused_reason: str | None = None
-
-    def failed(self, reason: str) -> bool:
-        self.count += 1
-        if self.count >= self.limit:
-            self.paused_reason = reason
-            return True
-        return False
-
-    def succeeded(self) -> None:
-        self.count = 0
-
-
 class Stop(Protocol):
     """`threading.Event` is one: `wait` returns True when a stop was asked for (at once, or during the wait)."""
 
@@ -544,7 +513,8 @@ class CatalogRead:
     """One store's read. `reason` is None when it worked; then `products` holds every row, in id order. A failed
     read has no products. `http_status` is the status of the last failed request (when one answered). For a
     `bad_response`, `bad_field` names what was wrong (a fixed identifier such as `name` or `downloads.file`, never a
-    value) and `bad_page` the products page (None: `system_status`)."""
+    value) and `bad_page` the products page (None: `system_status`). `seconds` (m3.2, F3): the read's own duration,
+    from its first products request to its last answer, on the monotonic clock, rounded up to whole seconds."""
 
     reason: str | None
     products: tuple[Product, ...] = ()
@@ -554,9 +524,9 @@ class CatalogRead:
     wc_version: str | None = None
     largest_page_bytes: int = 0
     requests: int = 0
-    auto_paused: bool = False
     bad_field: str | None = None
     bad_page: int | None = None
+    seconds: int = 0
 
     @property
     def ok(self) -> bool:
@@ -607,6 +577,26 @@ def is_retried(reason: str, status: int | None) -> bool:
     return reason in RETRIED_REASONS or (reason == "blocked" and status == 503)
 
 
+PRODUCT_GONE_CODE = "woocommerce_rest_product_invalid_id"  # the test site's answer for an unknown id (04-A V28)
+
+
+def is_missing(response: WooResponse) -> bool:
+    """The product asked for by id doesn't exist: a 404 whose body is WooCommerce's own error for that,
+    `woocommerce_rest_product_invalid_id` (review 1). Any other 404 doesn't confirm anything."""
+    if response.status != 404:
+        return False
+    data = _json(response.body)
+    return isinstance(data, dict) and data.get("code") == PRODUCT_GONE_CODE
+
+
+def is_param_refused(response: WooResponse) -> bool:
+    """A 400 whose body is WordPress's REST error for a parameter it refused (`rest_invalid_param`)."""
+    if response.status != 400:
+        return False
+    data = _json(response.body)
+    return isinstance(data, dict) and data.get("code") == "rest_invalid_param"
+
+
 @dataclass(frozen=True)
 class _Try:
     """One attempt as the observer sees it: the products page (None: `system_status`), its number (1 to 4), the wait
@@ -620,7 +610,8 @@ class _Try:
 
 
 class _Session:
-    """The requests of one store's read: spacing, retries, the failure count, the time bound and the stop."""
+    """The requests of one store's read: spacing, retries, the time bound and the stop. It also times the read from
+    its first products request to its last answer (`seconds`, m3.2 F3)."""
 
     def __init__(
         self,
@@ -628,7 +619,6 @@ class _Session:
         *,
         spacing_seconds: float,
         stop: Stop,
-        failures: FailureCount,
         monotonic: Callable[[], float],
         now: Callable[[], datetime],
         deadline: float,
@@ -639,7 +629,6 @@ class _Session:
         self._client = client
         self._spacing = spacing_seconds
         self._stop = stop
-        self._failures = failures
         self._monotonic = monotonic
         self._now = now
         self._deadline = deadline
@@ -652,7 +641,15 @@ class _Session:
         self._sent = False
         self.requests = 0
         self.last_failure_status: int | None = None
-        self.auto_paused = False
+        self._first_products: float | None = None
+        self._last_answer: float | None = None
+
+    @property
+    def seconds(self) -> int:
+        """Whole seconds (rounded up) from the first products request to the last answer; 0 before any."""
+        if self._first_products is None or self._last_answer is None:
+            return 0
+        return max(0, math.ceil(self._last_answer - self._first_products))
 
     def _pause(self, seconds: float) -> None:
         if seconds <= 0:
@@ -736,16 +733,13 @@ class _Session:
             )
         )
 
-    def usable(self) -> None:
-        """A products page was read and parsed: the failures in a row go back to 0."""
-        self._failures.succeeded()
+    def _answered(self, path: str) -> None:
+        if path != SYSTEM_STATUS_PATH:
+            self._last_answer = self._monotonic()
 
     def bad(self, field: str, page: int | None) -> NoReturn:
-        """An answer came (a 200) but can't be used: it counts as a failed request for APL-12 (a store that keeps
-        sending a bad page is auto-paused after 10 in a row, m3.1 review 2), then the read ends with
-        `bad_response`, naming the field and the page."""
-        if self._failures.failed("bad_response"):
-            self.auto_paused = True
+        """An answer came (a 200) but can't be used: the read ends with `bad_response`, naming the field and the
+        page."""
         raise _End("bad_response", field, page)
 
     def request(
@@ -757,6 +751,8 @@ class _Session:
         *,
         page: int | None = None,
         past_the_end: bool = False,
+        refusable: bool = False,
+        missing_ok: bool = False,
     ) -> WooResponse:
         """One request with its retries. Only a GET is ever sent or retried: any other method is refused here,
         before anything is sent (and `GetOnlyTransport` refuses one too). With `page` (a products page's number), a
@@ -764,7 +760,11 @@ class _Session:
         otherwise a 200 that isn't JSON is `not_woocommerce`, as in Test connection. With `past_the_end` (pages 2 and
         later), a 400 is returned as it is too, neither a success nor a failure: WooCommerce's answer to a page past
         the last one, which the caller treats as the listing having shrunk while it was read (m3.1 review 2; not
-        verified on a store). Each attempt goes to `observe` when there is one, before anything else is done with it."""
+        verified on a store). With `refusable` (m3.2: a parameter the store may not accept, `include_status`), a 400
+        whose body is WordPress's `rest_invalid_param` error is returned as it is too, neither a success nor a
+        failure: the caller falls back to another listing. With `missing_ok` (m3.2 F2: one product asked for by id),
+        any 404 is returned as it is: the caller tells a confirmed deletion (`is_missing`) from one it can't confirm.
+        Each attempt goes to `observe` when there is one, before anything else is done with it."""
         if method != "GET":
             raise NonGetRefused("only GET requests are sent or retried")
         delay = self._spacing if self._sent else 0.0
@@ -778,6 +778,8 @@ class _Session:
                 raise _End("timeout")
             self._sent = True
             self.requests += 1
+            if path != SYSTEM_STATUS_PATH and self._first_products is None:
+                self._first_products = self._monotonic()
             headers: httpx.Headers | None = None
             # Without an observer or an attempt bound (the app), no clock is read here and `client.get` gets the
             # store's deadline, as always.
@@ -792,22 +794,27 @@ class _Session:
             try:
                 response = self._client.get(path, params, deadline, max_bytes=max_bytes)
             except ReadRefused as refused:
+                self._answered(path)
                 reason = refused.reason
                 status = refused.status
                 self._note_refused(tried, refused)
             else:
+                self._answered(path)
                 if past_the_end and response.status == 400:
                     self._note_answer(tried, "past_the_end", response)
+                    return response
+                if refusable and is_param_refused(response):
+                    self._note_answer(tried, "param_refused", response)
+                    return response
+                if missing_ok and response.status == 404:
+                    self._note_answer(tried, "missing" if is_missing(response) else "not_confirmed", response)
                     return response
                 answered = None if page is not None and response.status == 200 else classify(response)
                 self._note_answer(tried, answered or "ok", response)
                 if answered is None:
-                    return response  # the caller resets the count once the answer proved usable
+                    return response
                 reason, status, headers = answered, response.status, response.headers
             self.last_failure_status = status
-            if self._failures.failed(reason):
-                self.auto_paused = True
-                raise _End(reason)
             if not is_retried(reason, status) or attempt >= RETRIES:
                 raise _End(reason)
             delay = max(self._spacing, retry_delay(headers, attempt, self._now()))
@@ -819,7 +826,6 @@ def read_catalog(
     *,
     spacing_ms: int,
     stop: Stop,
-    failures: FailureCount,
     progress: Progress | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = utc_now,
@@ -844,7 +850,6 @@ def read_catalog(
         client,
         spacing_seconds=spacing_ms / 1000,
         stop=stop,
-        failures=failures,
         monotonic=monotonic,
         now=now,
         deadline=monotonic() + store_seconds,
@@ -856,9 +861,10 @@ def read_catalog(
     state = _Listing()
     try:
         wc_version = _check_version(session)
+        query = shape.query()
         for _attempt in range(2):
             state = _Listing()
-            _read_listing(session, state, shape, page_max_bytes, listing_max_bytes, progress)
+            _read_listing(session, state, query, page_max_bytes, listing_max_bytes, progress)
             if state.consistent():
                 return CatalogRead(
                     None,
@@ -869,6 +875,7 @@ def read_catalog(
                     wc_version,
                     state.largest,
                     session.requests,
+                    seconds=session.seconds,
                 )
         raise _End("count_mismatch")
     except _End as end:
@@ -881,9 +888,9 @@ def read_catalog(
             wc_version,
             state.largest,
             session.requests,
-            session.auto_paused,
             end.field,
             end.page,
+            session.seconds,
         )
 
 
@@ -894,12 +901,17 @@ def read_store_catalog(client: WooClient, code: str, **options: Any) -> CatalogR
     return result
 
 
-def describe_bad(result: CatalogRead) -> str:
+def describe_bad(result: CatalogRead | SnapshotRead) -> str:
     """`; field <name> on page <n>` for a `bad_response` that named one (the page is `system_status` for the first
     request), else nothing."""
     if result.bad_field is None:
         return ""
-    where = "system_status" if result.bad_page is None else f"page {result.bad_page}"
+    if result.bad_page is None:
+        where = "system_status"
+    elif result.bad_page == BY_ID_PAGE:
+        where = "a product asked for by id"
+    else:
+        where = f"page {result.bad_page}"
     return f"; field {result.bad_field} on {where}"
 
 
@@ -907,14 +919,13 @@ def log_read(code: str, result: CatalogRead) -> None:
     level = logging.INFO if result.ok else logging.WARNING
     _log.log(
         level,
-        "Store %s catalog read: %s (pages %d, rows %d, last failure HTTP %s%s)%s",
+        "Store %s catalog read: %s (pages %d, rows %d, last failure HTTP %s%s)",
         code,
         result.reason or "ok",
         result.pages,
         len(result.products),
         result.http_status,
         describe_bad(result),
-        "; the store's sync is now auto-paused" if result.auto_paused else "",
     )
 
 
@@ -952,6 +963,31 @@ class ListingShape:
     def params(self, page: int) -> dict[str, str]:
         return listing_params(page, per_page=self.per_page, meta=self.meta)
 
+    def query(self) -> Query:
+        per_page, meta = self.per_page, self.meta
+        return Query(
+            PRODUCTS_PATH, self.params, lambda body: parse_page(body, per_page=per_page, meta=meta), self.max_pages
+        )
+
+
+@dataclass(frozen=True)
+class Query:
+    """One paged listing: its path, each page's query, how a page is parsed, and the most pages it may have.
+    `empty_ok`: no rows is a result (an incremental with nothing new, a trash listing, a product with no variations),
+    else it is `no_products`. `refusable`: page 1 may answer WordPress's `rest_invalid_param` 400, which
+    `_read_listing` raises as `Refused` for the caller to fall back."""
+
+    path: str
+    params: Callable[[int], dict[str, str]]
+    parse: Callable[[bytes], list[Product]]
+    max_pages: int
+    empty_ok: bool = False
+    refusable: bool = False
+
+
+class Refused(Exception):
+    """Page 1 of a `refusable` listing answered `rest_invalid_param`: the store doesn't accept that query."""
+
 
 @dataclass
 class _Listing:
@@ -967,18 +1003,19 @@ class _Listing:
             return False
         return all(earlier.wc_id < later.wc_id for earlier, later in pairwise(self.rows))
 
-    def add_page(self, session: _Session, page: int, body: bytes, listing_max_bytes: int, shape: ListingShape) -> None:
+    def add_page(
+        self, session: _Session, page: int, body: bytes, listing_max_bytes: int, parse: Callable[[bytes], list[Product]]
+    ) -> None:
         self.pages = page
         self.largest = max(self.largest, len(body))
         self.size += len(body)
         if self.size > listing_max_bytes:
             session.bad("listing_bytes", page)
         try:
-            rows = parse_page(body, per_page=shape.per_page, meta=shape.meta)
+            rows = parse(body)
         except BadAnswer as bad:
             session.bad(bad.field, page)
         self.rows.extend(rows)
-        session.usable()
 
 
 def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
@@ -991,42 +1028,45 @@ def _count(session: _Session, headers: httpx.Headers, name: str) -> int:
 def _read_listing(
     session: _Session,
     listing: _Listing,
-    shape: ListingShape,
+    query: Query,
     page_max_bytes: int,
     listing_max_bytes: int,
     progress: Progress | None,
 ) -> None:
-    first = session.request("GET", PRODUCTS_PATH, shape.params(1), page_max_bytes, page=1)
+    first = session.request("GET", query.path, query.params(1), page_max_bytes, page=1, refusable=query.refusable)
+    if query.refusable and is_param_refused(first):
+        raise Refused
     listing.total = _count(session, first.headers, "x-wp-total")
     pages = _count(session, first.headers, "x-wp-totalpages")
-    if pages > shape.max_pages:
+    if pages > query.max_pages:
         raise _End("too_many_pages")
-    listing.add_page(session, 1, first.body, listing_max_bytes, shape)
-    if listing.total == 0 and not listing.rows:
+    listing.add_page(session, 1, first.body, listing_max_bytes, query.parse)
+    if listing.total == 0 and not listing.rows and not query.empty_ok:
         raise _End("no_products")
     if progress is not None:
         progress(1, max(pages, 1), len(listing.rows))
     for page in range(2, pages + 1):
-        response = session.request(
-            "GET", PRODUCTS_PATH, shape.params(page), page_max_bytes, page=page, past_the_end=True
-        )
+        response = session.request("GET", query.path, query.params(page), page_max_bytes, page=page, past_the_end=True)
         if response.status == 400:
             return  # the pages ran out early: the count check reads the listing once more
-        listing.add_page(session, page, response.body, listing_max_bytes, shape)
+        listing.add_page(session, page, response.body, listing_max_bytes, query.parse)
         if progress is not None:
             progress(page, pages, len(listing.rows))
 
 
-def parse_page(body: bytes, *, per_page: int = PER_PAGE, meta: bool = True) -> list[Product]:
+def parse_page(body: bytes, *, per_page: int = PER_PAGE, meta: bool = True, kind: str = "product") -> list[Product]:
     """One products page: a JSON list of at most `per_page` products (100 in the app). `BadAnswer` for anything
-    else. With `meta=False` (L1's option), `meta_data` isn't read: the products have no `latest_version` data."""
+    else. With `meta=False` (L1's option), `meta_data` isn't read: the products have no `latest_version` data.
+    `kind` (m3.2) says which fields the rows have: `product` (the full read: `downloadable` isn't asked, its query
+    holds `downloadable=true`), `synced` (the incremental and the snapshot: `downloadable` is read, a strict bool) or
+    `variation` (no `name`, `slug` or `type`: the slug and title are empty, the type `variation`)."""
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError, RecursionError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors; a deep nest recurses
         raise BadAnswer("json") from None
     if not isinstance(data, list) or len(data) > per_page:
         raise BadAnswer("page")
-    return [parse_product(raw, meta=meta) for raw in data]
+    return [parse_product(raw, meta=meta, kind=kind) for raw in data]
 
 
 def _clean(value: str, name: str) -> str:
@@ -1055,17 +1095,29 @@ def _word(raw: dict[str, Any], key: str) -> str:
     return value
 
 
-def parse_product(raw: Any, *, meta: bool = True) -> Product:
+ROW_KINDS = ("product", "synced", "variation")
+
+
+def parse_product(raw: Any, *, meta: bool = True, kind: str = "product") -> Product:
     """One product, with the limits of `catalog/model.py`. `BadAnswer` names the field (never its value). With
-    `meta=False` (L1's option), `meta_data` is neither read nor checked: no `latest_version` data, no error."""
+    `meta=False` (L1's option), `meta_data` is neither read nor checked: no `latest_version` data, no error. `kind`:
+    see `parse_page`."""
+    if kind not in ROW_KINDS:
+        raise ValueError("unknown row kind")
     if not isinstance(raw, dict):
         raise BadAnswer("row")
     wc_id = raw.get("id")
     if type(wc_id) is not int or not 1 <= wc_id <= WC_ID_MAX:
         raise BadAnswer("id")
-    slug = _text(raw, "slug", SLUG_MAX)
-    raw_title = _text(raw, "name", TITLE_MAX)
+    slug = _text(raw, "slug", SLUG_MAX) if kind != "variation" else ""
+    raw_title = _text(raw, "name", TITLE_MAX) if kind != "variation" else ""
     title = _clean(html.unescape(raw_title), "name")
+    downloadable = True  # a full read asks `downloadable=true` and doesn't read the flag
+    if kind == "synced":
+        flag = raw.get("downloadable")
+        if type(flag) is not bool:  # strict: a missing, null, 1 or "true" flag fails closed (F8)
+            raise BadAnswer("downloadable")
+        downloadable = flag
     if len(title) > TITLE_MAX:  # not expected (unescaping never lengthens), checked so the table's CHECK always holds
         raise BadAnswer("name")
     kept, meta_skipped = _meta(raw.get("meta_data")) if meta else ((), 0)
@@ -1074,17 +1126,23 @@ def parse_product(raw: Any, *, meta: bool = True) -> Product:
     modified = raw["date_modified_gmt"]
     if modified is not None and (not isinstance(modified, str) or _GMT.fullmatch(modified) is None):
         raise BadAnswer("date_modified_gmt")
+    if modified is not None:
+        try:  # review 2: the shape alone lets `2026-02-30T…` and hour 25 through
+            datetime.strptime(modified, "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            raise BadAnswer("date_modified_gmt") from None
     return Product(
         wc_id=wc_id,
         slug=slug,
         title=title,
-        type=_word(raw, "type"),
+        type=_word(raw, "type") if kind != "variation" else "variation",
         status=_word(raw, "status"),
         modified_gmt=modified,
         downloads=_downloads(raw.get("downloads")),
         meta=kept,
         entities=title != raw_title,
         meta_skipped=meta_skipped,
+        downloadable=downloadable,
     )
 
 
@@ -1136,3 +1194,446 @@ def _meta(value: Any) -> tuple[tuple[tuple[str, str], ...], int]:
         kept.pop()
         skipped += 1
     return tuple(kept), skipped
+
+
+# ---- m3.2: the incremental read and the nightly snapshot -----------------------------------------------------------
+#
+# Both use the same session as the full read (`_Session`: GET only, the spacing, APL-12's retries, the store's
+# 10-minute bound, the stop) and the same checks on every page (`_read_listing`: the count check read once more on a
+# mismatch, hostile answers failing closed, the page and listing caps). Neither counts failures: the runner counts
+# the read once when it records it.
+#
+# **The incremental read (SYNC-01):** no `system_status` (Lead (proposed), review 1: on the test site it costs as
+# much as an empty incremental page, about 1.2 s, and the version only needs checking on full reads and snapshots),
+# then `GET /products?modified_after=<watermark - 2 min>&
+# dates_are_gmt=true&status=any&orderby=id&order=asc&per_page=100&page=<n>&_fields=<the full read's>,downloadable`,
+# with no `downloadable` filter (a product whose flag was turned off must still be seen). No row is a result.
+#
+# **The snapshot (SYNC-03, SYNC-04):** `system_status`; a one-row probe `include_status=trash` (is the parameter
+# known? a store that ignores it answers with a product that isn't in the trash); then the listing with
+# `include_status=any,trash` and `_fields=id,slug,name,type,status,date_modified_gmt,downloadable,downloads,meta_data`.
+# The listing is kept only when its trashed rows are as many as the probe's `X-WP-Total`; otherwise, or when the
+# store refuses the parameter (`rest_invalid_param`), it falls back to two listings, `status=any` then `status=trash`
+# (`listing` says which was used). **A catalog product the listing doesn't hold is asked for by id** (`GET
+# /products/{id}`, F2): only WooCommerce's 404 (`woocommerce_rest_product_invalid_id`) makes it deleted; a 200 is used
+# as read; any other 404 confirms nothing. At most the smaller of 20 and 5 % of the store's catalog (at least 1) are
+# asked for a night, the ones asked longest ago first (review 2): the rest are left as they are, counted
+# (`unconfirmed`), and asked for on later nights, so a bulk deletion clears over a few nights and never fails one. A
+# by-id 200 for a product not in the trash proves the one listing left it out: the store then uses the two listings.
+# Then
+# each variable product's `GET /products/{id}/variations` (at most 50 variable products, else `too_many_variable`;
+# at most 4 pages of 100 variations each, else `too_many_pages`).
+
+INCREMENTAL_FIELDS = LISTING_FIELDS + ",downloadable"
+SNAPSHOT_FIELDS = "id,slug,name,type,status,date_modified_gmt,downloadable,downloads,meta_data"
+VARIATION_FIELDS = "id,status,date_modified_gmt,downloads,meta_data"
+VARIABLE_MAX = 50  # more variable products than this stops the store's snapshot (V30: none on the real stores)
+VARIATION_PAGES = 4  # at most 400 variations on one product (Lead (proposed))
+MISSING_MAX = 20  # F2: the most missing products asked for by id (Lead (proposed))
+MISSING_SHARE = 0.05  # ... and at most 5 % of the store's catalog
+TRASH = "trash"
+INCLUDE_STATUS = "include_status"  # the listing used: one listing with `include_status=any,trash`
+TWO_LISTINGS = "two_listings"  # the fallback: `status=any`, then `status=trash`
+SNAPSHOT_REASONS = frozenset({"too_many_variable", "trash_unlisted"})
+BY_ID_PAGE = 0  # `bad_page` for a product asked for by id
+
+
+def incremental_params(page: int, since: str) -> dict[str, str]:
+    """The query of one incremental page (contract-tested)."""
+    return {
+        "modified_after": since,
+        "dates_are_gmt": "true",
+        "status": "any",
+        "orderby": "id",
+        "order": "asc",
+        "per_page": str(PER_PAGE),
+        "page": str(page),
+        "_fields": INCREMENTAL_FIELDS,
+    }
+
+
+def snapshot_params(page: int, statuses: tuple[str, str], *, per_page: int = PER_PAGE) -> dict[str, str]:
+    """The query of one snapshot page. `statuses` is (`include_status`, `any,trash`), (`include_status`, `trash`) for
+    the probe, or (`status`, `any` or `trash`) for the fallback."""
+    name, value = statuses
+    return {
+        name: value,
+        "orderby": "id",
+        "order": "asc",
+        "per_page": str(per_page),
+        "page": str(page),
+        "_fields": SNAPSHOT_FIELDS,
+    }
+
+
+def variation_params(page: int) -> dict[str, str]:
+    return {"orderby": "id", "order": "asc", "per_page": str(PER_PAGE), "page": str(page), "_fields": VARIATION_FIELDS}
+
+
+def _product_id(wc_id: int) -> int:
+    if type(wc_id) is not int or not 1 <= wc_id <= WC_ID_MAX:
+        raise ValueError("a product id")
+    return wc_id
+
+
+def variations_path(wc_id: int) -> str:
+    return f"{PRODUCTS_PATH}/{_product_id(wc_id)}/variations"
+
+
+def product_path(wc_id: int) -> str:
+    return f"{PRODUCTS_PATH}/{_product_id(wc_id)}"
+
+
+def missing_cap(catalog_size: int) -> int:
+    """F2: how many catalog products a snapshot may ask for by id: the smaller of 20 and 5 % of the store's catalog,
+    rounded up, at least 1 (Lead (proposed))."""
+    return min(MISSING_MAX, max(1, math.ceil(MISSING_SHARE * max(catalog_size, 0))))
+
+
+@dataclass(frozen=True)
+class SnapshotRead:
+    """One store's snapshot read. `reason` is None when it worked; then `products` holds every product (trash
+    included) in id order, `variations` each variable product's variations (by its id, in id order), `deleted` the
+    catalog products a 404 confirmed gone, and `listing` which listing was used (`INCLUDE_STATUS` or
+    `TWO_LISTINGS`). A failed read has no products. The rest as `CatalogRead`."""
+
+    reason: str | None
+    products: tuple[Product, ...] = ()
+    variations: tuple[tuple[int, tuple[Product, ...]], ...] = ()
+    listing: str | None = None
+    pages: int = 0
+    http_status: int | None = None
+    wc_version: str | None = None
+    requests: int = 0
+    bad_field: str | None = None
+    bad_page: int | None = None
+    deleted: tuple[int, ...] = ()
+    seconds: int = 0
+    unconfirmed: int = 0  # catalog products missing from the listing and not confirmed either way tonight
+    asked: tuple[int, ...] = ()  # the products asked for by id tonight (their `asked_at` moves: review 2)
+    incomplete: bool = False  # a by-id 200 for a product not in the trash: the listing left it out (review 2)
+
+    @property
+    def ok(self) -> bool:
+        return self.reason is None
+
+    @property
+    def trashed(self) -> int:
+        return sum(1 for product in self.products if product.status == TRASH)
+
+
+@dataclass
+class _Totals:
+    pages: int = 0
+
+
+def _session(
+    client: WooClient,
+    *,
+    spacing_ms: int,
+    stop: Stop,
+    monotonic: Callable[[], float],
+    now: Callable[[], datetime],
+    store_seconds: float,
+) -> _Session:
+    return _Session(
+        client,
+        spacing_seconds=spacing_ms / 1000,
+        stop=stop,
+        monotonic=monotonic,
+        now=now,
+        deadline=monotonic() + store_seconds,
+    )
+
+
+def _consistent(
+    session: _Session,
+    query: Query,
+    totals: _Totals,
+    page_max_bytes: int,
+    listing_max_bytes: int,
+    progress: Progress | None = None,
+) -> list[Product]:
+    """One listing that passed the count check (read once more on a mismatch, then `count_mismatch`)."""
+    for _attempt in range(2):
+        state = _Listing()
+        try:
+            _read_listing(session, state, query, page_max_bytes, listing_max_bytes, progress)
+        finally:
+            totals.pages += state.pages
+        if state.consistent():
+            return state.rows
+    raise _End("count_mismatch")
+
+
+def _parse_synced(body: bytes, *, per_page: int = PER_PAGE) -> list[Product]:
+    return parse_page(body, per_page=per_page, kind="synced")
+
+
+def read_incremental(
+    client: WooClient,
+    *,
+    watermark: str,
+    spacing_ms: int,
+    stop: Stop,
+    progress: Progress | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = utc_now,
+    store_seconds: float = STORE_SECONDS,
+    page_max_bytes: int = PAGE_MAX_BYTES,
+    listing_max_bytes: int = LISTING_MAX_BYTES,
+) -> CatalogRead:
+    """The products changed since `watermark` (SYNC-01; the section text says how). Never raises for anything the
+    store answers; `ValueError` before anything is sent when `watermark` isn't a store date."""
+    since = modified_after(watermark)
+    session = _session(
+        client, spacing_ms=spacing_ms, stop=stop, monotonic=monotonic, now=now, store_seconds=store_seconds
+    )
+    query = Query(PRODUCTS_PATH, lambda page: incremental_params(page, since), _parse_synced, MAX_PAGES, empty_ok=True)
+    totals = _Totals()
+    wc_version = None  # the incremental doesn't ask `system_status` (review 1): `CatalogRead.wc_version` stays None
+    try:
+        rows = _consistent(session, query, totals, page_max_bytes, listing_max_bytes, progress)
+    except _End as end:
+        return CatalogRead(
+            end.reason,
+            (),
+            None,
+            totals.pages,
+            session.last_failure_status,
+            wc_version,
+            requests=session.requests,
+            bad_field=end.field,
+            bad_page=end.page,
+            seconds=session.seconds,
+        )
+    return CatalogRead(
+        None,
+        tuple(rows),
+        len(rows),
+        totals.pages,
+        session.last_failure_status,
+        wc_version,
+        requests=session.requests,
+        seconds=session.seconds,
+    )
+
+
+def _probe_trash(session: _Session, page_max_bytes: int) -> tuple[int, list[Product]] | None:
+    """`include_status=trash`, one row: (`X-WP-Total`, the row) when the store accepts the parameter, None when it
+    refuses it (`rest_invalid_param`)."""
+    params = snapshot_params(1, (INCLUDE_STATUS, TRASH), per_page=1)
+    response = session.request("GET", PRODUCTS_PATH, params, page_max_bytes, page=1, refusable=True)
+    if is_param_refused(response):
+        return None
+    total = _count(session, response.headers, "x-wp-total")
+    try:
+        rows = _parse_synced(response.body, per_page=1)
+    except BadAnswer as bad:
+        session.bad(bad.field, 1)
+    return total, rows
+
+
+def _snapshot_query(statuses: tuple[str, str], *, empty_ok: bool, refusable: bool) -> Query:
+    return Query(
+        PRODUCTS_PATH,
+        lambda page: snapshot_params(page, statuses),
+        _parse_synced,
+        MAX_PAGES,
+        empty_ok=empty_ok,
+        refusable=refusable,
+    )
+
+
+def _snapshot_products(
+    session: _Session,
+    totals: _Totals,
+    page_max_bytes: int,
+    listing_max_bytes: int,
+    progress: Progress | None,
+    two_listings: bool = False,
+) -> tuple[list[Product], str]:
+    probe = None if two_listings else _probe_trash(session, page_max_bytes)
+    if probe is not None and all(row.status == TRASH for row in probe[1]):
+        query = _snapshot_query((INCLUDE_STATUS, "any," + TRASH), empty_ok=False, refusable=True)
+        try:
+            rows = _consistent(session, query, totals, page_max_bytes, listing_max_bytes, progress)
+        except Refused:
+            pass
+        else:
+            if sum(1 for row in rows if row.status == TRASH) == probe[0]:
+                return rows, INCLUDE_STATUS
+    present = _consistent(
+        session,
+        _snapshot_query(("status", "any"), empty_ok=True, refusable=False),
+        totals,
+        page_max_bytes,
+        listing_max_bytes,
+        progress,
+    )
+    try:
+        trashed = _consistent(
+            session,
+            _snapshot_query(("status", TRASH), empty_ok=True, refusable=True),
+            totals,
+            page_max_bytes,
+            listing_max_bytes,
+        )
+    except Refused:
+        raise _End("trash_unlisted") from None
+    if any(row.status != TRASH for row in trashed):
+        raise _End("trash_unlisted")  # the store ignored `status=trash`: the trash can't be listed
+    merged = {row.wc_id: row for row in present}
+    merged.update((row.wc_id, row) for row in trashed)  # moved to the trash between the two listings
+    if not merged:
+        raise _End("no_products")
+    return [merged[wc_id] for wc_id in sorted(merged)], TWO_LISTINGS
+
+
+def _confirm_missing(
+    session: _Session, missing: list[int], page_max_bytes: int
+) -> tuple[list[Product], list[int], int]:
+    """F2: catalog products the listing didn't hold, asked for by id. Returns (the ones that answered 200, read as any
+    other row; the ones WooCommerce's 404 confirmed gone; how many answered another 404, left unconfirmed)."""
+    found: list[Product] = []
+    gone: list[int] = []
+    unconfirmed = 0
+    for wc_id in missing:
+        response = session.request(
+            "GET", product_path(wc_id), {"_fields": SNAPSHOT_FIELDS}, page_max_bytes, missing_ok=True
+        )
+        if is_missing(response):
+            gone.append(wc_id)
+            continue
+        if response.status == 404:
+            unconfirmed += 1  # not WooCommerce's answer for a deleted product: nothing is concluded
+            continue
+        try:
+            data = json.loads(response.body.decode("utf-8"))
+        except ValueError, RecursionError:
+            session.bad("json", BY_ID_PAGE)
+        try:
+            row = parse_product(data, kind="synced")
+        except BadAnswer as bad:
+            session.bad(bad.field, BY_ID_PAGE)
+        if row.wc_id != wc_id:
+            session.bad("id", BY_ID_PAGE)
+        found.append(row)
+    return found, gone, unconfirmed
+
+
+def read_snapshot(
+    client: WooClient,
+    *,
+    spacing_ms: int,
+    stop: Stop,
+    expected: Sequence[int] = (),
+    catalog_size: int | None = None,
+    two_listings: bool = False,
+    progress: Progress | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = utc_now,
+    store_seconds: float = STORE_SECONDS,
+    page_max_bytes: int = PAGE_MAX_BYTES,
+    listing_max_bytes: int = LISTING_MAX_BYTES,
+) -> SnapshotRead:
+    """Every product of one store, trash included, and every variable product's variations (SYNC-03, SYNC-04; the
+    section text says how). `expected` are the catalog products whose absence would make them deleted, in the order
+    to ask for them (oldest asked first, review 2); `catalog_size` (default: as many as `expected`) sets the cap on
+    asking for them by id; `two_listings` skips the `include_status` listing (a store whose one listing proved
+    incomplete). Never raises for anything the store answers."""
+    session = _session(
+        client, spacing_ms=spacing_ms, stop=stop, monotonic=monotonic, now=now, store_seconds=store_seconds
+    )
+    totals = _Totals()
+    wc_version: str | None = None
+    try:
+        wc_version = _check_version(session)
+        products, listing = _snapshot_products(
+            session, totals, page_max_bytes, listing_max_bytes, progress, two_listings
+        )
+        listed = {product.wc_id for product in products}
+        missing = [wc_id for wc_id in dict.fromkeys(expected) if wc_id not in listed]  # in the caller's order
+        cap = missing_cap(catalog_size if catalog_size is not None else len(expected))
+        asked = tuple(missing[:cap])
+        found, deleted, not_confirmed = _confirm_missing(session, list(asked), page_max_bytes)
+        unconfirmed = len(missing[cap:]) + not_confirmed  # left as they are; asked for on a later night
+        incomplete = any(row.status != TRASH for row in found)  # review 2: the listing left out a live product
+        if found:
+            products = sorted([*products, *found], key=lambda product: product.wc_id)
+        variable = [product.wc_id for product in products if product.type == "variable"]
+        if len(variable) > VARIABLE_MAX:
+            raise _End("too_many_variable")
+        variations: list[tuple[int, tuple[Product, ...]]] = []
+        for wc_id in variable:
+            query = Query(
+                variations_path(wc_id),
+                variation_params,
+                lambda body: parse_page(body, kind="variation"),
+                VARIATION_PAGES,
+                empty_ok=True,
+            )
+            rows = _consistent(session, query, totals, page_max_bytes, listing_max_bytes)
+            variations.append((wc_id, tuple(rows)))
+    except _End as end:
+        return SnapshotRead(
+            end.reason,
+            pages=totals.pages,
+            http_status=session.last_failure_status,
+            wc_version=wc_version,
+            requests=session.requests,
+            bad_field=end.field,
+            bad_page=end.page,
+            seconds=session.seconds,
+        )
+    return SnapshotRead(
+        None,
+        tuple(products),
+        tuple(variations),
+        listing,
+        totals.pages,
+        session.last_failure_status,
+        wc_version,
+        session.requests,
+        deleted=tuple(deleted),
+        seconds=session.seconds,
+        unconfirmed=unconfirmed,
+        asked=asked,
+        incomplete=incomplete,
+    )
+
+
+def log_incremental(code: str, result: CatalogRead, changed: int) -> None:
+    level = logging.INFO if result.ok else logging.WARNING
+    _log.log(
+        level,
+        "Store %s incremental read: %s (pages %d, rows %d, changed %d, last failure HTTP %s%s)",
+        code,
+        result.reason or "ok",
+        result.pages,
+        len(result.products),
+        changed,
+        result.http_status,
+        describe_bad(result),
+    )
+
+
+def log_snapshot(code: str, night: str, attempt: int, result: SnapshotRead) -> None:
+    level = logging.INFO if result.ok else logging.WARNING
+    _log.log(
+        level,
+        "Store %s snapshot of %s, attempt %d: %s (listing %s, pages %d, products %d, trashed %d, deleted %d, "
+        "variable %d, last failure HTTP %s%s)",
+        code,
+        night,
+        attempt,
+        result.reason or "ok",
+        result.listing or "none",
+        result.pages,
+        len(result.products),
+        result.trashed,
+        len(result.deleted),
+        len(result.variations),
+        result.http_status,
+        describe_bad(result),
+    )

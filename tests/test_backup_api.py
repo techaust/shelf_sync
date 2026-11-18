@@ -94,7 +94,7 @@ def test_a_plain_export_holds_settings_stores_and_storage_and_no_secret(source: 
     assert envelope["format"] == "shelfsync-export" and envelope["version"] == 1
     assert envelope["encryption"] is None and "ciphertext" not in envelope
     assert envelope["created_at"] == "2026-10-28T10:00:00.000000Z"
-    assert envelope["schema"] == 3  # 0003 (m3.1) added the catalog tables
+    assert envelope["schema"] == 4  # 0003 (m3.1) added the catalog tables, 0004 (m3.2) the sync and snapshot ones
     payload = envelope["payload"]
     assert set(payload) == {"settings", "stores", "storage", "catalog"}  # no `secrets` in a plain file
     assert payload["catalog"] is None
@@ -106,6 +106,8 @@ def test_a_plain_export_holds_settings_stores_and_storage_and_no_secret(source: 
         "log_retention_days": 45,
         "db_backups_kept": 12,
         "snapshot_retention_days": 30,
+        "sync_interval_minutes": 15,  # m3.2: exported; an import keeps the current ones (`AppSettingsValues`)
+        "snapshot_time": "02:00",
     }
     assert payload["storage"] == {
         "s3_endpoint": "",
@@ -176,7 +178,7 @@ def test_an_export_of_an_empty_install_is_valid_and_imports_into_another(tmp_pat
     for passphrase in (None, PASSPHRASE):
         response = import_response(other, export_text(empty, passphrase), passphrase)
         assert response.status_code == 200
-        assert response.json() == {"stores": 0, "settings": 12, "secrets": 0, "encrypted": passphrase is not None}
+        assert response.json() == {"stores": 0, "settings": 14, "secrets": 0, "encrypted": passphrase is not None}
 
 
 def test_every_export_of_the_same_install_differs_but_opens_the_same(source: Install) -> None:
@@ -266,7 +268,7 @@ def test_a_bad_request_never_echoes_the_passphrase(source: Install) -> None:
 def test_a_plain_file_round_trips_the_settings_and_the_stores_but_no_secret(source: Install, target: Install) -> None:
     response = import_response(target, export_text(source))
     assert response.status_code == 200
-    assert response.json() == {"stores": 2, "settings": 12, "secrets": 0, "encrypted": False}
+    assert response.json() == {"stores": 2, "settings": 14, "secrets": 0, "encrypted": False}
     listed = target.client.get("/api/stores").json()["stores"]
     assert [
         (s["code"], s["name"], s["url"], s["shape"], s["color"], s["spacing_ms"], s["main_button"], s["state"])
@@ -294,7 +296,7 @@ def test_an_encrypted_file_round_trips_every_secret(source: Install, target: Ins
     response = import_response(target, export_text(source, PASSPHRASE), PASSPHRASE)
     assert response.status_code == 200
     # 2 + 2 store keys, 2 + 2 S3, 1 token
-    assert response.json() == {"stores": 2, "settings": 12, "secrets": 9, "encrypted": True}
+    assert response.json() == {"stores": 2, "settings": 14, "secrets": 9, "encrypted": True}
     listed = target.client.get("/api/stores").json()["stores"]
     keys = StoreCredentials(target.secrets)
     assert [keys.read(s["id"]) for s in listed] == [(KEY, SECRET), (KEY_2, SECRET_2)]
@@ -459,10 +461,10 @@ def test_raised_kdf_costs_are_refused_before_any_derivation(
 def test_a_newer_format_version_or_schema_is_too_new(source: Install, target: Install) -> None:
     before = snapshot(target)
     text = export_text(source, PASSPHRASE)
-    for change in (lambda e: e.update(version=2), lambda e: e.update(schema=4), lambda e: e.update(schema=99)):
+    for change in (lambda e: e.update(version=2), lambda e: e.update(schema=5), lambda e: e.update(schema=99)):
         response = import_response(target, tampered(text, change), PASSPHRASE)
         assert (response.status_code, response.json()) == (409, {"error": "export_too_new"})
-    plain = tampered(export_text(source), lambda e: e.update(schema=4))
+    plain = tampered(export_text(source), lambda e: e.update(schema=5))
     assert import_response(target, plain).json() == {"error": "export_too_new"}
     assert snapshot(target) == before
 
@@ -943,3 +945,40 @@ def test_the_default_app_has_an_in_memory_export_service() -> None:
     response = client.post(EXPORT, headers=WRITE_HEADERS, json={"passphrase": None})
     assert response.status_code == 200 and response.json()["payload"]["stores"] == []
     assert isinstance(ExportService.development(), ExportService)
+
+
+# ---- the two sync settings (m3.2, the lead's choice 9) -------------------------------------------------------------
+
+
+def sync_rows(install: Install) -> list[tuple[Any, ...]]:
+    return [row for row in rows(install, "setting") if row[0] in ("snapshot_time", "sync_interval_minutes")]
+
+
+def test_an_import_applies_the_sync_settings_a_file_has(target: Install) -> None:
+    settings = {**good_payload()["settings"], "sync_interval_minutes": 45, "snapshot_time": "04:30"}
+    response = import_response(target, file_for(good_payload(settings=settings)))
+    assert response.status_code == 200, response.text
+    assert sync_rows(target) == [("snapshot_time", '"04:30"'), ("sync_interval_minutes", "45")]
+
+
+@pytest.mark.parametrize("given", [{}, {"sync_interval_minutes": None, "snapshot_time": None}])
+def test_an_import_without_the_sync_settings_keeps_the_current_ones(target: Install, given: dict[str, Any]) -> None:
+    """A file exported before m3.2 has neither; null means the same."""
+    connection = target.open_db()
+    try:
+        set_setting(connection, "sync_interval_minutes", 60)
+        set_setting(connection, "snapshot_time", "03:15")
+    finally:
+        connection.close()
+    settings = {**good_payload()["settings"], **given}
+    response = import_response(target, file_for(good_payload(settings=settings)))
+    assert response.status_code == 200, response.text
+    assert sync_rows(target) == [("snapshot_time", '"03:15"'), ("sync_interval_minutes", "60")]
+
+
+@pytest.mark.parametrize("bad", [{"sync_interval_minutes": 4}, {"snapshot_time": "25:00"}, {"snapshot_time": 2}])
+def test_an_invalid_sync_setting_refuses_the_whole_import(target: Install, bad: dict[str, Any]) -> None:
+    before = snapshot(target)
+    settings = {**good_payload()["settings"], **bad}
+    response = import_response(target, file_for(good_payload(settings=settings)))
+    assert response.status_code == 422 and snapshot(target) == before

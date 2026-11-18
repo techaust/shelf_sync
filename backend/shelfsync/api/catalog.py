@@ -5,6 +5,8 @@ PATCH). A wrong shape is the fixed 422 `invalid_request` that never echoes the r
 
     GET   /api/catalog        200 {items: [CatalogItem]}: every item in one answer (the screen searches in the browser)
     GET   /api/catalog/{id}   200 CatalogItemDetail; 404 not_found
+    GET   /api/catalog/{id}/snapshots   200 SnapshotsResponse (m3.2, SYNC-03: the nights each of the item's store
+                                        products can be restored to, local dates, newest first); 404 not_found
     PATCH /api/catalog/{id}   200 CatalogItem; 404 not_found; 409 slug_taken; 422 invalid_request
 
 The PATCH changes the canonical slug only (CAT-04): lowercase `a-z`, `0-9` and `-`, 1 to 200 characters, no leading or
@@ -71,6 +73,17 @@ class CatalogItemDetail(BaseModel):
     slots: list[SlotModel]
 
 
+class StoreSnapshotsModel(BaseModel):
+    store_id: int
+    wc_id: int
+    nights: list[str]  # local dates (`YYYY-MM-DD`) it can be restored to, newest first; empty: none yet
+
+
+class SnapshotsResponse(BaseModel):
+    item_id: int
+    stores: list[StoreSnapshotsModel]  # one per store product of the item (stores that aren't removed)
+
+
 class SlugRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     canonical_slug: Annotated[str, Field(min_length=1, max_length=200, pattern=SLUG_PATTERN)]
@@ -125,6 +138,18 @@ def make_catalog_router(service: CatalogService) -> APIRouter:
                     ],
                 )
                 for slot in detail.slots
+            ],
+        )
+
+    @router.get(f"{CATALOG_PATH}/{{item_id}}/snapshots", response_model=SnapshotsResponse, responses=errors)
+    def get_snapshots(item_id: ItemId) -> SnapshotsResponse:
+        found = service.snapshots(item_id)
+        if found is None:
+            raise ApiError(404, "not_found")
+        return SnapshotsResponse(
+            item_id=item_id,
+            stores=[
+                StoreSnapshotsModel(store_id=entry.store_id, wc_id=entry.wc_id, nights=entry.nights) for entry in found
             ],
         )
 

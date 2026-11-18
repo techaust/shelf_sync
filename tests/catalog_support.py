@@ -276,7 +276,7 @@ class CatalogRig:
 
     def run(self) -> None:
         """One full run, to the end."""
-        assert self.service.start_sync()
+        assert self.service.start_sync("full") == "full"
         self.service.runner.join(30.0)
         assert not self.service.runner.state().running
 

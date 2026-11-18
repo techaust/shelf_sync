@@ -67,16 +67,17 @@ def test_a_paused_store_is_skipped_and_shown_as_such() -> None:
     assert {request.url.host for request in rig.sites.requests} == {"store-pw.example"}
 
 
-def test_ten_failures_in_a_row_across_runs_auto_pause_the_store_until_it_is_resumed() -> None:
-    """APL-12: every failed attempt counts and the count is kept across runs (4 per run: the request and its 3
-    retries); at 10 the store is auto-paused, later runs skip it, and Resume clears it. `store.state` (the owner's
-    pause) is never changed."""
+def test_ten_failed_reads_in_a_row_across_runs_auto_pause_the_store_until_it_is_resumed() -> None:
+    """APL-12 (the owner, 11 2026-11-18): each failed read counts once, whatever its retries (4 requests here), and
+    the count is kept across runs; at 10 the store is auto-paused, later runs skip it, and Resume clears it.
+    `store.state` (the owner's pause) is never changed."""
     rig = make_catalog_rig(fake_time=True)
     gf = rig.add_store("GF", [raw_product(1)])
     rig.sites.stores["GF"].status_answer = httpx.Response(500)
-    for expected in (4, 8):
+    for expected in range(1, 10):
         rig.run()
         assert rig.db.rows("SELECT failures_in_row, auto_paused_at FROM sync_state") == [(expected, None)]
+    assert len(rig.sites.requests) == 9 * 4  # every read made its 3 retries: none was cut short
     rig.run()
     [(count, paused_at, why)] = rig.db.rows("SELECT failures_in_row, auto_paused_at, auto_pause_reason FROM sync_state")
     assert (count, why) == (10, "server_error") and paused_at is not None
@@ -143,7 +144,7 @@ def test_a_stop_during_a_read_saves_nothing_and_starts_no_other_store() -> None:
     assert rig.time is not None
     rig.sites.stores["GF"].rows = [raw_product(1, "alpha"), raw_product(3, "new")]
     rig.time.stop_after = len(rig.time.waits) + 1  # the stop arrives during the next wait (before GF's products page)
-    assert rig.service.start_sync()
+    assert rig.service.start_sync("full")
     rig.service.runner.join(30.0)
     assert rig.service.runner.state().outcomes == {gf: "stopped"}
     after = [rig.db.rows(f"SELECT * FROM {table}") for table in ("store_product", "item_link")]

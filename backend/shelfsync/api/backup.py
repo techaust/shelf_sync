@@ -429,7 +429,15 @@ class ExportService:
 
     def _write(self, payload: Payload, *, encrypted: bool) -> ImportResult:
         stores = [StoreImport(**entry.model_dump()) for entry in payload.stores]
-        settings = {**payload.settings.model_dump(), **payload.storage.model_dump()}
+        # The two sync settings (m3.2) are written only when the file has them; absent or null keeps the current ones,
+        # as `PUT /api/settings/app` does (a file exported before m3.2 has neither).
+        optional = AppSettingsValues.OPTIONAL
+        given = {key: value for key in optional if (value := getattr(payload.settings, key)) is not None}
+        settings = {
+            **payload.settings.model_dump(exclude=set(optional)),
+            **given,
+            **payload.storage.model_dump(),
+        }
         wrote_token = False
         with SECRETS_WRITE_LOCK:  # the lock first, then the database's write lock, as everywhere
             try:

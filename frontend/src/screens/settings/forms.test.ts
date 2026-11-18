@@ -22,6 +22,8 @@ const stored: AppSettings = {
   start_with_windows: true,
   notifications: true,
   log_retention_days: 30,
+  sync_interval_minutes: 15,
+  snapshot_time: "02:00",
   installed: true,
 };
 
@@ -94,6 +96,8 @@ describe("savedLine", () => {
     start_with_windows: true,
     notifications: true,
     log_retention_days: 30,
+    sync_interval_minutes: 15,
+    snapshot_time: "02:00",
     restart_needed: false,
     start_with_windows_result: "applied",
     ...over,

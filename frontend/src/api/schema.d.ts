@@ -69,6 +69,23 @@ export interface paths {
         patch: operations["set_slug_api_catalog__item_id__patch"];
         trace?: never;
     };
+    "/api/catalog/{item_id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Snapshots */
+        get: operations["get_snapshots_api_catalog__item_id__snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -510,8 +527,12 @@ export interface components {
             notifications: boolean;
             /** Port */
             port: number;
+            /** Snapshot Time */
+            snapshot_time: string;
             /** Start With Windows */
             start_with_windows: boolean;
+            /** Sync Interval Minutes */
+            sync_interval_minutes: number;
             /**
              * Theme
              * @enum {string}
@@ -528,6 +549,8 @@ export interface components {
             port: number;
             /** Restart Needed */
             restart_needed: boolean;
+            /** Snapshot Time */
+            snapshot_time: string;
             /** Start With Windows */
             start_with_windows: boolean;
             /**
@@ -535,6 +558,8 @@ export interface components {
              * @enum {string}
              */
             start_with_windows_result: "applied" | "not_installed" | "failed";
+            /** Sync Interval Minutes */
+            sync_interval_minutes: number;
             /**
              * Theme
              * @enum {string}
@@ -543,7 +568,8 @@ export interface components {
         };
         /**
          * AppSettingsValues
-         * @description The five settings. Strict types, so `true` is never a port and `"30"` is never a number of days.
+         * @description The PUT body: the five, and the two sync settings when they are to change (null or absent: kept). The backup
+         *     import's model is built on this one (`api/backup.py`) and applies the same rule to a file's settings.
          */
         AppSettingsValues: {
             /** Log Retention Days */
@@ -552,8 +578,12 @@ export interface components {
             notifications: boolean;
             /** Port */
             port: number;
+            /** Snapshot Time */
+            snapshot_time?: string | null;
             /** Start With Windows */
             start_with_windows: boolean;
+            /** Sync Interval Minutes */
+            sync_interval_minutes?: number | null;
             /**
              * Theme
              * @enum {string}
@@ -741,6 +771,26 @@ export interface components {
             /** Stores */
             stores: number;
         };
+        /**
+         * IncrementalModel
+         * @description The store's last incremental (SYNC-01).
+         */
+        IncrementalModel: {
+            /** Changed */
+            changed: number | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Http Status */
+            http_status: number | null;
+            /** Last Ok At */
+            last_ok_at: string | null;
+            /** Reason */
+            reason: string | null;
+            /** Rows */
+            rows: number | null;
+            /** Started At */
+            started_at: string | null;
+        };
         /** KeyMasks */
         KeyMasks: {
             /** Access Key Id */
@@ -793,6 +843,43 @@ export interface components {
             store_id: number;
             /** Wc Id */
             wc_id: number;
+        };
+        /**
+         * NightModel
+         * @description The store's latest snapshot night (SYNC-03, SYNC-04).
+         */
+        NightModel: {
+            /** Attempts */
+            attempts: number;
+            /** Finished At */
+            finished_at: string | null;
+            /** Http Status */
+            http_status: number | null;
+            /** Listing */
+            listing: ("include_status" | "two_listings") | null;
+            /** Next Try At */
+            next_try_at: string | null;
+            /** Night */
+            night: string;
+            /** Not Seen */
+            not_seen: number | null;
+            /** Products */
+            products: number | null;
+            /** Reason */
+            reason: string | null;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "ok" | "retry" | "failed" | "skipped";
+            /** Trashed */
+            trashed: number | null;
+            /** Unconfirmed */
+            unconfirmed: number | null;
+            /** Variable */
+            variable: number | null;
         };
         /** ProgressModel */
         ProgressModel: {
@@ -863,6 +950,13 @@ export interface components {
         SlugRequest: {
             /** Canonical Slug */
             canonical_slug: string;
+        };
+        /** SnapshotsResponse */
+        SnapshotsResponse: {
+            /** Item Id */
+            item_id: number;
+            /** Stores */
+            stores: components["schemas"]["StoreSnapshotsModel"][];
         };
         /** StorageResponse */
         StorageResponse: {
@@ -970,6 +1064,15 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** StoreSnapshotsModel */
+        StoreSnapshotsModel: {
+            /** Nights */
+            nights: string[];
+            /** Store Id */
+            store_id: number;
+            /** Wc Id */
+            wc_id: number;
+        };
         /** StoreSyncModel */
         StoreSyncModel: {
             /** Auto Pause Reason */
@@ -984,8 +1087,13 @@ export interface components {
             failures_in_row: number;
             /** Http Status */
             http_status: number | null;
+            incremental: components["schemas"]["IncrementalModel"] | null;
             /** Last Ok At */
             last_ok_at: string | null;
+            /** Next Incremental At */
+            next_incremental_at: string | null;
+            /** Next Snapshot At */
+            next_snapshot_at: string | null;
             /** Pages */
             pages: number | null;
             /** Read Finished At */
@@ -996,6 +1104,7 @@ export interface components {
             reason: string | null;
             /** Rows */
             rows: number | null;
+            snapshot: components["schemas"]["NightModel"] | null;
             /**
              * State
              * @enum {string}
@@ -1041,11 +1150,23 @@ export interface components {
             /** Stores */
             stores: components["schemas"]["StoreModel"][];
         };
+        /**
+         * SyncRequest
+         * @description `kind`: `full` (the wizard's Build catalog), `incremental`, or null/absent (Sync now: the app chooses).
+         */
+        SyncRequest: {
+            /** Kind */
+            kind?: ("full" | "incremental") | null;
+        };
         /** SyncResponse */
         SyncResponse: {
             current: components["schemas"]["ProgressModel"] | null;
             /** Finished At */
             finished_at: string | null;
+            /** Kind */
+            kind: ("full" | "incremental" | "snapshot") | null;
+            /** Night */
+            night: string | null;
             /** Running */
             running: boolean;
             /** Started At */
@@ -1381,6 +1502,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_snapshots_api_catalog__item_id__snapshots_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2280,7 +2441,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SyncRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -2293,6 +2458,15 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

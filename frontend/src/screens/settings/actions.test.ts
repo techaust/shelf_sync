@@ -109,7 +109,13 @@ describe("Save app", () => {
   const writer = (save: SettingsWriter["save"]): SettingsWriter => ({ save, saveTheme: vi.fn() });
 
   it("an answer: what was saved and its line", async () => {
-    const saved: AppSettingsSaved = { ...values, restart_needed: false, start_with_windows_result: "failed" };
+    const saved: AppSettingsSaved = {
+      ...values,
+      sync_interval_minutes: 15,
+      snapshot_time: "02:00",
+      restart_needed: false,
+      start_with_windows_result: "failed",
+    };
     expect(
       await saveApp(
         writer(async () => saved),
