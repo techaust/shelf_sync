@@ -11,3 +11,4 @@
 - [Cloud sessions](cloud-sessions.md) — owner also works in cloud env shelf_sync; Team screens differ; cloud can't read usage or report back; starts only on the owner's words; gh pr blocked there
 - [Owner keeps nothing](owner-keeps-nothing.md) — no owner-held backups; everything to resume lives on GitHub (docs/memory/, fresh-start runbook); signing-key conflict open
 - [Pane visual checks](pane-visual-checks.md) — comparing builds' colours in the built-in pane: hidden pane freezes transitions; set colour scheme; no hover
+- [Weekly budget](weekly-budget.md) — the weekly limit runs out first on M3-size Tier B chains (77→95 % in 22 h); read it before every agent
