@@ -4,7 +4,7 @@ the store's latest `ok` night refused."""
 
 import shutil
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -19,31 +19,10 @@ from tests.sync_support import FakeSyncStore, make_sync_rig, row
 from tests.test_sync_read import incremental
 
 
-def test_moving_snapshot_time_later_the_same_day_runs_that_nights_snapshot_again() -> None:
-    """Saved at 02:00, the time moved to 23:00 the same day: a snapshot runs that day at 23:00, replacing the
-    night's first save (one state row per product, not two)."""
-    rig = make_sync_rig(datetime(2026, 11, 18, 2, 0, 5, tzinfo=UTC))
-    gf = rig.add_store("GF", [row(1)])
-    rig.run("full")
-    assert rig.tick() is not None
-    rig.set("snapshot_time", '"23:00"')
-    rig.at(datetime(2026, 11, 18, 22, 59, tzinfo=UTC))
-    assert rig.service.scheduler.snapshot_plan(rig.time.wall()) is None
-    rig.store("GF").find(1)["slug"] = "renamed"
-    rig.at(datetime(2026, 11, 18, 23, 0, 5, tzinfo=UTC))
-    plan = rig.tick()
-    assert plan is not None and (plan.kind, plan.night) == ("snapshot", "2026-11-18")
-    [(state, attempts, started)] = rig.rows(
-        "SELECT state, attempts, started_at FROM snapshot_night WHERE store_id = ?", gf
-    )
-    assert (state, attempts) == ("ok", 1) and started.startswith("2026-11-18T23:00")
-    assert rig.rows("SELECT slug, first_night, last_night FROM snapshot_state") == [
-        ("renamed", "2026-11-18", "2026-11-18")
-    ]
-    assert rig.service.scheduler.snapshot_plan(rig.time.wall()) is None
-
-
-def test_a_running_row_a_crash_left_is_deferred_on_busy_not_failed() -> None:
+def test_a_running_row_with_no_attempt_left_then_busy_is_closed_and_the_incrementals_run() -> None:
+    """The re-check's finding A: killed during attempt 3, then `busy` at the next check: the row is closed `failed`,
+    `interrupted` (not left `retry` with no attempt left), no snapshot is picked at the later checks, and the
+    incrementals run again."""
     rig = make_sync_rig(datetime(2026, 11, 18, 10, 0, tzinfo=UTC))
     gf = rig.add_store("GF", [row(1)])
     rig.run("full")
@@ -59,11 +38,57 @@ def test_a_running_row_a_crash_left_is_deferred_on_busy_not_failed() -> None:
         rig.service.runner.join(60.0)
     finally:
         rig.stores.slots.release(gf)
-    [(state, attempts, reason, next_try, finished)] = rig.rows(
-        "SELECT state, attempts, reason, next_try_at, finished_at FROM snapshot_night"
-    )
-    assert (state, attempts, reason) == ("retry", 3, "busy")
-    assert datetime.fromisoformat(next_try) - datetime.fromisoformat(finished) == timedelta(minutes=5)
+    assert rig.rows("SELECT state, attempts, reason, next_try_at FROM snapshot_night") == [
+        ("failed", 3, "interrupted", None)
+    ]
+    kinds = []
+    for minute in (3, 4, 18):  # (the busy wait took 70 s) the scheduler starts at its first check: 15 minutes on
+        rig.at(datetime(2026, 11, 18, 10, minute, tzinfo=UTC))
+        plan = rig.tick()
+        kinds.append(plan.kind if plan is not None else None)
+    assert kinds == [None, None, "incremental"]  # never the snapshot again
+
+
+def test_a_retry_row_with_no_attempt_left_is_never_due_and_is_closed_when_met() -> None:
+    """Finding A's second guard (`night_due`) and the runner's `ValueError` branch."""
+    from shelfsync.catalog.schedule import night_due
+
+    assert not night_due("retry", None, "2026-11-18T10:00:00.000000Z", attempts=3)
+    assert night_due("retry", None, "2026-11-18T10:00:00.000000Z", attempts=2)
+    rig = make_sync_rig(datetime(2026, 11, 18, 10, 0, tzinfo=UTC))
+    gf = rig.add_store("GF", [row(1)])
+    rig.run("full")
+    with closing(rig.db.connect()) as connection:
+        connection.execute(
+            "INSERT INTO snapshot_night (store_id, night, state, attempts) VALUES (?, '2026-11-18', 'retry', 3)", (gf,)
+        )
+    assert rig.service.scheduler.snapshot_plan(rig.time.wall()) is None
+    assert rig.service.runner.start(RunPlan("snapshot", night="2026-11-18"))
+    rig.service.runner.join(60.0)
+    assert rig.rows("SELECT state, reason FROM snapshot_night") == [("failed", "interrupted")]
+
+
+def test_a_night_left_by_a_corrected_forward_clock_jump_doesnt_stop_the_real_nights() -> None:
+    """The re-check's finding B: an `ok` night 2027-06-01 is on record (the clock had jumped and was put right); the
+    real nights from 2026-11-21 still run and save, and `next_runs` agrees with the plan."""
+    rig = make_sync_rig(datetime(2026, 11, 20, 12, 0, tzinfo=UTC))
+    gf = rig.add_store("GF", [row(1)])
+    rig.run("full")
+    with closing(rig.db.connect()) as connection:
+        connection.execute(
+            "INSERT INTO snapshot_night (store_id, night, state, attempts, started_at, finished_at) VALUES "
+            "(?, '2027-06-01', 'ok', 1, '2027-06-01T02:00:05.000000Z', '2027-06-01T02:01:00.000000Z')",
+            (gf,),
+        )
+    for day in (21, 22):
+        rig.at(datetime(2026, 11, day, 2, 0, 5, tzinfo=UTC))
+        assert rig.service.scheduler.next_runs().snapshots[gf] == rig.time.wall()  # due now, as the plan says
+        plan = rig.tick()
+        assert plan is not None and (plan.kind, plan.night) == ("snapshot", f"2026-11-{day}")
+    assert rig.rows("SELECT night, state FROM snapshot_night WHERE night LIKE '2026-%' ORDER BY night") == [
+        ("2026-11-21", "ok"),
+        ("2026-11-22", "ok"),
+    ]
 
 
 @pytest.mark.parametrize("bad", ["2026-11-31T10:00:00", "2026-11-10T25:00:00", "2026-13-01T00:00:00"])

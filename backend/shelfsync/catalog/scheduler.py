@@ -20,11 +20,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from shelfsync.catalog.runner import RunPlan, SyncRunner, sync_settings
-from shelfsync.catalog.schedule import incremental_due, latest_slot, next_slot, night_due, night_of
+from shelfsync.catalog.schedule import incremental_due, next_slot, night_due, night_of
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db import catalog as db
 from shelfsync.db.daily import LocalTime
-from shelfsync.db.snapshots import latest_ok_nights, nights_of
+from shelfsync.db.snapshots import nights_of
 from shelfsync.db.stores import list_live
 
 _log = logging.getLogger("shelfsync.catalog")
@@ -78,19 +78,15 @@ class SyncScheduler:
             night = night_of(now, self._local, settings.snapshot_time)
             stores = list_live(connection)
             rows = nights_of(connection, night)
-            done = latest_ok_nights(connection)
         stamp = to_iso(now)
-        slot = to_iso(latest_slot(now, self._local, settings.snapshot_time))
         due = frozenset(
             row.id
             for row in stores
-            if done.get(row.id, "") <= night  # never a night before one already saved (the time or clock moved)
-            and night_due(
+            if night_due(
                 rows[row.id].state if row.id in rows else None,
                 rows[row.id].next_try_at if row.id in rows else None,
                 stamp,
-                rows[row.id].started_at if row.id in rows else None,
-                slot,
+                rows[row.id].attempts if row.id in rows else 0,
             )
         )
         return RunPlan("snapshot", night=night, stores=due, scheduled=True) if due else None
@@ -124,19 +120,13 @@ class SyncScheduler:
             night = night_of(now, self._local, settings.snapshot_time)
             stores = list_live(connection)
             rows = nights_of(connection, night)
-            done = latest_ok_nights(connection)
         stamp = to_iso(now)
-        slot = to_iso(latest_slot(now, self._local, settings.snapshot_time))
         upcoming = next_slot(now, self._local, settings.snapshot_time)
         snapshots: dict[int, datetime] = {}
         for store in stores:
             row = rows.get(store.id)
-            if done.get(store.id, "") <= night and night_due(
-                row.state if row else None,
-                row.next_try_at if row else None,
-                stamp,
-                row.started_at if row else None,
-                slot,
+            if night_due(
+                row.state if row else None, row.next_try_at if row else None, stamp, row.attempts if row else 0
             ):
                 snapshots[store.id] = now
             elif row is not None and row.state == "retry" and row.next_try_at is not None:

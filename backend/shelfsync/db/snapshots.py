@@ -120,30 +120,15 @@ def latest_nights(connection: sqlite3.Connection) -> dict[int, NightRow]:
     return {row[0]: NightRow(*row) for row in rows}
 
 
-def latest_ok_nights(connection: sqlite3.Connection) -> dict[int, str]:
-    """Each store's latest `ok` night (review 2: no earlier night is taken after it)."""
-    rows = connection.execute("SELECT store_id, max(night) FROM snapshot_night WHERE state = 'ok' GROUP BY store_id")
-    return {store_id: str(night) for store_id, night in rows}
-
-
-def start_attempt(
-    connection: sqlite3.Connection, store_id: int, night: str, at: str, *, not_before: str | None = None
-) -> int:
+def start_attempt(connection: sqlite3.Connection, store_id: int, night: str, at: str) -> int:
     """A snapshot attempt starts: the night is `running` and its attempts go up by one. Returns the attempt's number
-    (1 to 3). `ValueError` when the night has no attempt left or is already done (`ok`, `failed`, `skipped`). An `ok`
-    night whose attempt started before `not_before` (the night's latest slot: `snapshot_time` was moved later the same
-    day, review 2) starts again with fresh attempts."""
+    (1 to 3). `ValueError` when the night has no attempt left or is already done (`ok`, `failed`, `skipped`)."""
     _begin(connection)
     try:
         row = connection.execute(
-            "SELECT state, attempts, started_at FROM snapshot_night WHERE store_id = ? AND night = ?", (store_id, night)
+            "SELECT state, attempts FROM snapshot_night WHERE store_id = ? AND night = ?", (store_id, night)
         ).fetchone()
-        rerun = row is not None and row[0] == "ok" and not_before is not None and (row[2] or "") < not_before
-        if rerun:
-            connection.execute(
-                "UPDATE snapshot_night SET attempts = 0 WHERE store_id = ? AND night = ?", (store_id, night)
-            )
-        elif row is not None and (row[0] in ("ok", "failed", "skipped") or row[1] >= ATTEMPTS_MAX):
+        if row is not None and (row[0] in ("ok", "failed", "skipped") or row[1] >= ATTEMPTS_MAX):
             raise ValueError("this night's snapshot is done")
         connection.execute(
             "INSERT INTO snapshot_night (store_id, night, state, attempts, started_at) VALUES (?, ?, 'running', 1, ?) "
@@ -208,7 +193,13 @@ def record_failed(
 
 def record_deferred(connection: sqlite3.Connection, store_id: int, night: str, *, reason: str, at: datetime) -> None:
     """The night couldn't start an attempt (`busy`, a database error before it): `retry` a few minutes later
-    (`catalog.schedule.deferred_until`), using no attempt and counting nothing (review 1)."""
+    (`catalog.schedule.deferred_until`), using no attempt and counting nothing (review 1). A row with no attempt left
+    (a crash during the last one) is closed `failed`, `interrupted`, instead (the re-check's finding A)."""
+    connection.execute(
+        "UPDATE snapshot_night SET state = 'failed', finished_at = ?, next_try_at = NULL, reason = 'interrupted' "
+        "WHERE store_id = ? AND night = ? AND state IN ('retry', 'running') AND attempts >= ?",
+        (to_iso(at), store_id, night, ATTEMPTS_MAX),
+    )
     connection.execute(
         "INSERT INTO snapshot_night (store_id, night, state, attempts, finished_at, next_try_at, reason) "
         "VALUES (?, ?, 'retry', 0, ?, ?, ?) ON CONFLICT (store_id, night) DO UPDATE SET state = 'retry', "
@@ -337,20 +328,16 @@ def save_snapshot(
     _begin(connection)
     try:
         guard_store(connection, store_id, read_url)
+        # The latest `ok` night, leaving out nights past `latest_night` (a clock that jumped forward and was put
+        # right, the re-check's finding B: such leftovers never block the real nights; retention removes them).
         (latest_ok,) = connection.execute(
-            "SELECT max(night) FROM snapshot_night WHERE store_id = ? AND state = 'ok'", (store_id,)
+            "SELECT max(night) FROM snapshot_night WHERE store_id = ? AND state = 'ok' AND night <= ?",
+            (store_id, latest_night if latest_night is not None else "9999-12-31"),
         ).fetchone()
         if latest_ok is not None and night < latest_ok:
             raise NightBehind
         fields = {product.wc_id: state_fields(product, variations.get(product.wc_id, ())) for product in products}
         previous = previous_ok_night(connection, store_id, night)
-        # The night saved again (review 2: `snapshot_time` moved later the same day): its first save is undone first.
-        connection.execute("DELETE FROM snapshot_state WHERE store_id = ? AND first_night = ?", (store_id, night))
-        if previous is not None:
-            connection.execute(
-                "UPDATE snapshot_state SET last_night = ? WHERE store_id = ? AND last_night = ?",
-                (previous, store_id, night),
-            )
         latest: dict[int, tuple[int, str]] = {}
         if previous is not None:
             for row_id, wc_id, digest in connection.execute(

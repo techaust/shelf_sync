@@ -56,7 +56,7 @@ from shelfsync.apply.catalog_read import (
 )
 from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog.changes import Change, counts
-from shelfsync.catalog.schedule import SnapshotTime, latest_slot, night_of
+from shelfsync.catalog.schedule import SnapshotTime, night_of
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db import snapshots
 from shelfsync.db.catalog import (
@@ -563,13 +563,13 @@ class SyncRunner:
     ) -> str | None:
         started = self._now()
         settings = sync_settings(connection)
-        slot = latest_slot(started, self._local, settings.snapshot_time)
         try:
-            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(started), not_before=to_iso(slot))
+            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(started))
             self._night_attempt = attempt
         except ValueError:
             held = snapshots.night_row(connection, row.id, night)
-            if held is not None and held.state == "running":  # its last attempt was cut off (the app ended)
+            # Its last attempt was cut off (the app ended), or a deferral left it `retry` with none left (finding A)
+            if held is not None and held.state in ("running", "retry"):
                 snapshots.record_failed(
                     connection,
                     row.id,

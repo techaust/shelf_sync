@@ -83,22 +83,14 @@ def night_of(now: datetime, local: LocalTime, at: SnapshotTime) -> str:
     return local.to_local(latest_slot(now, local, at)).date().isoformat()
 
 
-def night_due(
-    state: str | None,
-    next_try_at: str | None,
-    now_iso: str,
-    started_at: str | None = None,
-    slot_iso: str | None = None,
-) -> bool:
-    """Whether a store's night is due, from its row (`state` None: no row yet). Times are `clock.to_iso` texts. An
-    `ok` night that started before the night's latest slot (`snapshot_time` was moved later the same day) is due
-    again (review 2)."""
+def night_due(state: str | None, next_try_at: str | None, now_iso: str, attempts: int = 0) -> bool:
+    """Whether a store's night is due, from its row (`state` None: no row yet). Times are `clock.to_iso` texts. A
+    `retry` row with no attempt left is never due (the re-check's finding A: a second guard; the runner closes such a
+    row as `failed`, `interrupted`)."""
     if state is None or state == "running":
         return True
     if state == "retry":
-        return next_try_at is None or next_try_at <= now_iso
-    if state == "ok" and started_at is not None and slot_iso is not None:
-        return started_at < slot_iso
+        return attempts < ATTEMPTS_MAX and (next_try_at is None or next_try_at <= now_iso)
     return False
 
 
