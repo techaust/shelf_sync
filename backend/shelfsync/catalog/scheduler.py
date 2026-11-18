@@ -19,12 +19,11 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 
-from shelfsync.catalog.runner import RunPlan, SyncRunner
-from shelfsync.catalog.schedule import SnapshotTime, incremental_due, next_slot, night_due, night_of
+from shelfsync.catalog.runner import RunPlan, SyncRunner, sync_settings
+from shelfsync.catalog.schedule import incremental_due, next_slot, night_due, night_of
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db import catalog as db
 from shelfsync.db.daily import LocalTime
-from shelfsync.db.settings import DEFAULTS, SYNC_INTERVAL_MAX, SYNC_INTERVAL_MIN, get_setting, snapshot_hour_minute
 from shelfsync.db.snapshots import nights_of
 from shelfsync.db.stores import list_live
 
@@ -32,27 +31,6 @@ _log = logging.getLogger("shelfsync.catalog")
 
 CHECK_SECONDS = 60.0
 STOP_WAIT_SECONDS = 2.0
-
-
-@dataclass(frozen=True)
-class SyncSettings:
-    interval_minutes: int
-    snapshot_time: SnapshotTime
-
-
-def sync_settings(connection: sqlite3.Connection) -> SyncSettings:
-    """The two settings as stored, each its default when the stored value isn't valid."""
-    try:
-        interval = get_setting(connection, "sync_interval_minutes")
-    except ValueError:
-        interval = None
-    if type(interval) is not int or not SYNC_INTERVAL_MIN <= interval <= SYNC_INTERVAL_MAX:
-        interval = int(DEFAULTS["sync_interval_minutes"])
-    try:
-        hour, minute = snapshot_hour_minute(get_setting(connection, "snapshot_time"))
-    except ValueError, TypeError:
-        hour, minute = snapshot_hour_minute(str(DEFAULTS["snapshot_time"]))
-    return SyncSettings(interval, SnapshotTime(hour, minute))
 
 
 @dataclass(frozen=True)
@@ -88,7 +66,9 @@ class SyncScheduler:
     # ---- what is due ----------------------------------------------------------------------------------------------
 
     def _since(self, now: datetime) -> datetime:
-        if self._started_at is None:
+        """When the scheduler started; moved back to `now` when the clock went back past it (F6), so the incremental
+        is due once now and then every interval again, not at every check."""
+        if self._started_at is None or self._started_at > now:
             self._started_at = now
         return self._started_at
 
@@ -126,7 +106,9 @@ class SyncScheduler:
             settings = sync_settings(connection)
             if not self._can_increment(connection):
                 return None
-        return incremental_due(self._since(now), self._runner.last_started("incremental"), settings.interval_minutes)
+        return incremental_due(
+            now, self._since(now), self._runner.last_started("incremental"), settings.interval_minutes
+        )
 
     def next_runs(self) -> NextRuns:
         now = self._now()

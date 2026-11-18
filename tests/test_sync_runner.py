@@ -88,8 +88,43 @@ def test_a_failed_incremental_leaves_the_watermark_and_the_catalog_as_they_were(
     assert rig.service.runner.state().outcomes == {ids["GF"]: "server_error"}
     assert dump(rig) == before
     assert rig.rows("SELECT watermark_gmt, inc_reason, inc_http_status, failures_in_row FROM sync_state") == [
-        (watermark, "server_error", 500, 4)
+        (watermark, "server_error", 500, 1)  # one failed read (APL-12 counts reads)
     ]
+
+
+def test_an_edit_to_a_low_id_product_during_a_three_minute_read_is_caught_by_the_next_incremental() -> None:
+    """F3: products 1-150 were bulk-edited at 10:00 and product 250 at 10:03; the incremental reads page 1, is held
+    3 minutes on page 2 (a 429 with `Retry-After: 60`, three times), and meanwhile product 1 is edited again at
+    10:00:30. The read ends with product 1's older state; the watermark steps back by the read's duration, so the next
+    incremental asks from before 10:00:30 and saves product 1's new state."""
+    rig = make_sync_rig(START)
+    rig.add_store("GF", [row(wc_id, modified="2026-11-17T09:00:00") for wc_id in range(1, 251)])
+    rig.run("full")
+    store = rig.store("GF")
+    for wc_id in range(1, 151):
+        store.find(wc_id)["date_modified_gmt"] = "2026-11-18T10:00:00"
+    store.find(250)["date_modified_gmt"] = "2026-11-18T10:03:00"
+    held = {"page_two": 0}
+
+    def slow_page_two(request: httpx.Request) -> httpx.Response | None:
+        on_page_two = request.url.path.endswith(PRODUCTS) and request.url.params.get("page") == "2"
+        if on_page_two and held["page_two"] < 3:
+            held["page_two"] += 1
+            if held["page_two"] == 1:
+                store.find(1)["slug"] = "edited-during-the-read"
+                store.find(1)["date_modified_gmt"] = "2026-11-18T10:00:30"
+            return httpx.Response(429, headers={"Retry-After": "60"})
+        return None
+
+    store.fail = slow_page_two
+    first_slug = store.find(1)["slug"]  # what page 1 reads (the edit lands while page 2 is held)
+    rig.run("incremental")
+    [(watermark,)] = rig.rows("SELECT watermark_gmt FROM sync_state")
+    assert watermark < "2026-11-18T10:00:30"  # 10:03 less more than 3 minutes
+    assert rig.rows("SELECT slug FROM store_product WHERE wc_id = 1") == [(first_slug,)]  # the read's older state
+    store.fail = None
+    rig.run("incremental")
+    assert rig.rows("SELECT slug FROM store_product WHERE wc_id = 1") == [("edited-during-the-read",)]
 
 
 def test_an_incremental_skips_a_store_with_no_full_read_and_reads_the_others() -> None:
@@ -156,8 +191,10 @@ def test_retention_follows_its_setting() -> None:
     """SYNC-03: kept 30 days (setting `snapshot_retention_days`): here 2."""
     rig, _ = rig_with("GF")
     rig.set("snapshot_retention_days", "2")
-    for night in ("2026-11-18", "2026-11-19", "2026-11-20"):
-        snapshot(rig, night)
+    for day in (18, 19, 20):  # the clock moves with the nights (a night ahead of it is refused, F5)
+        rig.at(datetime(2026, 11, day, 10, 30, tzinfo=UTC))
+        snapshot(rig, f"2026-11-{day}")
+
     assert rig.rows("SELECT night FROM snapshot_night ORDER BY night") == [("2026-11-19",), ("2026-11-20",)]
 
 

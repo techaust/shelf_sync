@@ -20,7 +20,6 @@ from shelfsync.apply.catalog_read import (
     LISTING_FIELDS,
     PAGE_MAX_BYTES,
     CatalogRead,
-    MemoryFailureCount,
     _Session,
     is_retried,
     read_catalog,
@@ -50,7 +49,6 @@ def rows(count: int, start: int = 1) -> list[dict[str, Any]]:
 def read(
     store: FakeCatalogStore,
     spacing_ms: int = 150,
-    failures: MemoryFailureCount | None = None,
     **options: Any,
 ) -> CatalogRead:
     with WooClient(STORE_URL, KEY, SECRET, transport=store.transport, monotonic=store.time.monotonic) as client:
@@ -58,7 +56,6 @@ def read(
             client,
             spacing_ms=spacing_ms,
             stop=store.time,
-            failures=failures if failures is not None else MemoryFailureCount(),
             monotonic=store.time.monotonic,
             now=store.time.wall,
             **options,
@@ -176,11 +173,9 @@ def test_a_products_page_nested_too_deep_is_a_bad_response_naming_the_page() -> 
 def test_a_524_is_retried_after_two_seconds_and_the_read_completes() -> None:
     """APL-12 Accept: a Cloudflare 524 replayed."""
     store = FakeCatalogStore(rows=rows(3), answers=[answer(524)])
-    failures = MemoryFailureCount()
-    result = read(store, failures=failures)
+    result = read(store)
     assert result.ok and len(result.products) == 3
     assert store.time.waits == [0.15, BACKOFF_SECONDS[0]]
-    assert failures.count == 0  # the success reset it
 
 
 def test_a_429_with_retry_after_seconds_waits_that_long() -> None:
@@ -213,11 +208,10 @@ def test_a_retry_after_shorter_than_the_spacing_still_waits_the_spacing() -> Non
 
 def test_a_failure_that_lasts_through_three_retries_ends_the_read_with_its_reason() -> None:
     store = FakeCatalogStore(rows=rows(3), answers=[answer(502)] * 4)
-    failures = MemoryFailureCount()
-    result = read(store, failures=failures)
+    result = read(store)
     assert (result.reason, result.http_status, result.products) == ("server_error", 502, ())
     assert store.time.waits == [0.15, 2.0, 4.0, 8.0]
-    assert len(store.product_requests()) == 4 and failures.count == 4
+    assert len(store.product_requests()) == 4  # one read: the runner counts it once (APL-12, m3.2 F1)
 
 
 @pytest.mark.parametrize(
@@ -232,22 +226,11 @@ def test_a_failure_that_lasts_through_three_retries_ends_the_read_with_its_reaso
     ],
 )
 def test_every_retried_status_is_retried(first: httpx.Response, reason: str) -> None:
-    """Review 1, finding 10: the failed attempt is counted with its reason, and its status is the last failure's."""
-
-    class Recording(MemoryFailureCount):
-        def __init__(self) -> None:
-            super().__init__()
-            self.reasons: list[str] = []
-
-        def failed(self, why: str) -> bool:
-            self.reasons.append(why)
-            return super().failed(why)
-
+    """Review 1, finding 10: retried, and the status is the last failure's (the reason is the retried one)."""
     store = FakeCatalogStore(rows=rows(2), answers=[first])
-    failures = Recording()
-    result = read(store, failures=failures)
+    result = read(store)
     assert result.ok and len(store.product_requests()) == 2
-    assert failures.reasons == [reason] and result.http_status == first.status_code
+    assert result.http_status == first.status_code and is_retried(reason, first.status_code)
 
 
 @pytest.mark.parametrize("error", [httpx.ReadTimeout("slow"), httpx.ConnectError("refused")])
@@ -296,7 +279,6 @@ def test_the_retry_code_refuses_any_method_but_get_before_sending(method: str) -
             client,
             spacing_seconds=0.15,
             stop=time,
-            failures=MemoryFailureCount(),
             monotonic=time.monotonic,
             now=time.wall,
             deadline=time.now + 600,
@@ -313,23 +295,17 @@ def test_no_request_but_a_get_is_ever_sent_even_with_retries_and_a_re_read() -> 
     assert len(store.requests) > 5 and {request.method for request in store.requests} == {"GET"}
 
 
-# ---- failures in a row and auto-pause ------------------------------------------------------------------------------
+# ---- failures in a row (APL-12 counts reads, m3.2 F1) ----------------------------------------------------------------
 
 
-def test_the_tenth_failure_in_a_row_auto_pauses_the_store_and_ends_the_read() -> None:
-    """APL-12: every failed attempt counts, across runs (the count starts where the last run left it)."""
-    failures = MemoryFailureCount(start=8)
+def test_the_reader_never_counts_or_pauses_it_retries_and_ends_with_the_reason() -> None:
+    """APL-12 (the owner, 11 2026-11-18): the reader keeps no count; a read that fails after its retries ends with its
+    reason, and the runner counts it once (`tests/test_sync_failures.py`)."""
     store = FakeCatalogStore(rows=rows(2), status_answer=answer(500))
-    result = read(store, failures=failures)
-    assert (result.reason, result.auto_paused) == ("server_error", True)
-    assert failures.count == 10 and failures.paused_reason == "server_error"
-    assert len(store.requests) == 2  # the 9th and 10th; no retry after the pause
-
-
-def test_a_success_resets_the_count() -> None:
-    failures = MemoryFailureCount(start=5)
-    assert read(FakeCatalogStore(rows=rows(2), answers=[answer(500)]), failures=failures).ok
-    assert failures.count == 0
+    result = read(store)
+    assert result.reason == "server_error" and result.products == ()
+    assert len(store.requests) == 4  # the request and its 3 retries, never cut short
+    assert not hasattr(result, "auto_paused")
 
 
 # ---- the count check -----------------------------------------------------------------------------------------------
@@ -555,7 +531,6 @@ def test_one_line_per_read_with_the_code_outcome_counts_and_last_status_and_noth
                 "GF",
                 spacing_ms=150,
                 stop=store.time,
-                failures=MemoryFailureCount(),
                 monotonic=store.time.monotonic,
                 now=store.time.wall,
             )
@@ -619,7 +594,6 @@ def test_no_cookie_is_kept_logged_or_warned_about_in_a_catalog_read_or_a_test_co
                 client,
                 spacing_ms=150,
                 stop=time,
-                failures=MemoryFailureCount(),
                 monotonic=time.monotonic,
                 now=time.wall,
             )
@@ -675,20 +649,14 @@ def test_an_unusable_latest_version_entry_is_skipped_and_counted_not_the_whole_r
         assert found.meta_skipped == skipped and len(found.meta) == 1 + len(meta) - skipped
 
 
-def test_a_store_that_keeps_sending_a_bad_page_is_auto_paused_after_ten() -> None:
-    """Review 2, finding 2: a 200 the reader can't use counts as a failed request for APL-12, and `system_status`
-    answering doesn't reset the count, so ten reads that each get a bad page auto-pause the store."""
-    failures = MemoryFailureCount()
-    for run in range(1, 11):
-        result = read(FakeCatalogStore(rows=rows(1), answers=[page_of({"id": 1})]), failures=failures)
-        assert (result.reason, result.bad_field, failures.count) == ("bad_response", "page", run)
-    assert result.auto_paused and failures.paused_reason == "bad_response"
-    failures = MemoryFailureCount()
-    for run in range(1, 4):
-        store = FakeCatalogStore(rows=rows(1), status_answer=page_of({"theme": {}}))  # a 200 with no environment
-        result = read(store, failures=failures)
-        assert (result.reason, result.bad_field, failures.count) == ("bad_response", "environment", run)
-    assert read(FakeCatalogStore(rows=rows(1)), failures=failures).ok and failures.count == 0  # a usable page
+def test_a_bad_page_or_a_bad_system_status_ends_the_read_as_bad_response() -> None:
+    """Review 2, finding 2, under m3.2's F1: a 200 the reader can't use ends the read with `bad_response`, which the
+    runner counts as one failed read (so ten such reads auto-pause the store, `tests/test_sync_failures.py`)."""
+    result = read(FakeCatalogStore(rows=rows(1), answers=[page_of({"id": 1})]))
+    assert (result.reason, result.bad_field) == ("bad_response", "page")
+    store = FakeCatalogStore(rows=rows(1), status_answer=page_of({"theme": {}}))  # a 200 with no environment
+    result = read(store)
+    assert (result.reason, result.bad_field) == ("bad_response", "environment")
 
 
 def test_a_400_on_a_later_page_is_read_as_the_listing_shrinking_and_read_once_more() -> None:
@@ -706,9 +674,8 @@ def test_a_400_on_a_later_page_is_read_as_the_listing_shrinking_and_read_once_mo
             store.answers.append(page_two_gone)
 
     store.before_page = before
-    failures = MemoryFailureCount()
-    result = read(store, failures=failures)
-    assert result.ok and len(result.products) == 150 and failures.count == 0
+    result = read(store)
+    assert result.ok and len(result.products) == 150
     always = FakeCatalogStore(rows=rows(150))
     always.before_page = lambda page: always.answers.append(page_two_gone) if page == 1 else None
     assert read(always).reason == "count_mismatch"

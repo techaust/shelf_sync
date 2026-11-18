@@ -50,6 +50,8 @@ const stored: AppSettings = {
   start_with_windows: false,
   notifications: true,
   log_retention_days: 60,
+  sync_interval_minutes: 15,
+  snapshot_time: "02:00",
   installed: true,
 };
 

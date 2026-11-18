@@ -27,7 +27,28 @@ states = st.builds(
     words,
     st.sampled_from(["simple", "variable"]),
     downloads,
+    st.booleans(),  # downloadable (F8)
+    st.sampled_from([(), (("latest_version", "1.0"),), (("latest_version", "1.1"),)]),  # version (F11)
 )
+
+
+def test_the_change_fields_include_the_flag_and_the_version() -> None:
+    assert CHANGE_FIELDS == ("downloads", "slug", "status", "type", "downloadable", "version")
+    change = compare(1, state(downloadable=True), state(downloadable=False), "incremental")
+    assert change is not None and (change.kind, change.fields) == ("changed", ("downloadable",))
+    one, two = (("latest_version", "1"),), (("latest_version", "2"),)
+    edited = compare(1, state(version=one), state(version=two), "snapshot")
+    assert edited is not None and edited.fields == ("version",)
+
+
+def test_the_watermark_steps_back_by_the_reads_duration_and_ignores_unicode_digits() -> None:
+    """F3, F7."""
+    dated = [replace(product(1), modified_gmt="2026-11-12T00:03:00")]
+    assert next_watermark(None, dated, NOW, 180) == "2026-11-12T00:00:00"
+    assert next_watermark("2026-11-12T00:01:00", dated, NOW, 180) == "2026-11-12T00:01:00"  # never back
+    assert next_watermark(None, [replace(product(1), modified_gmt="٢٠٢٦-11-12T00:03:00")], NOW) is None
+    with pytest.raises(ValueError):
+        modified_after("２０２６-11-12T00:03:00")
 
 
 def state(**changes: object) -> ProductState:

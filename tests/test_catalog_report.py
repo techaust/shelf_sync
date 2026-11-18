@@ -672,11 +672,10 @@ def test_ctrl_c_before_any_body_byte_counts_the_silence_from_the_headers(data_pa
         (_attempt(outcome="ok", ended=None), CatalogRead("timeout"), "timeout, between requests at the store's bound"),
         (_attempt(attempt=2), CatalogRead("timeout"), "timeout, between requests at the store's bound"),
         (_attempt(attempt=4), CatalogRead("timeout"), "timeout"),
-        (_attempt(attempt=2), CatalogRead("timeout", auto_paused=True), "timeout"),
         (None, CatalogRead("timeout"), "timeout, between requests at the store's bound"),
         (_attempt(outcome="ok", ended=None), None, "stopped by Ctrl+C"),
     ],
-    ids=["ok", "other reason", "after a page", "retry wait", "fourth try", "auto-paused", "no request", "ctrl+c"],
+    ids=["ok", "other reason", "after a page", "retry wait", "fourth try", "no request", "ctrl+c"],
 )
 def test_how_the_read_ended_names_a_timeout_between_requests(
     last: Attempt | None, result: CatalogRead | None, words: str
@@ -695,7 +694,6 @@ def test_a_read_ended_by_the_wait_before_a_request_is_reported_between_requests(
             client,
             spacing_ms=1000,
             stop=store.time,
-            failures=catalog_read.MemoryFailureCount(),
             monotonic=store.time.monotonic,
             now=store.time.wall,
             store_seconds=0.5,

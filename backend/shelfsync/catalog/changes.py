@@ -2,14 +2,16 @@
 no network.
 
 The saves that bring a store's state into the catalog (an incremental, `db.catalog.save_incremental`; a snapshot,
-`db.catalog.apply_snapshot`) compare each catalog product **before** the save with what the store has **now**, and
-return one `Change` per product that differs, so each change is reported once: by the save that first saw it.
-- `changed`: its downloads (id, name and file, in order), slug, status or type differ (`fields` says which);
+`db.snapshots.save_snapshot`; both through `db.catalog.apply_products`) compare each catalog product **before** the
+save with what the store has **now**, and return one `Change` per product that differs, so each change is reported
+once: by the save that first saw it.
+- `changed`: its downloads (id, name and file, in order), slug, status, type, `downloadable` flag or version fields
+  (the `latest_version*` meta) differ (`fields` says which);
 - `trashed`: it is in the trash now and wasn't before (`fields` holds every field that differs, `status` among them);
-- `deleted`: the snapshot's listing, which holds every product of the store trash included, doesn't hold it any more
-  (only a snapshot can say so; `after` is None).
+- `deleted`: a snapshot didn't list it and `GET /products/{id}` answered 404 (only a snapshot can say so; `after` is
+  None).
 Until M5 ShelfSync writes nothing to a store, so every change is one made outside it; from M5 its own writes are told
-apart by the activity log. A new product isn't a change (the incremental links it as a full read would).
+apart by the activity log. A new product isn't a change (it is added as a full read would).
 """
 
 from collections.abc import Collection, Mapping
@@ -19,7 +21,7 @@ from typing import Literal
 from shelfsync.catalog.model import Download, Product
 
 TRASH = "trash"
-CHANGE_FIELDS = ("downloads", "slug", "status", "type")
+CHANGE_FIELDS = ("downloads", "slug", "status", "type", "downloadable", "version")
 
 ChangeKind = Literal["changed", "trashed", "deleted"]
 ChangeSource = Literal["incremental", "snapshot"]
@@ -27,13 +29,15 @@ ChangeSource = Literal["incremental", "snapshot"]
 
 @dataclass(frozen=True)
 class ProductState:
-    """What change detection compares of one store product."""
+    """What change detection compares of one store product. `version` is its kept `latest_version*` meta entries."""
 
     wc_id: int
     slug: str
     status: str
     type: str
     downloads: tuple[Download, ...]
+    downloadable: bool = True
+    version: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,7 +52,9 @@ class Change:
 
 
 def state_of(product: Product) -> ProductState:
-    return ProductState(product.wc_id, product.slug, product.status, product.type, product.downloads)
+    return ProductState(
+        product.wc_id, product.slug, product.status, product.type, product.downloads, product.downloadable, product.meta
+    )
 
 
 def compare(store_id: int, before: ProductState, after: ProductState | None, source: ChangeSource) -> Change | None:
@@ -74,6 +80,8 @@ def detect(
 ) -> list[Change]:
     """Every change, by WooCommerce id: each product in both `before` and `after` that differs, and each id in
     `deleted` (which must be in `before` and not in `after`). Products only in `after` are new, not changes."""
+    if any(wc_id not in before or wc_id in after for wc_id in deleted):
+        raise ValueError("a deleted product must be in the catalog and missing from the store")
     found: list[Change] = []
     for wc_id in sorted(before):
         if wc_id in after:
@@ -84,8 +92,6 @@ def detect(
             change = None
         if change is not None:
             found.append(change)
-    if any(wc_id not in before or wc_id in after for wc_id in deleted):
-        raise ValueError("a deleted product must be in the catalog and missing from the store")
     return found
 
 

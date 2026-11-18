@@ -15,8 +15,8 @@ Run by the owner in Windows PowerShell outside the Claude app (04-A V36), only a
   fine; and their keys from Credential Manager (a read failure stops it, never reads as missing keys);
 - prints the requests it will make (paths and parameters, never the address) and waits for Enter (`--yes` skips it);
 - reads every active store one after another with the app's reader (`apply/catalog_read.py`: GET only, retries,
-  bounds), at least **1,000 ms** between requests (`--spacing-ms`, never lower; a store's own spacing when higher),
-  with a failure count kept in memory per store;
+  bounds), at least **1,000 ms** between requests (`--spacing-ms`, never lower; a store's own spacing when higher);
+  it counts no failures and never pauses a store (APL-12 counts the app's reads, m3.2);
 - links the stores in memory through the pure functions (`catalog/linking.py`, `slots.py`, `names.py`);
 - **saves nothing:** no database write, no file, no app log file; its log lines go to the console only, with the HTTP
   libraries held at the app's quiet levels (`logs.QUIET_LOGGERS`) and every line through the log redaction;
@@ -67,7 +67,6 @@ from shelfsync.apply.catalog_read import (
     FactsTransport,
     InFlight,
     ListingShape,
-    MemoryFailureCount,
     ResponseFacts,
     Stop,
     Wire,
@@ -250,8 +249,6 @@ def store_lines(store: StoreRef, result: CatalogRead, meta: bool = True) -> list
         status = f", HTTP {result.http_status}" if result.http_status is not None else ""
         lines = [f"{head}: FAILED, {result.reason}{status}{describe_bad(result)}"]
         lines.append(f"  requests sent {result.requests}, products pages read {result.pages}")
-        if result.auto_paused:
-            lines.append("  10 failed requests in a row: the app would auto-pause this store")
         return lines
     products = result.products
     downloads = [download for product in products for download in product.downloads]
@@ -444,8 +441,7 @@ def read_ended(attempts: Sequence[Attempt], result: CatalogRead | None) -> str:
     """How a store's read ended, for its summary: `ok`, the `CatalogRead` reason, `stopped by Ctrl+C` (no result),
     and for a `timeout` that the reader's own bound checks raised between requests (the wait before a request, or the
     deadline check before one, never seen by `observe`; review 1) the words "between requests at the store's bound".
-    A timeout that ended the read itself is the last attempt's: its fourth try, or the one that auto-paused the
-    store."""
+    A timeout that ended the read itself is the last attempt's: its fourth try."""
     if result is None:
         return "stopped by Ctrl+C"
     if result.reason is None:
@@ -453,7 +449,7 @@ def read_ended(attempts: Sequence[Attempt], result: CatalogRead | None) -> str:
     if result.reason != "timeout":
         return result.reason
     last = attempts[-1] if attempts else None
-    if last is not None and last.outcome == "timeout" and (last.attempt > RETRIES or result.auto_paused):
+    if last is not None and last.outcome == "timeout" and last.attempt > RETRIES:
         return "timeout"
     return "timeout, between requests at the store's bound"
 
@@ -743,7 +739,6 @@ def _read_one(
                 store.code,
                 spacing_ms=max(store.spacing_ms, settings.spacing_ms),
                 stop=stop,
-                failures=MemoryFailureCount(),
                 monotonic=monotonic,
                 now=now,
                 store_seconds=settings.store_seconds,

@@ -9,19 +9,17 @@ catches up the latest one only.
 
 **The same-night retry (Lead (proposed), m3.2; L1: PluginWay stalled for about an hour one evening):** an attempt that
 failed is tried again 30 minutes later, at most 3 attempts a night, unless waiting can't change its reason (the store's
-state, its keys, its version, the snapshot's limits) or the store is auto-paused. An attempt stopped by the app's
-shutdown is due again at the next start. One store's failure never holds up another's: each store's night is its own.
+state, its keys, its version, the snapshot's limits) or the store is auto-paused (the failure that paused it is
+counted first, in the same transaction, `db.snapshots.record_failed`). `too_many_missing` is retried like the others.
+An attempt stopped by the app's shutdown is due again at the next start. One store's failure never holds up
+another's: each store's night is its own.
 
-**The auto-pause rule for snapshot attempts (Lead (proposed), m3.2):** APL-12 auto-pauses a store at 10 failed requests
-in a row, and one attempt can fail 4 times (a request and its 3 retries), so 3 attempts could pause a store that was
-only slow for an hour. So:
-1. a snapshot attempt's failed requests count toward the ten like any read's, but **never past nine**: a snapshot
-   attempt never auto-pauses a store by itself (`runner._NightFailures`);
-2. while a store's night waits for its retry, its **scheduled** incrementals are skipped (`snapshot_retry`), so a slow
-   store isn't read every 15 minutes besides;
-3. so a store slow through the night's attempts isn't paused, and its count goes back to 0 at its first usable page; a
-   store still failing after the night's last attempt sits at nine, and its next failed request (the next
-   incremental's first) pauses it.
+**APL-12** (the owner, 11 2026-11-18) counts failed **reads**: each snapshot attempt that fails counts once, as an
+incremental or a full read does (`db.catalog.count_failed_read`); 10 in a row auto-pause the store. A slow evening
+of a few failed reads recovers on its own at the next read that works.
+
+**A wrong clock (F6):** a last incremental, or the scheduler's start, later than now (the clock went back) makes the
+incremental due now, so a clock moved back never holds the incrementals off.
 """
 
 from dataclasses import dataclass
@@ -48,6 +46,8 @@ NOT_RETRIED = frozenset(
         "trash_unlisted",
         "snapshot_too_large",
         "no_catalog",
+        "night_done",
+        "interrupted",
     }
 )
 
@@ -101,8 +101,11 @@ def retry_at(reason: str, attempt: int, finished: datetime, *, auto_paused: bool
     return finished + RETRY_AFTER
 
 
-def incremental_due(since: datetime, last_started: datetime | None, interval_minutes: int) -> datetime:
+def incremental_due(now: datetime, since: datetime, last_started: datetime | None, interval_minutes: int) -> datetime:
     """When the next scheduled incremental is due: one interval after the last one started (any incremental, Sync now
-    included), or after the scheduler started when none has since."""
+    included), or after the scheduler started when none has since. Either later than `now` (the clock went back):
+    due now (F6)."""
+    if since > now or (last_started is not None and last_started > now):
+        return now
     base = since if last_started is None or last_started < since else last_started
     return base + timedelta(minutes=interval_minutes)

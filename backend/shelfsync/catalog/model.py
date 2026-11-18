@@ -52,6 +52,15 @@ class Product:
     # `latest_version*` entries skipped as unusable (a value that isn't text, too long, with a NUL or a lone
     # surrogate, a key too long, past the 50 kept, or past the stored JSON's limit): counted by L1, not stored.
     meta_skipped: int = 0
+    # WooCommerce's `downloadable` flag (m3.2, F8): read by the incremental and the snapshot; a full read asks
+    # `downloadable=true` and doesn't read it, so its products are True.
+    downloadable: bool = True
+
+    @property
+    def in_catalog(self) -> bool:
+        """The one downloadable rule for every read (m3.2, F8): `downloadable` is true and it isn't in the trash.
+        Having files decides nothing."""
+        return self.downloadable and self.status != "trash"
 
 
 def downloads_json(downloads: tuple[Download, ...]) -> str:

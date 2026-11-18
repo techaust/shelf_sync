@@ -26,7 +26,6 @@ import httpx
 
 from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog.runner import (
-    ChangeSink,
     ClientFactory,
     KeysMissing,
     RunKind,
@@ -38,6 +37,7 @@ from shelfsync.catalog.runner import (
 from shelfsync.catalog.scheduler import SyncScheduler
 from shelfsync.clock import utc_now
 from shelfsync.db import catalog as db
+from shelfsync.db.catalog import ChangeSink
 from shelfsync.db.connection import connect
 from shelfsync.db.daily import LocalTime
 from shelfsync.db.migrate import migrate
@@ -174,6 +174,7 @@ class CatalogService:
             make_stop=make_stop,
             slots=slots,
             on_changes=on_changes,
+            local=local,
         )
         # The scheduler (m3.2) exists for every service, so `GET /api/sync` can say when runs come next; only a
         # `scheduled` service (the app's) starts its thread in the lifespan. Tests call `tick()` themselves.

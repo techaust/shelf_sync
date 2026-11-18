@@ -76,7 +76,7 @@ class NightModel(BaseModel):
     listing: Literal["include_status", "two_listings"] | None  # how the trash was listed
     products: int | None  # products read, trash included
     trashed: int | None
-    not_seen: int | None  # catalog products the listing didn't hold
+    not_seen: int | None  # catalog products present before the save that a 404 confirmed deleted (F10)
     variable: int | None  # variable products whose variations were read
 
 

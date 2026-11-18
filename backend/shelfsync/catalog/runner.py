@@ -14,9 +14,11 @@ for the stores it is due on.
   read when the run began): a store removed since is skipped (`store_removed`), a store paused since is skipped
   (`paused`), and the client, `address_changed` and the save's `read_url` all use that row.
 - A store that is auto-paused (`sync_state.auto_paused_at`) is skipped and shown as such (`auto_paused`). An incremental
-  skips a store without a watermark (`no_full_read`), and a scheduled one a store whose night waits for its snapshot
-  retry (`snapshot_retry`, `catalog/schedule.py`). A snapshot records a paused, auto-paused or not yet read store's
-  night as `skipped` (`paused`, `auto_paused`, `no_catalog`).
+  skips a store without a watermark (`no_full_read`). A snapshot records a paused, auto-paused or not yet read
+  store's night as `skipped` (`paused`, `auto_paused`, `no_catalog`).
+- **APL-12 (the owner, 11 2026-11-18):** each read (a full read, an incremental, a snapshot attempt) that fails counts
+  once, when its outcome is recorded (`db.catalog.count_failed_read`, in the same transaction); a read that worked
+  sets the count to 0 in its save's transaction; reasons that never count are `db.catalog.NOT_COUNTED`.
 - Progress (the store, page of pages, rows) is kept for `GET /api/sync`.
 - **Stop:** `stop()` (the app's shutdown) is seen between requests and during every wait; the store being read is left
   exactly as it was (nothing of a stopped read is saved) and no later store is started.
@@ -27,8 +29,9 @@ for the stores it is due on.
   request (`address_changed`), and so is a save when the address changed during the read: links are keyed by the
   store and the WooCommerce id, so another shop's products would silently take the old ones' places. Resolving it is a
   later task (`db.catalog.clear_address_guard`).
-- **Changes:** the changes an incremental or a snapshot found (`catalog/changes.py`) go to `on_changes` (m3.3 turns
-  them into Cleanup issues); the log gets their counts only.
+- **Changes (F4):** the changes an incremental or a snapshot found (`catalog/changes.py`) go to `on_changes` **inside
+  the save's transaction, with its connection** (m3.3 writes its Cleanup rows there); if it raises, the save rolls back
+  and the read ends `internal` (not counted), to be read again next time. The log gets their counts only.
 """
 
 import logging
@@ -42,7 +45,6 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 from shelfsync.apply.catalog_read import (
-    FAILURES_TO_PAUSE,
     CatalogRead,
     SnapshotRead,
     log_incremental,
@@ -54,26 +56,33 @@ from shelfsync.apply.catalog_read import (
 )
 from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog.changes import Change, counts
-from shelfsync.catalog.schedule import retry_at
+from shelfsync.catalog.schedule import SnapshotTime, night_of
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db import snapshots
 from shelfsync.db.catalog import (
     AddressMoved,
+    ChangeSink,
     StoreRemoved,
     SyncStateRow,
     address_changed,
-    record_failure,
-    record_failure_capped,
     record_incremental_failed,
     record_incremental_started,
     record_read_failed,
     record_read_started,
-    record_success,
     save_incremental,
     save_store_read,
     sync_state,
 )
-from shelfsync.db.settings import DEFAULTS, SNAPSHOT_DAYS_MAX, SNAPSHOT_DAYS_MIN, get_setting
+from shelfsync.db.daily import LocalTime
+from shelfsync.db.settings import (
+    DEFAULTS,
+    SNAPSHOT_DAYS_MAX,
+    SNAPSHOT_DAYS_MIN,
+    SYNC_INTERVAL_MAX,
+    SYNC_INTERVAL_MIN,
+    get_setting,
+    snapshot_hour_minute,
+)
 from shelfsync.db.stores import StoreRow, get_store, list_live
 from shelfsync.platform.secrets import SecretStoreError
 from shelfsync.secure.credentials import SECRETS_WRITE_LOCK
@@ -86,7 +95,6 @@ STOP_WAIT_SECONDS = 2.0  # how long the app's shutdown waits for the run to noti
 # often it looks again (Lead (proposed), m3.1 review 1).
 CLAIM_WAIT_SECONDS = 70.0
 CLAIM_POLL_SECONDS = 0.5
-NIGHT_FAILURES_CAP = FAILURES_TO_PAUSE - 1  # a snapshot attempt never takes the count to ten (`catalog/schedule.py`)
 
 RunKind = Literal["full", "incremental", "snapshot"]
 RUN_KINDS: tuple[RunKind, ...] = ("full", "incremental", "snapshot")
@@ -97,7 +105,6 @@ class KeysMissing(Exception):
 
 
 ClientFactory = Callable[[StoreRow], WooClient]
-ChangeSink = Callable[[int, list[Change]], None]  # (store id, the changes one save found)
 
 
 class StopSignal(Protocol):
@@ -127,6 +134,9 @@ class RunPlan:
             raise ValueError("a snapshot run, and only one, has a night")
 
 
+FULL_PLAN = RunPlan()
+
+
 @dataclass(frozen=True)
 class StoreProgress:
     store_id: int
@@ -149,27 +159,25 @@ class RunState:
     night: str | None = None
 
 
-class _StoredFailures:
-    """The failure count (APL-12) kept in `sync_state`, so it carries over to the next run."""
-
-    def __init__(self, connection: sqlite3.Connection, store_id: int, now: Callable[[], datetime]) -> None:
-        self._connection = connection
-        self._store_id = store_id
-        self._now = now
-
-    def failed(self, reason: str) -> bool:
-        return record_failure(self._connection, self._store_id, reason, to_iso(self._now()), FAILURES_TO_PAUSE)
-
-    def succeeded(self) -> None:
-        record_success(self._connection, self._store_id)
+@dataclass(frozen=True)
+class SyncSettings:
+    interval_minutes: int
+    snapshot_time: SnapshotTime
 
 
-class _NightFailures(_StoredFailures):
-    """A snapshot attempt's count: each failed request counts, but never past nine, and never auto-pauses the store
-    (m3.2's rule, `catalog/schedule.py`). A usable page resets it to 0 as for any read."""
-
-    def failed(self, reason: str) -> bool:
-        return record_failure_capped(self._connection, self._store_id, NIGHT_FAILURES_CAP)
+def sync_settings(connection: sqlite3.Connection) -> SyncSettings:
+    """`sync_interval_minutes` and `snapshot_time` as stored, each its default when the stored value isn't valid."""
+    try:
+        interval = get_setting(connection, "sync_interval_minutes")
+    except ValueError:
+        interval = None
+    if type(interval) is not int or not SYNC_INTERVAL_MIN <= interval <= SYNC_INTERVAL_MAX:
+        interval = int(DEFAULTS["sync_interval_minutes"])
+    try:
+        hour, minute = snapshot_hour_minute(get_setting(connection, "snapshot_time"))
+    except ValueError, TypeError:
+        hour, minute = snapshot_hour_minute(str(DEFAULTS["snapshot_time"]))
+    return SyncSettings(interval, SnapshotTime(hour, minute))
 
 
 def retention_days(connection: sqlite3.Connection) -> int:
@@ -194,6 +202,7 @@ class SyncRunner:
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
         on_changes: ChangeSink | None = None,
+        local: LocalTime | None = None,
     ) -> None:
         self._open = open_connection
         self._factory = client_factory
@@ -202,6 +211,7 @@ class SyncRunner:
         self._monotonic = monotonic
         self._make_stop = make_stop
         self._on_changes = on_changes
+        self._local = local if local is not None else LocalTime()
         self._stop: StopSignal = make_stop()
         self._lock = threading.Lock()
         self._state = RunState()
@@ -226,7 +236,7 @@ class SyncRunner:
     def start(self, plan: RunPlan | None = None) -> bool:
         """Start a run on its own thread (a full read when no plan is given). False when one is running (or a stopped
         one hasn't ended yet), and always after `stop()`: the app is shutting down, so no run may begin."""
-        chosen = plan if plan is not None else RunPlan()
+        chosen = plan if plan is not None else FULL_PLAN
         with self._lock:
             if self._closed or (self._thread is not None and self._thread.is_alive()):
                 return False
@@ -294,7 +304,7 @@ class SyncRunner:
 
         return report
 
-    def _read_one(self, listed: StoreRow, plan: RunPlan = RunPlan()) -> str | None:  # noqa: B008  # frozen, never changed
+    def _read_one(self, listed: StoreRow, plan: RunPlan = FULL_PLAN) -> str | None:
         """Read and save one store; its outcome. Never raises. The store's busy slot is held for the whole read."""
         with self._lock:
             self._state = replace(self._state, current=StoreProgress(listed.id, 0, 0, 0))
@@ -308,8 +318,6 @@ class SyncRunner:
         refused = self._claim(listed.id)
         if refused is not None:
             _log.info("Store %s %s: %s (skipped)", listed.code, _what(plan), refused)
-            if plan.kind == "snapshot" and refused == "busy":
-                return self._record_on_fresh_connection(listed, plan, "busy")
             return refused
         try:
             return self._read_claimed(listed, plan)
@@ -325,11 +333,7 @@ class SyncRunner:
                 return "store_removed"
             if row.state != "active":
                 return "paused"
-            state = sync_state(connection, store_id)
-            reason = _state_skip(plan, state)
-            if reason is None and plan.kind == "incremental" and plan.scheduled:
-                reason = _retry_pending(connection, store_id, to_iso(self._now()))
-        return reason
+            return _state_skip(plan, sync_state(connection, store_id))
 
     def _skipped(self, row: StoreRow, plan: RunPlan, reason: str) -> str:
         """A store skipped: logged, and a snapshot records the night as skipped (a removed store records nothing)."""
@@ -344,7 +348,8 @@ class SyncRunner:
 
     def _claim(self, store_id: int) -> str | None:
         """Take the store's busy slot, waiting while a Test connection or an edit holds it (at most
-        `CLAIM_WAIT_SECONDS`). None when taken; else `busy`, or `stopped` when the app shuts down meanwhile."""
+        `CLAIM_WAIT_SECONDS`). None when taken; else `busy`, or `stopped` when the app shuts down meanwhile. Neither
+        counts nor uses a snapshot attempt: the night stays due."""
         deadline = self._monotonic() + CLAIM_WAIT_SECONDS
         while not self._slots.claim(store_id):
             if self._monotonic() >= deadline:
@@ -406,7 +411,7 @@ class SyncRunner:
         except sqlite3.Error as error:
             _log.error("Store %s %s: database_error (%s)", row.code, _what(plan), type(error).__name__)
             return self._record_on_fresh_connection(row, plan, "database_error")
-        except Exception as error:  # a bug must not stop the other stores; its type is logged, never its text
+        except Exception as error:  # a bug (or a change sink's) must not stop the other stores; its type is logged
             _log.error("Store %s %s: internal (%s)", row.code, _what(plan), type(error).__name__)
             return self._record_on_fresh_connection(row, plan, "internal")
         finally:
@@ -415,7 +420,8 @@ class SyncRunner:
 
     def _record_on_fresh_connection(self, row: StoreRow, plan: RunPlan, reason: str) -> str:
         """Record an outcome the read's own connection may not be able to (it failed on that connection). A second
-        failure is only logged: the outcome is still reported in `GET /api/sync`'s `this_run`."""
+        failure is only logged: the outcome is still reported in `GET /api/sync`'s `this_run`. Every reason that
+        arrives here never counts (`db.catalog.NOT_COUNTED`)."""
         at = to_iso(self._now())
         try:
             with closing(self._open()) as connection:
@@ -429,16 +435,19 @@ class SyncRunner:
             _log.error("Store %s: the outcome couldn't be recorded (%s)", row.code, type(error).__name__)
         if reason in ("address_changed", "store_removed") and plan.kind == "full":
             log_read(row.code, CatalogRead(reason))
-        elif reason in ("address_changed", "store_removed", "busy", "snapshot_too_large"):
+        elif reason in ("address_changed", "store_removed", "snapshot_too_large"):
             _log.warning("Store %s %s: %s", row.code, _what(plan), reason)
         return reason
+
+    def _paused_now(self, row: StoreRow, paused: bool) -> None:
+        if paused:
+            _log.warning("Store %s: 10 failed reads in a row; the store's sync is now auto-paused", row.code)
 
     def _read_and_save(self, connection: sqlite3.Connection, row: StoreRow, client: WooClient) -> str | None:
         result = read_catalog(
             client,
             spacing_ms=row.spacing_ms,
             stop=self._stop,
-            failures=_StoredFailures(connection, row.id, self._now),
             progress=self._progress(row.id),
             monotonic=self._monotonic,
             now=self._now,
@@ -455,13 +464,14 @@ class SyncRunner:
             pages=result.pages,
             at=to_iso(self._now()),
             read_url=row.url,
+            seconds=result.seconds,
         )
         log_read(row.code, result)
         return None
 
     def _failed(self, connection: sqlite3.Connection, row: StoreRow, result: CatalogRead) -> str:
         reason = result.reason or "internal"
-        record_read_failed(
+        paused = record_read_failed(
             connection,
             row.id,
             reason=reason,
@@ -471,6 +481,7 @@ class SyncRunner:
             at=to_iso(self._now()),
         )
         log_read(row.code, result)
+        self._paused_now(row, paused and reason != "auto_paused")
         return reason
 
     # ---- the incremental (SYNC-01) ---------------------------------------------------------------------------------
@@ -493,7 +504,6 @@ class SyncRunner:
             watermark=watermark,
             spacing_ms=row.spacing_ms,
             stop=self._stop,
-            failures=_StoredFailures(connection, row.id, self._now),
             progress=self._progress(row.id),
             monotonic=self._monotonic,
             now=self._now,
@@ -502,17 +512,26 @@ class SyncRunner:
             result = replace(result, reason="stopped", products=())
         if not result.ok:
             return self._incremental_failed(connection, row, result)
-        summary = save_incremental(connection, row.id, result.products, at=to_iso(self._now()), read_url=row.url)
+        summary = save_incremental(
+            connection,
+            row.id,
+            result.products,
+            at=to_iso(self._now()),
+            read_url=row.url,
+            seconds=result.seconds,
+            sink=self._on_changes,
+        )
         log_incremental(row.code, result, summary.updated + summary.added)
         self._report(row, list(summary.changes))
         return None
 
     def _incremental_failed(self, connection: sqlite3.Connection, row: StoreRow, result: CatalogRead) -> str:
         reason = result.reason or "internal"
-        record_incremental_failed(
+        paused = record_incremental_failed(
             connection, row.id, reason=reason, http_status=result.http_status, at=to_iso(self._now())
         )
         log_incremental(row.code, result, 0)
+        self._paused_now(row, paused)
         return reason
 
     # ---- the snapshot (SYNC-03, SYNC-04) ---------------------------------------------------------------------------
@@ -525,8 +544,9 @@ class SyncRunner:
         failure: str | None,
         night: str,
     ) -> str | None:
+        started = self._now()
         try:
-            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(self._now()))
+            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(started))
         except ValueError:
             held = snapshots.night_row(connection, row.id, night)
             if held is not None and held.state == "running":  # its last attempt was cut off (the app ended)
@@ -536,8 +556,8 @@ class SyncRunner:
                     night,
                     reason="interrupted",
                     http_status=None,
-                    at=to_iso(self._now()),
-                    retry_at=None,
+                    at=self._now(),
+                    attempt=held.attempts,
                 )
                 _log.warning("Store %s snapshot of %s: interrupted (no attempt left)", row.code, night)
                 return "interrupted"
@@ -547,30 +567,41 @@ class SyncRunner:
             return self._snapshot_failed(connection, row, night, attempt, SnapshotRead(failure or "internal"))
         if address_changed(connection, row.id, row.url):
             return self._snapshot_failed(connection, row, night, attempt, SnapshotRead("address_changed"))
+        expected, catalog_size = snapshots.expected_products(connection, row.id, night)
+        settings = sync_settings(connection)
         result = read_snapshot(
             client,
             spacing_ms=row.spacing_ms,
             stop=self._stop,
-            failures=_NightFailures(connection, row.id, self._now),
+            expected=expected,
+            catalog_size=catalog_size,
             progress=self._progress(row.id),
             monotonic=self._monotonic,
             now=self._now,
         )
         if result.ok and self._stop.is_set():
-            result = replace(result, reason="stopped", products=(), variations=())
+            result = replace(result, reason="stopped", products=(), variations=(), deleted=())
         if not result.ok:
             return self._snapshot_failed(connection, row, night, attempt, result)
-        summary = snapshots.save_snapshot(
-            connection,
-            row.id,
-            night,
-            result.products,
-            {wc_id: rows for wc_id, rows in result.variations},
-            listing=result.listing or "include_status",
-            at=to_iso(self._now()),
-            read_url=row.url,
-            retention_days=retention_days(connection),
-        )
+        latest = snapshots.latest_allowed_night(night_of(started, self._local, settings.snapshot_time))
+        try:
+            summary = snapshots.save_snapshot(
+                connection,
+                row.id,
+                night,
+                result.products,
+                {wc_id: rows for wc_id, rows in result.variations},
+                listing=result.listing or "include_status",
+                at=to_iso(self._now()),
+                read_url=row.url,
+                retention_days=retention_days(connection),
+                deleted=result.deleted,
+                latest_night=latest,
+                sink=self._on_changes,
+            )
+        except snapshots.NightAhead:
+            _log.warning("Store %s snapshot of %s: refused, the night is ahead of this PC's clock", row.code, night)
+            return self._snapshot_failed(connection, row, night, attempt, SnapshotRead("internal"))
         log_snapshot(row.code, night, attempt, result)
         self._report(row, list(summary.catalog.changes))
         return None
@@ -592,26 +623,19 @@ class SyncRunner:
         http_status: int | None,
         attempt: int | None = None,
     ) -> None:
-        """Record a failed attempt with the same-night retry rule (`catalog/schedule.py`)."""
+        """Record a failed attempt: counted once, then the same-night retry rule (`db.snapshots.record_failed`)."""
         if attempt is None:
             held = snapshots.night_row(connection, row.id, night)
             if held is None or held.state != "running":
                 return  # no attempt was started: nothing to record
             attempt = held.attempts
-        state = sync_state(connection, row.id)
-        moment = self._now()
-        again = retry_at(reason, attempt, moment, auto_paused=state is not None and state.auto_paused_at is not None)
-        snapshots.record_failed(
-            connection,
-            row.id,
-            night,
-            reason=reason,
-            http_status=http_status,
-            at=to_iso(moment),
-            retry_at=to_iso(again) if again is not None else None,
+        paused = snapshots.record_failed(
+            connection, row.id, night, reason=reason, http_status=http_status, at=self._now(), attempt=attempt
         )
+        self._paused_now(row, paused and reason != "auto_paused")
 
     def _report(self, row: StoreRow, changes: list[Change]) -> None:
+        """The counts of the changes a save handed on (inside its transaction), for the log."""
         if not changes:
             return
         tally = counts(changes)
@@ -622,11 +646,6 @@ class SyncRunner:
             tally["trashed"],
             tally["deleted"],
         )
-        if self._on_changes is not None:
-            try:
-                self._on_changes(row.id, changes)
-            except Exception as error:  # a consumer's bug never fails the save that already happened
-                _log.error("Store %s: the changes couldn't be handed on (%s)", row.code, type(error).__name__)
 
 
 def _what(plan: RunPlan) -> str:
@@ -644,20 +663,6 @@ def _state_skip(plan: RunPlan, state: SyncStateRow | None) -> str | None:
         return "no_full_read"
     if plan.kind == "snapshot" and (state is None or state.last_ok_at is None):
         return "no_catalog"
-    return None
-
-
-def _retry_pending(connection: sqlite3.Connection, store_id: int, now_iso: str) -> str | None:
-    """A scheduled incremental skips a store whose latest night waits for its snapshot retry (`catalog/schedule.py`,
-    rule 2)."""
-    latest = snapshots.latest_nights(connection).get(store_id)
-    if (
-        latest is not None
-        and latest.state == "retry"
-        and latest.next_try_at is not None
-        and latest.next_try_at > now_iso
-    ):
-        return "snapshot_retry"
     return None
 
 

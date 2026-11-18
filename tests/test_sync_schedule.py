@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from shelfsync.catalog.runner import RunPlan
 from shelfsync.catalog.schedule import (
     ATTEMPTS_MAX,
     NOT_RETRIED,
@@ -103,10 +104,17 @@ def test_the_same_night_retry_rule() -> None:
 
 
 def test_the_incremental_comes_one_interval_after_the_last_one_started() -> None:
-    since = utc(18, 10)
-    assert incremental_due(since, None, 15) == utc(18, 10, 15)
-    assert incremental_due(since, utc(18, 10, 20), 15) == utc(18, 10, 35)
-    assert incremental_due(since, utc(17, 23), 15) == utc(18, 10, 15)  # one from before the scheduler started
+    since, now = utc(18, 10), utc(18, 10, 30)
+    assert incremental_due(now, since, None, 15) == utc(18, 10, 15)
+    assert incremental_due(now, since, utc(18, 10, 20), 15) == utc(18, 10, 35)
+    assert incremental_due(now, since, utc(17, 23), 15) == utc(18, 10, 15)  # one from before the scheduler started
+
+
+def test_a_clock_moved_back_makes_the_incremental_due_now() -> None:
+    """F6: a start or a last incremental later than now (the clock went back) is due now, never hours away."""
+    now = utc(18, 9)
+    assert incremental_due(now, utc(18, 10), None, 15) == now
+    assert incremental_due(now, utc(18, 8), utc(18, 10, 20), 15) == now
 
 
 # ---- the scheduler on a fake clock ---------------------------------------------------------------------------------
@@ -207,48 +215,55 @@ def test_a_stalled_store_is_tried_again_later_the_same_night_without_holding_up_
     assert nights(rig) == [("2026-11-18", ids["GF"], "ok", 2), ("2026-11-18", ids["PW"], "ok", 1)]
 
 
-def test_a_store_down_all_night_isnt_auto_paused_by_the_nights_attempts_but_is_by_the_next_read() -> None:
-    """The auto-pause rule (Lead (proposed), `catalog/schedule.py`): 3 attempts of 4 failed requests each stop at
-    nine, scheduled incrementals skip the store while it waits for its retry, and the first failed request after the
-    night's last attempt pauses it."""
+def test_three_failed_night_attempts_count_three_and_a_working_incremental_ends_at_zero() -> None:
+    """APL-12 (the owner, 11 2026-11-18): each failed attempt is one failed read, whatever its retries; the
+    incrementals keep running while the night waits for its retry (rule 2 dropped); one that works resets the count."""
     rig = make_sync_rig(utc(18, 2, 0, 5))
     ids = built(rig, "GF", "PW")
     gf, pw = ids["GF"], ids["PW"]
     rig.store("GF").fail = failing
     rig.tick()
-    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf) == [(4, None)]
+    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf) == [(1, None)]
     rig.at(utc(18, 2, 16))
     plan = rig.tick()
     assert plan is not None and plan.kind == "incremental"
-    assert rig.service.runner.state().outcomes == {gf: "snapshot_retry", pw: None}  # GF skipped, PW read
+    assert rig.service.runner.state().outcomes == {gf: "server_error", pw: None}  # GF read too, and failed
     for minute in (31, 62):
         rig.at(utc(18, 2, 0) + timedelta(minutes=minute))
         plan = rig.tick()
         assert plan is not None and plan.kind == "snapshot"
     assert nights(rig)[0] == ("2026-11-18", gf, "failed", 3)
-    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf) == [(9, None)]
+    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf) == [(4, None)]
+    rig.store("GF").fail = None
     rig.at(utc(18, 3, 20))
     plan = rig.tick()
     assert plan is not None and plan.kind == "incremental"
-    [(count, paused_at)] = rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf)
-    assert count == 10 and paused_at is not None  # really down: paused by its next read
+    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf) == [(0, None)]
 
 
-def test_a_store_slow_for_the_first_two_attempts_ends_the_night_with_its_count_back_at_zero() -> None:
-    rig = make_sync_rig(utc(18, 2, 0, 5))
+def test_a_store_down_from_21_45_is_paused_at_its_tenth_failed_read_and_its_night_then_skipped() -> None:
+    """APL-12 on a fake clock: incrementals every 15 minutes from 21:45 fail; the 10th failed read (about 2.5 hours
+    later, past midnight) auto-pauses the store, and the 02:00 night records it as skipped."""
+    rig = make_sync_rig(utc(17, 21, 40))
     ids = built(rig, "GF")
-    with closing(rig.db.connect()) as connection:
-        connection.execute("UPDATE sync_state SET failures_in_row = 6 WHERE store_id = ?", (ids["GF"],))
+    gf = ids["GF"]
+    assert rig.tick() is not None  # the night of the 17th, caught up at the start
     rig.store("GF").fail = failing
-    rig.tick()
-    rig.at(utc(18, 2, 31))
-    rig.tick()
-    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state") == [(9, None)]  # never past nine
-    rig.store("GF").fail = None
-    rig.at(utc(18, 3, 2))
-    rig.tick()
-    assert rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state") == [(0, None)]
-    assert nights(rig) == [("2026-11-18", ids["GF"], "ok", 3)]
+    moment = utc(17, 21, 45)
+    for read in range(1, 11):
+        moment += timedelta(minutes=15, seconds=30)
+        rig.at(moment)
+        plan = rig.tick()
+        assert plan is not None and plan.kind == "incremental", read
+        [(count, paused_at)] = rig.rows("SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", gf)
+        assert count == read and (paused_at is not None) is (read == 10)
+    assert moment < utc(18, 2, 0)
+    assert rig.rows("SELECT auto_pause_reason FROM sync_state") == [("server_error",)]
+    rig.at(utc(18, 2, 0, 30))
+    plan = rig.tick()
+    assert plan is not None and plan.kind == "snapshot"
+    assert nights(rig)[-1] == ("2026-11-18", gf, "skipped", 0)
+    assert rig.rows("SELECT reason FROM snapshot_night WHERE night = '2026-11-18'") == [("auto_paused",)]
 
 
 def test_paused_auto_paused_and_unread_stores_are_skipped_and_the_night_says_why() -> None:
@@ -296,6 +311,23 @@ def test_the_incremental_runs_every_interval_and_sync_now_moves_the_next_one() -
     assert rig.tick() is None
     rig.at(start + timedelta(minutes=96))
     assert rig.tick() is not None
+
+
+def test_a_clock_moved_back_a_day_runs_the_incremental_once_then_every_interval() -> None:
+    """F6: the scheduler started (and an incremental ran) on a clock a day ahead; after the clock is put back the
+    incremental is due at once, then one interval later, not at every check."""
+    rig = make_sync_rig(utc(19, 10))
+    built(rig, "GF")
+    rig.tick()  # the night's catch-up, and the scheduler's start, on the wrong (later) clock
+    rig.run("incremental")  # an incremental that started on the wrong clock
+    scheduler = rig.service.scheduler
+    back = utc(18, 10)  # the clock put right: a day earlier
+    assert scheduler.incremental_at(back) == back
+    assert rig.service.runner.start(RunPlan("incremental", scheduled=True))  # it runs (the runner's own clock)
+    rig.service.runner.join(30.0)
+    runner_started = rig.service.runner.last_started("incremental")
+    assert runner_started is not None
+    assert scheduler.incremental_at(runner_started) == runner_started + timedelta(minutes=15)
 
 
 def test_no_incremental_is_scheduled_before_any_store_has_a_full_read() -> None:

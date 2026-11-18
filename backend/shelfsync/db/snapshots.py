@@ -2,15 +2,22 @@
 (`snapshot_night`) and the products' states stored as changes (`snapshot_state`). Plain `sqlite3`.
 
 **A night** is the local date of the night's `snapshot_time`. Its row goes `running` at each attempt (the attempt
-counted), then `ok`, `retry` (with `next_try_at`), `failed` or `skipped` (with the reason).
+numbered), then `ok`, `retry` (with `next_try_at`), `failed` or `skipped` (with the reason). A failed attempt is
+recorded and counted as one failed read (APL-12, `db.catalog.count_failed_read`) in one transaction, and its retry is
+decided from the state that transaction wrote (an attempt that auto-paused the store isn't retried).
 
 **One store's snapshot that worked is saved in one transaction** (`save_snapshot`): the catalog part
-(`db.catalog.apply_products`: trashed and deleted products, and changed ones, reported once), the states (a product in
-the same state as its row of the store's previous `ok` night only moves that row's `last_night`; any other gets a new
-row), the night's row (`ok` and its counts), and the retention. A failed or stopped snapshot changes none of it.
+(`db.catalog.apply_products`: new products added, trashed, deleted and changed ones reported once), the changes handed
+to the sink (F4), the failed reads back to 0, the states (a product in the same state as its row of the store's
+previous `ok` night only moves that row's `last_night`; any other gets a new row), the night's row (`ok` and its
+counts) and the retention. A failed or stopped snapshot changes none of it. A night later than the PC's night of the
+attempt's start plus a day is refused (`NightAhead`, F5).
 
-**Retention (SYNC-03):** the nights older than `snapshot_retention_days` (counting the night saved as the first) are
-deleted, with the state rows whose `last_night` is older still; a row that still reaches a kept night stays whole.
+**Retention (SYNC-03; F5, Lead (proposed)):** per store. A night of that store is deleted only when it is both older
+than `snapshot_retention_days` nights (counting the night saved as the first) **and** outside the store's newest
+`snapshot_retention_days` `ok` nights, so a clock that jumped forward costs at most the nights it pushed out, never
+the whole history. State rows whose `last_night` is older than the oldest night kept go too; a row that still reaches a
+kept night stays whole.
 
 **The dates a product can be restored to** (`restorable_nights`, APL-14 in M5) are the `ok` nights of its store
 between the `first_night` and `last_night` of one of its rows.
@@ -19,21 +26,33 @@ between the `first_night` and `last_night` of one of its rows.
 import hashlib
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from shelfsync.catalog.changes import TRASH
 from shelfsync.catalog.model import Product, downloads_json, meta_json
-from shelfsync.db.catalog import ApplySummary, apply_products, guard_store
+from shelfsync.catalog.schedule import ATTEMPTS_MAX, retry_at
+from shelfsync.clock import to_iso
+from shelfsync.db.catalog import (
+    ApplySummary,
+    ChangeSink,
+    apply_products,
+    count_failed_read,
+    guard_store,
+    reset_failed_reads,
+)
 
 NIGHT_STATES = ("running", "ok", "retry", "failed", "skipped")
-ATTEMPTS_MAX = 3  # the first attempt and up to 2 more the same night (Lead (proposed), m3.2)
 VARIATIONS_JSON_MAX = 4 * 1024 * 1024  # migration 0004's CHECK on `variations_json`
 
 
 class SnapshotTooLarge(Exception):
     """A product's variations would pass `variations_json`'s limit: the snapshot isn't saved."""
+
+
+class NightAhead(Exception):
+    """The night is later than the PC's night of the attempt's start plus a day (a clock that jumped): not saved."""
 
 
 @dataclass(frozen=True)
@@ -129,15 +148,35 @@ def record_failed(
     *,
     reason: str,
     http_status: int | None,
-    at: str,
-    retry_at: str | None,
-) -> None:
-    """An attempt that didn't work: `retry` until `retry_at` when given, else `failed`. Nothing else changes."""
-    connection.execute(
-        "UPDATE snapshot_night SET state = ?, finished_at = ?, next_try_at = ?, reason = ?, http_status = ? "
-        "WHERE store_id = ? AND night = ?",
-        ("retry" if retry_at is not None else "failed", at, retry_at, reason, http_status, store_id, night),
-    )
+    at: datetime,
+    attempt: int,
+) -> bool:
+    """An attempt that didn't work, in one transaction: counted as one failed read (unless its reason never counts),
+    then `retry` until the time `catalog.schedule.retry_at` gives from the state just written, or `failed`. Nothing
+    else changes. True when the store is auto-paused now."""
+    stamp = to_iso(at)
+    _begin(connection)
+    try:
+        paused = count_failed_read(connection, store_id, reason, stamp)
+        again = retry_at(reason, attempt, at, auto_paused=paused)
+        connection.execute(
+            "UPDATE snapshot_night SET state = ?, finished_at = ?, next_try_at = ?, reason = ?, http_status = ? "
+            "WHERE store_id = ? AND night = ?",
+            (
+                "retry" if again is not None else "failed",
+                stamp,
+                to_iso(again) if again is not None else None,
+                reason,
+                http_status,
+                store_id,
+                night,
+            ),
+        )
+        connection.execute("COMMIT")
+    except BaseException:
+        _rollback(connection)
+        raise
+    return paused
 
 
 def record_skipped(connection: sqlite3.Connection, store_id: int, night: str, *, reason: str, at: str) -> None:
@@ -158,7 +197,7 @@ class SnapshotSummary:
     catalog: ApplySummary  # what the snapshot did to the catalog, with the changes it found
     products: int
     trashed: int
-    not_seen: int  # catalog products the listing didn't hold
+    not_seen: int  # present catalog products a 404 confirmed deleted (F10)
     new_rows: int  # state rows added (a product new, changed, or seen again after a night it was missing)
     extended: int  # state rows whose `last_night` moved
     pruned_nights: int
@@ -179,16 +218,19 @@ def _variations_json(variations: Sequence[Product]) -> str:
     return text
 
 
-def state_fields(product: Product, variations: Sequence[Product]) -> tuple[str, str, str, str, str, str, str]:
-    """(status, slug, type, downloads_json, meta_json, variations_json, state_sha256) of one product."""
+def state_fields(product: Product, variations: Sequence[Product]) -> tuple[str, str, str, int, str, str, str, str]:
+    """(status, slug, type, downloadable, downloads_json, meta_json, variations_json, state_sha256) of one product."""
     downloads = downloads_json(product.downloads)
     meta = meta_json(product.meta)
     varied = _variations_json(variations)
+    flag = int(product.downloadable)
     canonical = json.dumps(
-        [product.status, product.slug, product.type, downloads, meta, varied], ensure_ascii=False, separators=(",", ":")
+        [product.status, product.slug, product.type, flag, downloads, meta, varied],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return product.status, product.slug, product.type, downloads, meta, varied, digest
+    return product.status, product.slug, product.type, flag, downloads, meta, varied, digest
 
 
 def previous_ok_night(connection: sqlite3.Connection, store_id: int, night: str) -> str | None:
@@ -199,8 +241,34 @@ def previous_ok_night(connection: sqlite3.Connection, store_id: int, night: str)
 
 
 def cutoff_night(night: str, retention_days: int) -> str:
-    """The oldest night kept: `retention_days` nights counting `night` itself."""
+    """The oldest night kept by age: `retention_days` nights counting `night` itself."""
     return (date.fromisoformat(night) - timedelta(days=max(retention_days, 1) - 1)).isoformat()
+
+
+def latest_allowed_night(started_night: str) -> str:
+    """F5: the latest night an attempt may save: the PC's night of its start, plus one day."""
+    return (date.fromisoformat(started_night) + timedelta(days=1)).isoformat()
+
+
+def _prune(connection: sqlite3.Connection, store_id: int, night: str, retention_days: int) -> tuple[int, int]:
+    """Retention for one store (the module text). Returns (nights deleted, state rows deleted)."""
+    kept_ok = [
+        row[0]
+        for row in connection.execute(
+            "SELECT night FROM snapshot_night WHERE store_id = ? AND state = 'ok' ORDER BY night DESC LIMIT ?",
+            (store_id, max(retention_days, 1)),
+        )
+    ]
+    floor = cutoff_night(night, retention_days)
+    if kept_ok:
+        floor = min(floor, kept_ok[-1])
+    nights = connection.execute(
+        "DELETE FROM snapshot_night WHERE store_id = ? AND night < ?", (store_id, floor)
+    ).rowcount
+    rows = connection.execute(
+        "DELETE FROM snapshot_state WHERE store_id = ? AND last_night < ?", (store_id, floor)
+    ).rowcount
+    return nights, rows
 
 
 def save_snapshot(
@@ -214,9 +282,16 @@ def save_snapshot(
     at: str,
     read_url: str,
     retention_days: int,
+    deleted: Collection[int] = (),
+    latest_night: str | None = None,
+    sink: ChangeSink | None = None,
 ) -> SnapshotSummary:
-    """Save one store's snapshot that worked, in one transaction (the module text says what that does).
-    `AddressMoved` or `StoreRemoved` (and nothing saved) as for a full read; `SnapshotTooLarge` likewise."""
+    """Save one store's snapshot that worked, in one transaction (the module text says what that does). `deleted`: the
+    catalog products a 404 confirmed gone. `latest_night`: the latest night this attempt may save (F5).
+    `AddressMoved`, `StoreRemoved`, `SnapshotTooLarge` or `NightAhead`, and nothing saved; anything `sink` raises rolls
+    it all back too."""
+    if latest_night is not None and night > latest_night:
+        raise NightAhead
     _begin(connection)
     try:
         guard_store(connection, store_id, read_url)
@@ -229,47 +304,65 @@ def save_snapshot(
                 (store_id, previous),
             ):
                 latest[wc_id] = (row_id, digest)
-        catalog = apply_products(connection, store_id, products, at=at, source="snapshot", seen_last_night=set(latest))
+        catalog = apply_products(connection, store_id, products, at=at, source="snapshot", deleted=deleted)
         extend: list[tuple[str, int]] = []
         insert: list[tuple[object, ...]] = []
         for wc_id, state in fields.items():
             held = latest.get(wc_id)
-            if held is not None and held[1] == state[6]:
+            if held is not None and held[1] == state[7]:
                 extend.append((night, held[0]))
             else:
                 insert.append((store_id, wc_id, *state, night, night))
         connection.executemany("UPDATE snapshot_state SET last_night = ? WHERE id = ?", extend)
         connection.executemany(
-            "INSERT INTO snapshot_state (store_id, wc_id, status, slug, type, downloads_json, meta_json, "
-            "variations_json, state_sha256, first_night, last_night) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO snapshot_state (store_id, wc_id, status, slug, type, downloadable, downloads_json, meta_json, "
+            "variations_json, state_sha256, first_night, last_night) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             insert,
         )
         trashed = sum(1 for product in products if product.status == TRASH)
-        read = {product.wc_id for product in products}
-        not_seen = sum(
-            1
-            for (wc_id,) in connection.execute("SELECT wc_id FROM store_product WHERE store_id = ?", (store_id,))
-            if wc_id not in read
-        )
+        reset_failed_reads(connection, store_id)
         connection.execute(
             "UPDATE snapshot_night SET state = 'ok', finished_at = ?, next_try_at = NULL, reason = NULL, "
             "http_status = NULL, listing = ?, products = ?, trashed = ?, not_seen = ?, variable = ? "
             "WHERE store_id = ? AND night = ?",
-            (at, listing, len(products), trashed, not_seen, len(variations), store_id, night),
+            (at, listing, len(products), trashed, catalog.not_seen, len(variations), store_id, night),
         )
-        cutoff = cutoff_night(night, retention_days)
-        pruned_rows = connection.execute("DELETE FROM snapshot_state WHERE last_night < ?", (cutoff,)).rowcount
-        pruned_nights = connection.execute("DELETE FROM snapshot_night WHERE night < ?", (cutoff,)).rowcount
+        pruned_nights, pruned_rows = _prune(connection, store_id, night, retention_days)
+        if sink is not None and catalog.changes:
+            sink(connection, store_id, list(catalog.changes))
         connection.execute("COMMIT")
     except BaseException:
         _rollback(connection)
         raise
     return SnapshotSummary(
-        catalog, len(products), trashed, not_seen, len(insert), len(extend), pruned_nights, pruned_rows
+        catalog, len(products), trashed, catalog.not_seen, len(insert), len(extend), pruned_nights, pruned_rows
     )
 
 
-# ---- what the API reads --------------------------------------------------------------------------------------------
+# ---- what the runner and the API read ------------------------------------------------------------------------------
+
+
+def expected_products(connection: sqlite3.Connection, store_id: int, night: str) -> tuple[set[int], int]:
+    """F2: the catalog products a snapshot must find or confirm deleted (present, or seen on the store's previous
+    `ok` night), and the store's catalog size (its present products) for the cap on asking for them by id."""
+    present = {
+        row[0]
+        for row in connection.execute(
+            "SELECT wc_id FROM store_product WHERE store_id = ? AND gone_at IS NULL", (store_id,)
+        )
+    }
+    previous = previous_ok_night(connection, store_id, night)
+    seen: set[int] = set()
+    if previous is not None:
+        seen = {
+            row[0]
+            for row in connection.execute(
+                "SELECT s.wc_id FROM snapshot_state s JOIN store_product p ON p.store_id = s.store_id "
+                "AND p.wc_id = s.wc_id WHERE s.store_id = ? AND s.last_night = ?",
+                (store_id, previous),
+            )
+        }
+    return present | seen, len(present)
 
 
 def restorable_nights(connection: sqlite3.Connection, store_id: int, wc_id: int) -> list[str]:

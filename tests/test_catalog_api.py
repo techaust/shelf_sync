@@ -74,7 +74,7 @@ def test_sync_starts_a_run_and_reports_each_stores_outcome(api: ApiRig) -> None:
     assert by_store[gf]["this_run"] == "ok" and by_store[gf]["rows"] == 2 and by_store[gf]["total"] == 2
     assert by_store[gf]["last_ok_at"] is not None and by_store[gf]["reason"] is None
     assert by_store[pw]["this_run"] == "no_products" and by_store[pw]["reason"] == "no_products"  # ERR-02
-    assert by_store[pw]["auto_paused"] is False and by_store[pw]["failures_in_row"] == 0
+    assert by_store[pw]["auto_paused"] is False and by_store[pw]["failures_in_row"] == 1  # one failed read
     assert body["started_at"] and body["finished_at"] and body["current"] is None
 
 
@@ -103,7 +103,7 @@ def test_a_second_start_while_one_runs_is_409_sync_running() -> None:
 def test_resume_clears_an_auto_pause_and_an_unknown_store_is_404(api: ApiRig) -> None:
     gf = api.rig.add_store("GF", [raw_product(1)])
     api.rig.sites.stores["GF"].status_answer = httpx.Response(503, json={"code": "x", "message": "y"})
-    for _ in range(3):
+    for _ in range(10):  # APL-12 counts failed reads: ten of them (m3.2, F1)
         run_sync(api)
     entry = api.client.get("/api/sync").json()["stores"][0]
     assert entry["auto_paused"] is True and entry["auto_pause_reason"] == "server_error"
@@ -352,7 +352,7 @@ def test_the_sync_flows_write_no_address_key_cookie_query_or_body_anywhere_even_
         store.answers = [httpx.Response(200, headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}, content=b"<html>")]
         run_sync(api)
         store.status_answer = httpx.Response(500, content=f"<html>{KEY}</html>".encode())
-        for _ in range(3):
+        for _ in range(8):  # with the two failed reads above, ten in a row (APL-12 counts reads)
             run_sync(api)
         handler.flush()
     finally:

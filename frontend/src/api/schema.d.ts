@@ -568,10 +568,8 @@ export interface components {
         };
         /**
          * AppSettingsValues
-         * @description The PUT body: the five, and the two sync settings when they are to change (null or absent: kept). The two are
-         *     left out of `model_dump` (`exclude`): the backup import's model is built on this one (`api/backup.py`) and writes
-         *     what `model_dump` gives, so a file exported before m3.2 (without them) still imports, and an import keeps the
-         *     current sync settings (a follow-up for the backup import, m3.2).
+         * @description The PUT body: the five, and the two sync settings when they are to change (null or absent: kept). The backup
+         *     import's model is built on this one (`api/backup.py`) and applies the same rule to a file's settings.
          */
         AppSettingsValues: {
             /** Log Retention Days */

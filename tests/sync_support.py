@@ -27,6 +27,7 @@ from tests.catalog_support import Db, FakeTime, Sites, download, make_db
 from tests.store_support import KEY, PRODUCTS, SECRET, SYSTEM_STATUS, system_status, unread, wp_error
 
 _VARIATIONS = re.compile(r".*/wp-json/wc/v3/products/(\d+)/variations")
+_ONE = re.compile(r".*/wp-json/wc/v3/products/(\d+)")
 
 UTC_ZONE = LocalTime(
     to_local=lambda moment: moment.replace(tzinfo=None), to_utc=lambda naive: naive.replace(tzinfo=UTC)
@@ -60,6 +61,7 @@ def row(
     downloads: list[dict[str, str]] | None = None,
     meta: list[dict[str, Any]] | None = None,
     title: str | None = None,
+    downloadable: bool = True,
 ) -> dict[str, Any]:
     """One product as the store holds it (every field the readers may ask for)."""
     return {
@@ -69,6 +71,7 @@ def row(
         "type": product_type,
         "status": status,
         "date_modified_gmt": modified,
+        "downloadable": downloadable,
         "downloads": downloads if downloads is not None else [download(key=f"product-{wc_id}-1.0.zip")],
         "meta_data": meta if meta is not None else [{"id": 1, "key": "latest_version", "value": "1.0"}],
     }
@@ -95,6 +98,7 @@ class FakeSyncStore:
     fail: Callable[[httpx.Request], httpx.Response | None] | None = None
     requests: list[httpx.Request] = field(default_factory=list)
     version: str = "11.3.0"
+    unlisted: set[int] = field(default_factory=set)  # ids no listing holds, though `GET /products/{id}` has them
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -113,6 +117,8 @@ class FakeSyncStore:
             )
         elif path.endswith(PRODUCTS):
             selected = self._select(params)
+        elif (one := _ONE.fullmatch(path)) is not None:
+            return unread(self._one(int(one.group(1)), params.get("_fields")))
         else:
             return unread(wp_error(404, "rest_no_route"))
         if isinstance(selected, httpx.Response):
@@ -127,10 +133,21 @@ class FakeSyncStore:
         headers = {"X-WP-Total": str(len(selected)), "X-WP-TotalPages": str(math.ceil(len(selected) / per_page))}
         return unread(httpx.Response(200, headers=headers, content=json.dumps(body).encode()))
 
+    def _one(self, wc_id: int, fields: str | None) -> httpx.Response:
+        """`GET /products/{id}`: the product (a trashed one too: assumed, item 9 records it), else WooCommerce's
+        404 `woocommerce_rest_product_invalid_id`."""
+        found = [item for item in self.rows if item["id"] == wc_id]
+        if not found:
+            return wp_error(404, "woocommerce_rest_product_invalid_id")
+        body = found[0]
+        if fields is not None:
+            body = {key: body[key] for key in fields.split(",") if key in body}
+        return httpx.Response(200, json=body)
+
     def _select(self, params: httpx.QueryParams) -> list[dict[str, Any]] | httpx.Response:
-        selected = list(self.rows)
+        selected = [item for item in self.rows if item["id"] not in self.unlisted]
         if params.get("downloadable") == "true":
-            selected = [item for item in selected if item["downloads"]]
+            selected = [item for item in selected if item.get("downloadable", True)]
         include = params.get("include_status")
         if include is not None and self.include_status == "refused":
             return wp_error(400, "rest_invalid_param")
@@ -255,6 +272,11 @@ def make_sync_rig(start: datetime, local: LocalTime = UTC_ZONE) -> SyncRig:
     clock = SyncTime(start)
     stores = StoreService(open_connection=db.connect, secrets=secrets, transport=httpx.MockTransport(sites))
     changes: list[tuple[int, list[Any]]] = []
+
+    def sink(connection: Any, store_id: int, found: list[Any]) -> None:
+        assert connection.in_transaction  # F4: inside the save's transaction
+        changes.append((store_id, found))
+
     service = CatalogService(
         db.connect,
         store_clients(secrets, sites.transport, monotonic=clock.monotonic),
@@ -263,6 +285,6 @@ def make_sync_rig(start: datetime, local: LocalTime = UTC_ZONE) -> SyncRig:
         make_stop=lambda: clock,
         slots=stores.slots,
         local=local,
-        on_changes=lambda store_id, found: changes.append((store_id, found)),
+        on_changes=sink,
     )
     return SyncRig(db, sites, secrets, service, clock, stores, changes)

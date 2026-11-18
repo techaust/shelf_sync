@@ -106,12 +106,12 @@ def test_a_hand_edited_stored_value_reads_as_its_default(tmp_path: Path) -> None
     assert (body["sync_interval_minutes"], body["snapshot_time"]) == (15, "02:00")
 
 
-def test_the_sync_settings_are_left_out_of_the_put_bodys_dump() -> None:
-    """The backup import writes `model_dump()` of a model built on this one: a file exported before m3.2 (without
-    the two) must still import, so they are never dumped (a follow-up carries them through the import)."""
+def test_the_put_body_names_the_two_optional_settings() -> None:
+    """The backup import writes the two only when a file has them (`AppSettingsValues.OPTIONAL`, choice 9)."""
     body = AppSettingsValues(**FIVE, sync_interval_minutes=30, snapshot_time="03:00")
-    assert body.model_dump() == FIVE
-    assert body.sync_interval_minutes == 30
+    assert AppSettingsValues.OPTIONAL == ("sync_interval_minutes", "snapshot_time")
+    assert body.model_dump(exclude=set(AppSettingsValues.OPTIONAL)) == FIVE
+    assert AppSettingsValues(**FIVE).sync_interval_minutes is None
 
 
 def test_0004_starts_the_watermark_from_a_full_read_saved_before_it(tmp_path: Path) -> None:
@@ -129,7 +129,14 @@ def test_0004_starts_the_watermark_from_a_full_read_saved_before_it(tmp_path: Pa
                 "VALUES (?, ?, ?, 'circle', 'indigo', 150, 'Download', '2026-11-01T00:00:00.000000Z')",
                 (f"S{store_id}", f"https://s{store_id}.example", ("GF", "PW")[store_id - 1]),
             )
-            for wc_id, modified in ((1, "2026-11-10T08:00:00"), (2, "2026-11-12T09:30:00"), (3, None)):
+            seeded = (
+                (1, "2026-11-10T08:00:00"),
+                (2, "2026-11-12T09:30:00"),
+                (3, None),
+                (4, "٢٠٢٦-12-31T09:30:00"),  # F7: not ASCII digits: never the watermark
+                (5, "2999-01-01T00:00:00"),  # F7: more than a day ahead of the clock: never the watermark
+            )
+            for wc_id, modified in seeded:
                 connection.execute(
                     "INSERT INTO store_product (store_id, wc_id, slug, title, type, status, modified_gmt, "
                     "downloads_json, meta_json, seen_at) VALUES (?, ?, 's', 't', 'simple', 'publish', ?, '[]', '[]', "

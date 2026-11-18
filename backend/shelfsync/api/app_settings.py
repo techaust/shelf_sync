@@ -26,7 +26,7 @@ import uuid
 import weakref
 from collections.abc import Callable
 from logging.handlers import TimedRotatingFileHandler
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, TypeAdapter
@@ -71,13 +71,13 @@ class _FiveSettings(BaseModel):
 
 
 class AppSettingsValues(_FiveSettings):
-    """The PUT body: the five, and the two sync settings when they are to change (null or absent: kept). The two are
-    left out of `model_dump` (`exclude`): the backup import's model is built on this one (`api/backup.py`) and writes
-    what `model_dump` gives, so a file exported before m3.2 (without them) still imports, and an import keeps the
-    current sync settings (a follow-up for the backup import, m3.2)."""
+    """The PUT body: the five, and the two sync settings when they are to change (null or absent: kept). The backup
+    import's model is built on this one (`api/backup.py`) and applies the same rule to a file's settings."""
 
-    sync_interval_minutes: SyncInterval | None = Field(default=None, exclude=True)  # minutes between incrementals
-    snapshot_time: SnapshotTime | None = Field(default=None, exclude=True)  # the nightly snapshot, `HH:MM` local
+    sync_interval_minutes: SyncInterval | None = None  # minutes between incrementals (SYNC-01)
+    snapshot_time: SnapshotTime | None = None  # the nightly snapshot, `HH:MM` Windows local time (SYNC-03)
+
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("sync_interval_minutes", "snapshot_time")
 
 
 class _StoredSettings(_FiveSettings):

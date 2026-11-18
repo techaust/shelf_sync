@@ -254,6 +254,7 @@ def test_the_mirror_keeps_only_the_fields_fetched(store: Db) -> None:
         "meta_json",
         "seen_at",
         "gone_at",
+        "downloadable",  # 0004 (m3.2, F8): WooCommerce's flag
     ]
     assert store.rows("SELECT downloads_json, meta_json FROM store_product") == [
         ('[{"id":"d1","name":"Download","file":"file-1"}]', "[]")
@@ -263,19 +264,30 @@ def test_the_mirror_keeps_only_the_fields_fetched(store: Db) -> None:
 # ---- the sync state and the failure count --------------------------------------------------------------------------
 
 
-def test_ten_failures_in_a_row_auto_pause_and_resume_clears_it(store: Db) -> None:
-    """APL-12: the 10th failure in a row pauses the store's sync; a success resets the count; resume clears both."""
+def failed_read(connection: sqlite3.Connection, store_id: int, reason: str) -> bool:
+    return db.record_read_failed(connection, store_id, reason=reason, http_status=None, pages=0, total=None, at=AT)
+
+
+def reset(connection: sqlite3.Connection, store_id: int) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    db.reset_failed_reads(connection, store_id)
+    connection.execute("COMMIT")
+
+
+def test_ten_failed_reads_in_a_row_auto_pause_and_resume_clears_it(store: Db) -> None:
+    """APL-12 (the owner, 11 2026-11-18: failed reads, not requests): the 10th failed read in a row pauses the
+    store's sync; a read that worked resets the count; resume clears both."""
     gf = store.add_store("GF")
     with closing(store.connect()) as connection:
-        assert [db.record_failure(connection, gf, "server_error", AT, 10) for _ in range(9)] == [False] * 9
-        db.record_success(connection, gf)
+        assert [failed_read(connection, gf, "server_error") for _ in range(9)] == [False] * 9
+        reset(connection, gf)
         assert db.sync_state(connection, gf).failures_in_row == 0  # type: ignore[union-attr]
-        results = [db.record_failure(connection, gf, "cloudflare_52x", AT, 10) for _ in range(10)]
+        results = [failed_read(connection, gf, "cloudflare_52x") for _ in range(10)]
         assert results == [False] * 9 + [True]
         state = db.sync_state(connection, gf)
         assert state is not None
         assert (state.failures_in_row, state.auto_paused_at, state.auto_pause_reason) == (10, AT, "cloudflare_52x")
-        db.record_success(connection, gf)  # a success doesn't lift an auto-pause: only the owner does
+        reset(connection, gf)  # a read that worked doesn't lift an auto-pause: only the owner does
         assert db.sync_state(connection, gf).auto_paused_at == AT  # type: ignore[union-attr]
         db.resume_store(connection, gf)
         state = db.sync_state(connection, gf)

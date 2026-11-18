@@ -8,8 +8,14 @@ store (`catalog.slots.plan_item_slots`: so the result doesn't depend on which st
 downloads upserted (a row the plan no longer produces is deleted, the others are kept, APL-04), and its
 `sync_state` records the read and the SHA-256 of the address it was read from. A store removed meanwhile is
 refused (`StoreRemoved`); an item that only removed stores hold gives up its canonical slug. Any failure rolls all
-of it back, so a failed or stopped read changes nothing for that store. The failure count is the one thing written
-while a read runs (`record_failure`, `record_success`): it must survive the read failing.
+of it back, so a failed or stopped read changes nothing for that store.
+
+**Failed reads in a row (APL-12; the owner, 11 2026-11-18):** `sync_state.failures_in_row` counts failed **reads**
+(a full read with its count-mismatch re-read, an incremental, a snapshot attempt), never requests. A read that fully
+worked sets it to 0 inside its save's transaction; a failed read adds 1 inside the transaction that records it (at 10
+the store is auto-paused, with the reason), unless its reason is one that never counts (`NOT_COUNTED`: deny by
+default, every other reason counts). A save that raises (`AddressMoved`, `StoreRemoved`, a database error) neither
+counts nor resets. L1 and Test connection never touch it.
 
 **One product per item and store fills the slots:** links never move, so an item can have two present products on one
 store (a product made again after its first was gone, and then the first one back). The lowest WooCommerce id fills
@@ -20,11 +26,11 @@ import hashlib
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from shelfsync.catalog.changes import TRASH, Change, ChangeSource, ProductState, detect, state_of
+from shelfsync.catalog.changes import Change, ChangeSource, ProductState, detect, state_of
 from shelfsync.catalog.linking import KnownLink, Placed, plan_links
 from shelfsync.catalog.model import Download, Product, downloads_json, meta_json
 from shelfsync.catalog.slots import SlotRef, StoreDownloads, plan_item_slots
@@ -121,6 +127,64 @@ def record_read_started(connection: sqlite3.Connection, store_id: int, at: str) 
         raise
 
 
+FAILED_READS_TO_PAUSE = 10  # APL-12: failed reads in a row that auto-pause a store
+# The reasons a read never counts for: nothing was asked of the store, the app stopped it, or the fault is the app's or
+# the owner's (deny by default: every other reason counts, `counts`).
+NOT_COUNTED = frozenset(
+    {
+        "stopped",
+        "busy",
+        "paused",
+        "auto_paused",
+        "store_removed",
+        "address_changed",
+        "keys_missing",
+        "secrets_unavailable",
+        "no_full_read",
+        "no_catalog",
+        "database_error",
+        "internal",
+        "snapshot_too_large",
+        "night_done",
+        "interrupted",
+    }
+)
+
+
+def counts(reason: str) -> bool:
+    """Whether a read that ended with `reason` counts toward APL-12's failed reads in a row."""
+    return reason not in NOT_COUNTED
+
+
+def count_failed_read(connection: sqlite3.Connection, store_id: int, reason: str, at: str) -> bool:
+    """In the caller's open transaction: one failed read, unless its reason never counts. At `FAILED_READS_TO_PAUSE`
+    in a row the store is auto-paused with that reason. True when the store is auto-paused now (by this read, or it
+    already was)."""
+    _ensure_state(connection, store_id)
+    if counts(reason):
+        connection.execute(
+            "UPDATE sync_state SET failures_in_row = failures_in_row + 1 WHERE store_id = ?", (store_id,)
+        )
+    count, paused_at = connection.execute(
+        "SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", (store_id,)
+    ).fetchone()
+    if paused_at is None and counts(reason) and count >= FAILED_READS_TO_PAUSE:
+        connection.execute(
+            "UPDATE sync_state SET auto_paused_at = ?, auto_pause_reason = ? WHERE store_id = ?", (at, reason, store_id)
+        )
+        return True
+    return paused_at is not None
+
+
+def reset_failed_reads(connection: sqlite3.Connection, store_id: int) -> None:
+    """In a save's open transaction: the read worked, so the failed reads in a row go back to 0 (an auto-pause stays
+    until the owner resumes)."""
+    _ensure_state(connection, store_id)
+    connection.execute(
+        "UPDATE sync_state SET failures_in_row = 0 WHERE store_id = ? AND failures_in_row <> 0", (store_id,)
+    )
+
+
 def record_read_failed(
     connection: sqlite3.Connection,
     store_id: int,
@@ -130,8 +194,9 @@ def record_read_failed(
     pages: int,
     total: int | None,
     at: str,
-) -> None:
-    """A read that didn't work: its outcome only. The catalog data and `last_ok_at` stay as they were."""
+) -> bool:
+    """A full read that didn't work: its outcome, counted as one failed read (`count_failed_read`) in the same
+    transaction. The catalog data and `last_ok_at` stay as they were. True when the store is auto-paused now."""
     _begin(connection)
     try:
         _ensure_state(connection, store_id)
@@ -140,63 +205,12 @@ def record_read_failed(
             "read_rows = 0, read_total = ? WHERE store_id = ?",
             (at, reason, http_status, pages, total, store_id),
         )
+        paused = count_failed_read(connection, store_id, reason, at)
         connection.execute("COMMIT")
     except BaseException:
         _rollback(connection)
         raise
-
-
-def record_failure(connection: sqlite3.Connection, store_id: int, reason: str, at: str, limit: int) -> bool:
-    """One failed request (APL-12). True when the store is auto-paused now (this one reached `limit` in a row, or it
-    already was)."""
-    _begin(connection)
-    try:
-        _ensure_state(connection, store_id)
-        connection.execute(
-            "UPDATE sync_state SET failures_in_row = failures_in_row + 1 WHERE store_id = ?", (store_id,)
-        )
-        count, paused_at = connection.execute(
-            "SELECT failures_in_row, auto_paused_at FROM sync_state WHERE store_id = ?", (store_id,)
-        ).fetchone()
-        paused = paused_at is not None or count >= limit
-        if paused_at is None and count >= limit:
-            connection.execute(
-                "UPDATE sync_state SET auto_paused_at = ?, auto_pause_reason = ? WHERE store_id = ?",
-                (at, reason, store_id),
-            )
-        connection.execute("COMMIT")
-    except BaseException:
-        _rollback(connection)
-        raise
-    return bool(paused)
-
-
-def record_failure_capped(connection: sqlite3.Connection, store_id: int, cap: int) -> bool:
-    """One failed request of a snapshot attempt (m3.2's rule, `catalog/schedule.py`): counted, but never past `cap`,
-    and it never auto-pauses the store. True only when the store already was auto-paused."""
-    _begin(connection)
-    try:
-        _ensure_state(connection, store_id)
-        connection.execute(
-            "UPDATE sync_state SET failures_in_row = max(failures_in_row, min(failures_in_row + 1, ?)) "
-            "WHERE store_id = ?",
-            (cap, store_id),
-        )
-        (paused_at,) = connection.execute(
-            "SELECT auto_paused_at FROM sync_state WHERE store_id = ?", (store_id,)
-        ).fetchone()
-        connection.execute("COMMIT")
-    except BaseException:
-        _rollback(connection)
-        raise
-    return paused_at is not None
-
-
-def record_success(connection: sqlite3.Connection, store_id: int) -> None:
-    """A request worked: the failures in a row go back to 0 (an auto-pause stays until the owner resumes)."""
-    connection.execute(
-        "UPDATE sync_state SET failures_in_row = 0 WHERE store_id = ? AND failures_in_row <> 0", (store_id,)
-    )
+    return paused
 
 
 def resume_store(connection: sqlite3.Connection, store_id: int) -> None:
@@ -296,18 +310,20 @@ def save_store_read(
     pages: int,
     at: str,
     read_url: str,
+    seconds: int = 0,
 ) -> SaveSummary:
     """Save one store's successful full read in one transaction (the module text says what that does). Each store's
     `main_button` is read as it is when the read is saved. `read_url` is the address the read went to:
     `AddressMoved` (and nothing saved) when the store's address is another one by now, `StoreRemoved` (and nothing
-    saved) when the store has been removed."""
+    saved) when the store has been removed. `seconds`: the read's own duration (the watermark steps back by it)."""
     _begin(connection)
     try:
         url = guard_store(connection, store_id, read_url)
         summary = _save(connection, store_id, products, at)
-        _ensure_state(connection, store_id)
-        # m3.2: the first incremental after a full read starts from the largest store date this read saved.
-        watermark = next_watermark(None, products, _moment(at))
+        reset_failed_reads(connection, store_id)
+        # m3.2: the first incremental after a full read starts from the largest store date this read saved, less the
+        # read's own duration (F3).
+        watermark = next_watermark(None, products, _moment(at), seconds)
         connection.execute(
             "UPDATE sync_state SET read_finished_at = ?, read_reason = NULL, read_http_status = NULL, read_pages = ?, "
             "read_rows = ?, read_total = ?, last_ok_at = ?, address_sha256 = ?, watermark_gmt = ? WHERE store_id = ?",
@@ -333,7 +349,7 @@ def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Prod
         "ON CONFLICT (store_id, wc_id) DO UPDATE SET slug = excluded.slug, title = excluded.title, "
         "type = excluded.type, status = excluded.status, modified_gmt = excluded.modified_gmt, "
         "downloads_json = excluded.downloads_json, meta_json = excluded.meta_json, seen_at = excluded.seen_at, "
-        "gone_at = NULL",
+        "gone_at = NULL, downloadable = 1",  # a full read asks `downloadable=true`
         [
             (
                 store_id,
@@ -509,17 +525,19 @@ def _refresh_titles(connection: sqlite3.Connection, items: Iterable[int]) -> Non
 # ---- m3.2: the incremental save and the snapshot's part of the catalog ---------------------------------------------
 #
 # Both bring a store's current state into the catalog and report what changed (`catalog.changes`), in the caller's one
-# transaction, with `apply_products`:
-# - a product already in the catalog takes its new slug, type, status, date, downloads and meta (and, from an
-#   incremental, its title: a snapshot doesn't ask for titles). One with no downloads now is kept with them emptied
-#   (m3.3 reports it; it stays present until a full read, which reads downloadable products only, marks it gone). One
-#   in the trash now is gone (`gone_at`), as a full read would have it. One that has downloads is present again.
-# - a product not in the catalog is linked as a full read would (CAT-02) when it comes from an incremental, has
-#   downloads and isn't in the trash; any other is ignored (the snapshot leaves new products to the incrementals).
-# - a snapshot's listing holds every product of the store, trash included, so a catalog product it doesn't hold is
-#   gone (`gone_at`) and reported deleted; reported once: when it was present, or was seen on the store's previous
-#   snapshot night.
-# A row is written only when something in it differs, so the same read saved twice changes nothing.
+# transaction, with `apply_products`. **One downloadable rule for every read** (F8, `Product.in_catalog`): the
+# `downloadable` flag is true and the product isn't in the trash; having files decides nothing.
+# - a product already in the catalog takes its new slug, title, type, status, date, flag, downloads and meta; it is
+#   present (`gone_at` NULL) when the rule holds, even with no files (m3.3 reports emptied downloads), and gone
+#   (`gone_at`) when it doesn't (the flag turned off, or in the trash), as a full read would have it;
+# - a product not in the catalog is added and linked as a full read would (CAT-02) when the rule holds; any other is
+#   ignored;
+# - a snapshot passes the catalog products a 404 confirmed deleted (`deleted`, F2): each is gone and reported deleted.
+# A row is written only when something in it differs, so the same read saved twice changes nothing. The changes go to
+# the `sink` (F4: m3.3's Cleanup rows) inside the same transaction, with its connection: if it raises, the whole save
+# rolls back.
+
+ChangeSink = Callable[[sqlite3.Connection, int, list[Change]], None]  # (the save's connection, store id, changes)
 
 
 @dataclass(frozen=True)
@@ -528,11 +546,12 @@ class ApplySummary:
 
     rows: int  # products the read returned
     updated: int  # catalog rows that changed (deleted ones included)
-    added: int  # products added to the catalog (an incremental's new downloadable products)
+    added: int  # products added to the catalog
     new_items: int
     new_links: int
     ignored: int  # products neither in the catalog nor added
-    gone: int  # catalog rows gone now that weren't (trashed, or missing from a snapshot)
+    gone: int  # catalog rows gone now that weren't (flag off, trashed, deleted)
+    not_seen: int  # present catalog rows a snapshot's 404 confirmed deleted (F10)
     changes: tuple[Change, ...]
 
 
@@ -546,25 +565,30 @@ class _Stored:
     downloads_json: str
     meta_json: str
     gone_at: str | None
+    downloadable: bool
 
     def state(self, wc_id: int) -> ProductState:
         downloads = tuple(Download(d["id"], d["name"], d["file"]) for d in json.loads(self.downloads_json))
-        return ProductState(wc_id, self.slug, self.status, self.type, downloads)
+        version = tuple((key, value) for key, value in json.loads(self.meta_json))
+        return ProductState(wc_id, self.slug, self.status, self.type, downloads, self.downloadable, version)
 
 
 def _stored(connection: sqlite3.Connection, store_id: int) -> dict[int, _Stored]:
     rows = connection.execute(
-        "SELECT wc_id, slug, title, type, status, modified_gmt, downloads_json, meta_json, gone_at FROM store_product "
-        "WHERE store_id = ?",
+        "SELECT wc_id, slug, title, type, status, modified_gmt, downloads_json, meta_json, gone_at, downloadable "
+        "FROM store_product WHERE store_id = ?",
         (store_id,),
     )
-    return {row[0]: _Stored(*row[1:]) for row in rows}
+    return {
+        wc_id: _Stored(slug, title, kind, status, modified, downloads, meta, gone_at, bool(flag))
+        for wc_id, slug, title, kind, status, modified, downloads, meta, gone_at, flag in rows
+    }
 
 
 def _gone_at(product: Product, old: _Stored, at: str) -> str | None:
-    if product.status == TRASH:
-        return old.gone_at or at
-    return None if product.downloads else old.gone_at
+    if product.in_catalog:
+        return None
+    return old.gone_at or at
 
 
 def apply_products(
@@ -574,11 +598,10 @@ def apply_products(
     *,
     at: str,
     source: ChangeSource,
-    seen_last_night: Collection[int] = (),
+    deleted: Collection[int] = (),
 ) -> ApplySummary:
     """Bring `products` into the store's catalog rows, in the caller's open transaction (the section text says how).
-    `seen_last_night` (a snapshot only): the products the store's previous snapshot night saw."""
-    snapshot = source == "snapshot"
+    `deleted` (a snapshot only): the catalog products a 404 confirmed gone from the store."""
     stored = _stored(connection, store_id)
     updates: list[tuple[object, ...]] = []
     inserts: list[Product] = []
@@ -589,20 +612,21 @@ def apply_products(
     for product in sorted(products, key=lambda row: row.wc_id):
         old = stored.get(product.wc_id)
         if old is None:
-            if snapshot or not product.downloads or product.status == TRASH:
-                ignored += 1
-            else:
+            if product.in_catalog:
                 inserts.append(product)
+            else:
+                ignored += 1
             continue
         new = _Stored(
             product.slug,
-            old.title if snapshot else product.title,
+            product.title,
             product.type,
             product.status,
             product.modified_gmt,
             downloads_json(product.downloads),
             meta_json(product.meta),
             _gone_at(product, old, at),
+            product.downloadable,
         )
         if new != old:
             touched.add(product.wc_id)
@@ -618,35 +642,36 @@ def apply_products(
                     new.meta_json,
                     at,
                     new.gone_at,
+                    int(new.downloadable),
                     store_id,
                     product.wc_id,
                 )
             )
         before[product.wc_id] = old.state(product.wc_id)
         after[product.wc_id] = state_of(product)
-    deleted: list[int] = []
+    reported: list[int] = []
     missing_gone: list[tuple[str, int, int]] = []
-    if snapshot:
-        read = {product.wc_id for product in products}
-        last = set(seen_last_night)
-        for wc_id in sorted(set(stored) - read):
-            old = stored[wc_id]
-            if old.gone_at is None or wc_id in last:
-                deleted.append(wc_id)
-                before[wc_id] = old.state(wc_id)
-            if old.gone_at is None:
-                missing_gone.append((at, store_id, wc_id))
-                touched.add(wc_id)
-                gone += 1
+    not_seen = 0
+    for wc_id in sorted(set(deleted)):
+        old = stored.get(wc_id)
+        if old is None or wc_id in after:
+            continue  # not a catalog product, or read after all: nothing to delete
+        reported.append(wc_id)
+        before[wc_id] = old.state(wc_id)
+        if old.gone_at is None:
+            missing_gone.append((at, store_id, wc_id))
+            touched.add(wc_id)
+            gone += 1
+            not_seen += 1
     connection.executemany(
         "UPDATE store_product SET slug = ?, title = ?, type = ?, status = ?, modified_gmt = ?, downloads_json = ?, "
-        "meta_json = ?, seen_at = ?, gone_at = ? WHERE store_id = ? AND wc_id = ?",
+        "meta_json = ?, seen_at = ?, gone_at = ?, downloadable = ? WHERE store_id = ? AND wc_id = ?",
         updates,
     )
     connection.executemany("UPDATE store_product SET gone_at = ? WHERE store_id = ? AND wc_id = ?", missing_gone)
     connection.executemany(
         "INSERT INTO store_product (store_id, wc_id, slug, title, type, status, modified_gmt, downloads_json, "
-        "meta_json, seen_at, gone_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        "meta_json, seen_at, gone_at, downloadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)",
         [
             (
                 store_id,
@@ -675,7 +700,7 @@ def apply_products(
         }
         _refresh_titles(connection, items)
         _plan_slots(connection, items, store_id)
-    changes = detect(store_id, before, after, source, deleted)
+    changes = detect(store_id, before, after, source, reported)
     return ApplySummary(
         len(products),
         len(updates) + len(missing_gone),
@@ -684,6 +709,7 @@ def apply_products(
         new_links,
         ignored,
         gone,
+        not_seen,
         tuple(changes),
     )
 
@@ -701,8 +727,9 @@ def record_incremental_started(connection: sqlite3.Connection, store_id: int, at
 
 def record_incremental_failed(
     connection: sqlite3.Connection, store_id: int, *, reason: str, http_status: int | None, at: str
-) -> None:
-    """An incremental that didn't work: its outcome only. The catalog and the watermark stay as they were."""
+) -> bool:
+    """An incremental that didn't work: its outcome, counted as one failed read in the same transaction. The catalog
+    and the watermark stay as they were. True when the store is auto-paused now."""
     _begin(connection)
     try:
         _ensure_state(connection, store_id)
@@ -711,30 +738,43 @@ def record_incremental_failed(
             "inc_changed = 0 WHERE store_id = ?",
             (at, reason, http_status, store_id),
         )
+        paused = count_failed_read(connection, store_id, reason, at)
         connection.execute("COMMIT")
     except BaseException:
         _rollback(connection)
         raise
+    return paused
 
 
 def save_incremental(
-    connection: sqlite3.Connection, store_id: int, products: Sequence[Product], *, at: str, read_url: str
+    connection: sqlite3.Connection,
+    store_id: int,
+    products: Sequence[Product],
+    *,
+    at: str,
+    read_url: str,
+    seconds: int = 0,
+    sink: ChangeSink | None = None,
 ) -> ApplySummary:
     """Save one store's incremental that fully worked, in one transaction: its products (`apply_products`), its
-    outcome, and the watermark moved to the largest store date it returned (never back, never from the PC's clock).
-    `AddressMoved` or `StoreRemoved` (and nothing saved) as for a full read."""
+    outcome, the failed reads back to 0, the changes handed to `sink`, and the watermark moved (`catalog/watermark.py`:
+    never back, never from the PC's clock; `seconds` is the read's own duration). `AddressMoved` or `StoreRemoved`
+    (and nothing saved) as for a full read; anything `sink` raises rolls it all back."""
     _begin(connection)
     try:
         guard_store(connection, store_id, read_url)
         state = sync_state(connection, store_id)
         summary = apply_products(connection, store_id, products, at=at, source="incremental")
-        watermark = next_watermark(state.watermark_gmt if state is not None else None, products, _moment(at))
+        watermark = next_watermark(state.watermark_gmt if state is not None else None, products, _moment(at), seconds)
         _ensure_state(connection, store_id)
+        reset_failed_reads(connection, store_id)
         connection.execute(
             "UPDATE sync_state SET inc_finished_at = ?, inc_reason = NULL, inc_http_status = NULL, inc_rows = ?, "
             "inc_changed = ?, inc_last_ok_at = ?, watermark_gmt = ? WHERE store_id = ?",
             (at, len(products), summary.updated + summary.added, at, watermark, store_id),
         )
+        if sink is not None and summary.changes:
+            sink(connection, store_id, list(summary.changes))
         connection.execute("COMMIT")
     except BaseException:
         _rollback(connection)
