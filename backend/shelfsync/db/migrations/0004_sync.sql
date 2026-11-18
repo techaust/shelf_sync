@@ -29,6 +29,9 @@ UPDATE sync_state SET watermark_gmt = (
 -- WooCommerce's `downloadable` flag (F8): a product is in the catalog when it is true and the product isn't in the
 -- trash. A full read asks `downloadable=true`, so every row saved before this migration had it.
 ALTER TABLE store_product ADD COLUMN downloadable INTEGER NOT NULL DEFAULT 1 CHECK (downloadable IN (0, 1));
+-- When a snapshot confirmed the product deleted (WooCommerce's 404 for its id, review 1): a later snapshot doesn't ask
+-- for it again. NULL: not confirmed deleted.
+ALTER TABLE store_product ADD COLUMN deleted_at TEXT;
 
 -- The nightly snapshot (SYNC-03, SYNC-04): one row per store per night. `night` is the local date of the night's
 -- `snapshot_time`. `state`: `ok` (it worked), `retry` (an attempt failed; another is due at `next_try_at`, the same
@@ -50,6 +53,7 @@ CREATE TABLE snapshot_night (
     trashed      INTEGER CHECK (trashed IS NULL OR trashed >= 0),     -- of them, in the trash
     not_seen     INTEGER CHECK (not_seen IS NULL OR not_seen >= 0),   -- present catalog products a 404 confirmed gone
     variable     INTEGER CHECK (variable IS NULL OR variable >= 0),   -- variable products (their variations read)
+    unconfirmed  INTEGER CHECK (unconfirmed IS NULL OR unconfirmed >= 0),  -- missing, not confirmed either way yet
     PRIMARY KEY (store_id, night)
 );
 

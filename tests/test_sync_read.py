@@ -29,7 +29,7 @@ from shelfsync.apply.catalog_read import (
 )
 from shelfsync.apply.woocommerce import WooClient
 from tests.catalog_support import download
-from tests.store_support import KEY, PRODUCTS, SECRET, STORE_URL, SYSTEM_STATUS
+from tests.store_support import KEY, PRODUCTS, SECRET, STORE_URL
 from tests.sync_support import FakeSyncStore, row, variation
 
 WATERMARK = "2026-11-10T10:00:00"
@@ -95,7 +95,7 @@ def test_the_incremental_asks_for_what_changed_since_the_watermark_less_two_minu
     assert result.ok and [product.wc_id for product in result.products] == [2, 3, 4]
     assert [product.downloadable for product in result.products] == [True, True, False]
     assert not result.products[2].in_catalog
-    assert [request.url.path for request in store.requests] == [SYSTEM_STATUS, PRODUCTS]
+    assert [request.url.path for request in store.requests] == [PRODUCTS]  # no system_status (review 1)
     assert queries(store) == [
         {
             "modified_after": "2026-11-10T09:58:00",
@@ -180,7 +180,7 @@ def test_the_read_reports_its_own_duration_from_the_first_listing_request_to_the
         return None
 
     slow.fail = throttled
-    assert incremental(slow).seconds == 41  # the 40 s wait and the spacing, rounded up
+    assert incremental(slow).seconds == 40  # the 40 s wait (it covers the spacing)
 
 
 # ---- the snapshot read (SYNC-03, SYNC-04, V28) ---------------------------------------------------------------------
@@ -300,14 +300,29 @@ def test_the_two_listing_race_a_product_restored_from_the_trash_between_them_is_
     assert [(product.wc_id, product.status) for product in result.products] == [(1, "publish"), (2, "publish")]
 
 
-def test_more_missing_products_than_the_cap_fail_the_night_before_any_is_asked_for() -> None:
-    """F2 (Lead (proposed)): the smaller of 20 and 5 % of the store's catalog, rounded up, at least 1."""
+def test_past_the_cap_the_lowest_ids_are_asked_for_and_the_rest_left_unconfirmed() -> None:
+    """Review 1 (the reviewer's option b): the smaller of 20 and 5 % of the store's catalog, rounded up, at least 1,
+    are asked for a night, lowest ids first; the rest are left as they are and counted; the night works."""
     assert [missing_cap(size) for size in (0, 1, 13, 20, 100, 400, 2398)] == [1, 1, 1, 1, 5, 20, 20]
     assert MISSING_MAX == 20
     store = FakeSyncStore(rows=[row(1)])
     result = snapshot(store, expected={1, *range(100, 106)}, catalog_size=100)  # 6 missing, cap 5
-    assert (result.reason, result.products, by_id(store)) == ("too_many_missing", (), [])
-    assert snapshot(FakeSyncStore(rows=[row(1)]), expected={1, *range(100, 105)}, catalog_size=100).ok
+    assert result.ok and result.deleted == (100, 101, 102, 103, 104) and result.unconfirmed == 1
+    assert by_id(store) == [f"{PRODUCTS}/{wc_id}" for wc_id in range(100, 105)]
+
+
+def test_a_404_that_isnt_woocommerces_own_confirms_nothing() -> None:
+    """Review 1: only `woocommerce_rest_product_invalid_id` confirms a deletion; any other 404 is left unconfirmed."""
+    store = FakeSyncStore(rows=[row(1)])
+    store.fail = lambda request: (
+        httpx.Response(404, json={"code": "rest_no_route", "message": "x", "data": {"status": 404}})
+        if request.url.path == f"{PRODUCTS}/7"
+        else httpx.Response(404, text="<html>gone</html>")
+        if request.url.path == f"{PRODUCTS}/8"
+        else None
+    )
+    result = snapshot(store, expected={1, 7, 8, 9}, catalog_size=100)
+    assert result.ok and result.deleted == (9,) and result.unconfirmed == 2
 
 
 def test_a_hostile_by_id_answer_fails_closed() -> None:

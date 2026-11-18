@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from shelfsync.db.daily import LocalTime
 
 RETRY_AFTER = timedelta(minutes=30)
+DEFER_AFTER = timedelta(minutes=5)
 ATTEMPTS_MAX = 3
 # Reasons waiting can't change: no retry the same night (the store's state, its keys, its version, the snapshot's
 # limits, an address that moved, a night already done).
@@ -93,12 +94,22 @@ def night_due(state: str | None, next_try_at: str | None, now_iso: str) -> bool:
 
 def retry_at(reason: str, attempt: int, finished: datetime, *, auto_paused: bool) -> datetime | None:
     """When a failed attempt's night is tried again: 30 minutes later; at once for an attempt the app's shutdown
-    stopped (it is due at the next start); None when the night is over (`failed`)."""
-    if auto_paused or reason in NOT_RETRIED or attempt >= ATTEMPTS_MAX:
+    stopped (it is due at the next start, and doesn't use one of the night's attempts: review 1); None when the night
+    is over (`failed`)."""
+    if auto_paused or reason in NOT_RETRIED:
         return None
     if reason == "stopped":
         return finished
+    if attempt >= ATTEMPTS_MAX:
+        return None
     return finished + RETRY_AFTER
+
+
+def deferred_until(at: datetime) -> datetime:
+    """Review 1 (Lead (proposed)): a night that couldn't start an attempt (the store's slot was busy, the database
+    failed before the attempt) is tried again this long after, without using an attempt, so the scheduler doesn't
+    pick it at every 60-second check and hold off the incrementals."""
+    return at + DEFER_AFTER
 
 
 def incremental_due(now: datetime, since: datetime, last_started: datetime | None, interval_minutes: int) -> datetime:

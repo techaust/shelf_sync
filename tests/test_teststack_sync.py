@@ -117,6 +117,36 @@ def run(service: CatalogService, plan: RunPlan) -> None:
 # ---- reads only ----------------------------------------------------------------------------------------------------
 
 
+def test_what_system_status_costs_next_to_an_incremental_page(reader: WooClient) -> None:
+    """Review 1's live-store note: `system_status?_fields=environment` runs twice an hour's worth more than the
+    listing on incrementals. Times (ms, median of 5, after one warm-up each) and body sizes, for 04-A and §3."""
+
+    def timed(path: str, params: dict[str, str]) -> tuple[int, int]:
+        get(reader, path, params)  # warm-up
+        samples: list[float] = []
+        size = 0
+        for _ in range(5):
+            started = time.perf_counter()
+            body = reader.get(path, params, time.monotonic() + 60, max_bytes=8 * 1024 * 1024).body
+            samples.append((time.perf_counter() - started) * 1000)
+            size = len(body)
+        return round(sorted(samples)[2]), size
+
+    status_ms, status_bytes = timed("/wp-json/wc/v3/system_status", {"_fields": "environment"})
+    since = "2099-01-01T00:00:00"  # nothing modified after: an empty incremental page
+    page_ms, page_bytes = timed(
+        PRODUCTS_PATH,
+        {"modified_after": since, "dates_are_gmt": "true", "status": "any", "per_page": "100", "_fields": "id"},
+    )
+    record(
+        "system_status cost",
+        system_status_ms=status_ms,
+        system_status_bytes=status_bytes,
+        empty_incremental_page_ms=page_ms,
+        empty_incremental_page_bytes=page_bytes,
+    )
+
+
 def test_v28_include_status_any_trash_counts_the_any_and_the_trash_listings(reader: WooClient) -> None:
     """V28: `include_status=any,trash` is accepted and its total is `status=any`'s plus `status=trash`'s; whether
     `status=trash` is accepted (F9); `downloadable` comes back in `_fields`."""

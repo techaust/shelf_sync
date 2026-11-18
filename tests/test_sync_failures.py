@@ -42,7 +42,8 @@ EVERY_REASON = sorted(UNREACHABLE_REASONS | REFUSED_REASONS | READ_REASONS | SNA
 
 def test_the_never_counting_list_is_exactly_the_decided_one() -> None:
     assert db.NOT_COUNTED == NEVER
-    assert {"too_many_missing", "count_mismatch", "no_products", "bad_response", "timeout"} <= set(EVERY_REASON)
+    assert {"count_mismatch", "no_products", "bad_response", "timeout"} <= set(EVERY_REASON)
+    assert "too_many_missing" not in EVERY_REASON  # review 1: no longer a failure
 
 
 @pytest.mark.parametrize("reason", EVERY_REASON)

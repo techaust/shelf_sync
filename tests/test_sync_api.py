@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from shelfsync.api.app import create_app
 from shelfsync.catalog.runner import RunPlan
-from shelfsync.catalog.service import CatalogService, choose_kind
+from shelfsync.catalog.runner import RunPlan as Plan
+from shelfsync.catalog.service import CatalogService, choose_plan
 from shelfsync.db.catalog import SyncStateRow
 from shelfsync.platform.secrets import MemorySecretStore
 from shelfsync.secure.token import InstallToken
@@ -143,7 +144,9 @@ def test_the_lifespan_starts_the_scheduler_of_the_apps_service_only(monkeypatch:
     assert started == [True]
 
 
-def test_choose_kind() -> None:
+def test_choose_plan() -> None:
+    """SYNC-05 and review 1: the unbuilt stores in full, the others incrementally, in one run."""
+
     def state(store_id: int, ok: bool, watermark: bool) -> SyncStateRow:
         return SyncStateRow(
             store_id,
@@ -162,10 +165,11 @@ def test_choose_kind() -> None:
             "2026-11-10T00:00:00" if watermark else None,
         )
 
-    assert choose_kind(set(), {}) == "full"
-    assert choose_kind({1}, {1: state(1, True, True)}) == "incremental"
-    assert choose_kind({1, 2}, {1: state(1, True, True)}) == "full"
-    assert choose_kind({1}, {1: state(1, True, False)}) == "full"
+    assert choose_plan(set(), {}) == Plan("full")
+    assert choose_plan({1}, {1: state(1, True, True)}) == Plan("incremental")
+    assert choose_plan({1, 2}, {1: state(1, True, True)}) == Plan("incremental", full_stores=frozenset({2}))
+    assert choose_plan({1}, {1: state(1, True, False)}) == Plan("full")
+    assert choose_plan({1, 2}, {}) == Plan("full")
 
 
 def test_the_new_route_is_in_the_openapi_schema(rig: SyncRig) -> None:

@@ -10,9 +10,10 @@ writes). Nothing here reads a store inside the request: `POST` only starts the b
     GET  /api/sync                       200 SyncResponse
     POST /api/sync/stores/{id}/resume    204 (the auto-pause and the failures in a row are cleared); 404 not_found
 
-`POST /api/sync` without a kind (Sync now, SYNC-05) is an **incremental** once every active store has had a full read
-that worked, else a full read; the wizard's "Build catalog" asks for `full`. An incremental skips a store that has had
-no full read (`no_full_read`). The snapshot is never started here: the scheduler starts it at `snapshot_time`
+`POST /api/sync` without a kind (Sync now, SYNC-05) reads in full the active stores that have had no full read that
+worked and incrementally the others, in one run (`kind` answers `incremental` then; `full` when none is built); the
+wizard's "Build catalog" asks for `full`. An explicit `incremental` skips a store that has had no full read
+(`no_full_read`). The snapshot is never started here: the scheduler starts it at `snapshot_time`
 (`catalog/scheduler.py`). `GET` adds, per store, its last incremental, its latest snapshot night, and when each comes
 next. The router's lifespan starts the scheduler (the app's service only) and, when the app shuts down, stops it and a
 running read, leaving that store's data as it was. Times are UTC ISO 8601; a night is a local date (`YYYY-MM-DD`).
@@ -78,6 +79,7 @@ class NightModel(BaseModel):
     trashed: int | None
     not_seen: int | None  # catalog products present before the save that a 404 confirmed deleted (F10)
     variable: int | None  # variable products whose variations were read
+    unconfirmed: int | None  # catalog products missing from the listing, not confirmed either way yet (review 1)
 
 
 class StoreSyncModel(BaseModel):
@@ -134,6 +136,7 @@ def _night(row: NightRow | None) -> NightModel | None:
         trashed=row.trashed,
         not_seen=row.not_seen,
         variable=row.variable,
+        unconfirmed=row.unconfirmed,
     )
 
 

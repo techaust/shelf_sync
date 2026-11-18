@@ -125,14 +125,18 @@ class StoreSnapshots:
     nights: list[str]
 
 
-def choose_kind(active: set[int], states: dict[int, db.SyncStateRow]) -> RunKind:
-    """SYNC-05: Sync now is an incremental once every active store has had a full read that worked (and so has a
-    watermark), else a full read. Pure."""
-    built = bool(active) and all(
-        (state := states.get(store_id)) is not None and state.last_ok_at is not None and state.watermark_gmt is not None
+def choose_plan(active: set[int], states: dict[int, db.SyncStateRow]) -> RunPlan:
+    """SYNC-05: what Sync now does. Review 1: the stores with no full read that worked (no watermark) are read in full,
+    and the others incrementally, in one run, so a built store is never read in full by Sync now (its outside changes
+    reach Cleanup through the incremental's change detection). All new (or none active): a full read. Pure."""
+    unbuilt = frozenset(
+        store_id
         for store_id in active
+        if (state := states.get(store_id)) is None or state.last_ok_at is None or state.watermark_gmt is None
     )
-    return "incremental" if built else "full"
+    if not active or unbuilt == active:
+        return RunPlan("full")
+    return RunPlan("incremental", full_stores=unbuilt)
 
 
 @dataclass(frozen=True)
@@ -199,14 +203,17 @@ class CatalogService:
     # ---- sync ------------------------------------------------------------------------------------------------------
 
     def start_sync(self, kind: RunKind | None = None) -> RunKind | None:
-        """Start a run in the background: `full`, `incremental`, or (None) the one `choose_kind` picks (SYNC-05). The
-        kind started, or None when one is already running (or the app is stopping)."""
-        if kind is None:
-            with closing(self._open()) as connection:
-                kind = choose_kind(db.active_store_ids(connection), db.sync_states(connection))
+        """Start a run in the background: `full`, `incremental`, or (None) what `choose_plan` picks (SYNC-05: an
+        incremental that reads the unbuilt stores in full, or a full read when none is built). The kind started, or
+        None when one is already running (or the app is stopping)."""
         if kind == "snapshot":
             raise ValueError("a snapshot is the scheduler's")
-        return kind if self.runner.start(RunPlan(kind)) else None
+        if kind is None:
+            with closing(self._open()) as connection:
+                plan = choose_plan(db.active_store_ids(connection), db.sync_states(connection))
+        else:
+            plan = RunPlan(kind)
+        return plan.kind if self.runner.start(plan) else None
 
     def start_scheduler(self) -> None:
         """The lifespan starts the scheduler's thread for the app's service only (`scheduled`)."""

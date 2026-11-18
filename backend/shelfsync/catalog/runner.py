@@ -120,18 +120,27 @@ class StopSignal(Protocol):
 @dataclass(frozen=True)
 class RunPlan:
     """What one run does. `night` (a snapshot only) is the local date it is for; `stores` limits it to those store
-    ids (None: every live store); `scheduled` is True for the scheduler's runs (False: the owner's Sync now)."""
+    ids (None: every live store); `scheduled` is True for the scheduler's runs (False: the owner's Sync now).
+    `full_stores` (an incremental only, review 1): the stores that have had no full read, read in full in the same
+    run, while the others are read incrementally (Sync now never reads a built store in full)."""
 
     kind: RunKind = "full"
     night: str | None = None
     stores: frozenset[int] | None = None
     scheduled: bool = False
+    full_stores: frozenset[int] = frozenset()
 
     def __post_init__(self) -> None:
         if self.kind not in RUN_KINDS:
             raise ValueError("unknown run kind")
         if (self.kind == "snapshot") != (self.night is not None):
             raise ValueError("a snapshot run, and only one, has a night")
+        if self.full_stores and self.kind != "incremental":
+            raise ValueError("only an incremental run reads some stores in full")
+
+    def kind_for(self, store_id: int) -> RunKind:
+        """The kind of read this run makes of one store."""
+        return "full" if store_id in self.full_stores else self.kind
 
 
 FULL_PLAN = RunPlan()
@@ -318,6 +327,8 @@ class SyncRunner:
         refused = self._claim(listed.id)
         if refused is not None:
             _log.info("Store %s %s: %s (skipped)", listed.code, _what(plan), refused)
+            if refused == "busy" and plan.kind == "snapshot":
+                return self._record_on_fresh_connection(listed, plan, "busy")  # deferred a few minutes (review 1)
             return refused
         try:
             return self._read_claimed(listed, plan)
@@ -333,7 +344,7 @@ class SyncRunner:
                 return "store_removed"
             if row.state != "active":
                 return "paused"
-            return _state_skip(plan, sync_state(connection, store_id))
+            return _state_skip(plan, sync_state(connection, store_id), store_id)
 
     def _skipped(self, row: StoreRow, plan: RunPlan, reason: str) -> str:
         """A store skipped: logged, and a snapshot records the night as skipped (a removed store records nothing)."""
@@ -387,14 +398,15 @@ class SyncRunner:
                 return self._skipped(row, plan, "paused")
             with closing(self._open()) as connection:
                 state = sync_state(connection, row.id)
-                skipped = _state_skip(plan, state)
+                skipped = _state_skip(plan, state, row.id)
                 if skipped is not None:
                     return self._skipped(row, plan, skipped)
-                if plan.kind == "incremental" and state is not None and state.watermark_gmt is not None:
+                kind = plan.kind_for(row.id)
+                if kind == "incremental" and state is not None and state.watermark_gmt is not None:
                     return self._incremental(connection, row, client, failure, state.watermark_gmt)
-                if plan.kind == "snapshot" and plan.night is not None:
+                if kind == "snapshot" and plan.night is not None:
                     return self._snapshot(connection, row, client, failure, plan.night)
-                if plan.kind != "full":  # not reached: `_state_skip` and `RunPlan` see to it
+                if kind != "full":  # not reached: `_state_skip` and `RunPlan` see to it
                     return self._skipped(row, plan, "internal")
                 record_read_started(connection, row.id, to_iso(self._now()))
                 if failure is not None or client is None:
@@ -425,7 +437,7 @@ class SyncRunner:
         at = to_iso(self._now())
         try:
             with closing(self._open()) as connection:
-                if plan.kind == "incremental":
+                if plan.kind_for(row.id) == "incremental":
                     record_incremental_failed(connection, row.id, reason=reason, http_status=None, at=at)
                 elif plan.kind == "snapshot" and plan.night is not None:
                     self._night_failed(connection, row, plan.night, reason, None)
@@ -433,13 +445,14 @@ class SyncRunner:
                     record_read_failed(connection, row.id, reason=reason, http_status=None, pages=0, total=None, at=at)
         except Exception as error:
             _log.error("Store %s: the outcome couldn't be recorded (%s)", row.code, type(error).__name__)
-        if reason in ("address_changed", "store_removed") and plan.kind == "full":
+        if reason in ("address_changed", "store_removed") and plan.kind_for(row.id) == "full":
             log_read(row.code, CatalogRead(reason))
         elif reason in ("address_changed", "store_removed", "snapshot_too_large"):
             _log.warning("Store %s %s: %s", row.code, _what(plan), reason)
         return reason
 
     def _paused_now(self, row: StoreRow, paused: bool) -> None:
+        """One warning when this read auto-paused the store (`count_failed_read` says so only then)."""
         if paused:
             _log.warning("Store %s: 10 failed reads in a row; the store's sync is now auto-paused", row.code)
 
@@ -456,7 +469,7 @@ class SyncRunner:
             result = replace(result, reason="stopped", products=())  # the app is shutting down: nothing is saved
         if not result.ok:
             return self._failed(connection, row, result)
-        save_store_read(
+        saved = save_store_read(
             connection,
             row.id,
             result.products,
@@ -465,8 +478,10 @@ class SyncRunner:
             at=to_iso(self._now()),
             read_url=row.url,
             seconds=result.seconds,
+            sink=self._on_changes,
         )
         log_read(row.code, result)
+        self._report(row, list(saved.changes))
         return None
 
     def _failed(self, connection: sqlite3.Connection, row: StoreRow, result: CatalogRead) -> str:
@@ -481,7 +496,7 @@ class SyncRunner:
             at=to_iso(self._now()),
         )
         log_read(row.code, result)
-        self._paused_now(row, paused and reason != "auto_paused")
+        self._paused_now(row, paused)
         return reason
 
     # ---- the incremental (SYNC-01) ---------------------------------------------------------------------------------
@@ -598,6 +613,7 @@ class SyncRunner:
                 deleted=result.deleted,
                 latest_night=latest,
                 sink=self._on_changes,
+                unconfirmed=result.unconfirmed,
             )
         except snapshots.NightAhead:
             _log.warning("Store %s snapshot of %s: refused, the night is ahead of this PC's clock", row.code, night)
@@ -623,16 +639,19 @@ class SyncRunner:
         http_status: int | None,
         attempt: int | None = None,
     ) -> None:
-        """Record a failed attempt: counted once, then the same-night retry rule (`db.snapshots.record_failed`)."""
+        """Record a failed attempt: counted once, then the same-night retry rule (`db.snapshots.record_failed`). With
+        no attempt started (a `busy` slot, a database error before it), the night is deferred a few minutes, using no
+        attempt and counting nothing (`db.snapshots.record_deferred`, review 1)."""
         if attempt is None:
             held = snapshots.night_row(connection, row.id, night)
             if held is None or held.state != "running":
-                return  # no attempt was started: nothing to record
+                snapshots.record_deferred(connection, row.id, night, reason=reason, at=self._now())
+                return
             attempt = held.attempts
         paused = snapshots.record_failed(
             connection, row.id, night, reason=reason, http_status=http_status, at=self._now(), attempt=attempt
         )
-        self._paused_now(row, paused and reason != "auto_paused")
+        self._paused_now(row, paused)
 
     def _report(self, row: StoreRow, changes: list[Change]) -> None:
         """The counts of the changes a save handed on (inside its transaction), for the log."""
@@ -654,14 +673,15 @@ def _what(plan: RunPlan) -> str:
     ]
 
 
-def _state_skip(plan: RunPlan, state: SyncStateRow | None) -> str | None:
+def _state_skip(plan: RunPlan, state: SyncStateRow | None, store_id: int) -> str | None:
     """Why the sync state skips the store for this run: auto-paused, or (an incremental) no watermark, (a snapshot)
     no full read that worked yet."""
     if state is not None and state.auto_paused_at is not None:
         return "auto_paused"
-    if plan.kind == "incremental" and (state is None or state.watermark_gmt is None):
+    kind = plan.kind_for(store_id)
+    if kind == "incremental" and (state is None or state.watermark_gmt is None):
         return "no_full_read"
-    if plan.kind == "snapshot" and (state is None or state.last_ok_at is None):
+    if kind == "snapshot" and (state is None or state.last_ok_at is None):
         return "no_catalog"
     return None
 

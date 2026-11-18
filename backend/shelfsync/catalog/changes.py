@@ -1,8 +1,9 @@
 """Change detection for m3.3 (SYNC-01, SYNC-03, SYNC-04): what changed on a store outside ShelfSync. Pure: no database,
 no network.
 
-The saves that bring a store's state into the catalog (an incremental, `db.catalog.save_incremental`; a snapshot,
-`db.snapshots.save_snapshot`; both through `db.catalog.apply_products`) compare each catalog product **before** the
+The saves that bring a store's state into the catalog (a full read, `db.catalog.save_store_read`, for the products it
+already held; an incremental, `db.catalog.save_incremental`; a snapshot, `db.snapshots.save_snapshot`; the last two
+through `db.catalog.apply_products`) compare each catalog product **before** the
 save with what the store has **now**, and return one `Change` per product that differs, so each change is reported
 once: by the save that first saw it.
 - `changed`: its downloads (id, name and file, in order), slug, status, type, `downloadable` flag or version fields
@@ -24,7 +25,7 @@ TRASH = "trash"
 CHANGE_FIELDS = ("downloads", "slug", "status", "type", "downloadable", "version")
 
 ChangeKind = Literal["changed", "trashed", "deleted"]
-ChangeSource = Literal["incremental", "snapshot"]
+ChangeSource = Literal["full", "incremental", "snapshot"]
 
 
 @dataclass(frozen=True)

@@ -32,7 +32,7 @@ from datetime import date, datetime, timedelta
 
 from shelfsync.catalog.changes import TRASH
 from shelfsync.catalog.model import Product, downloads_json, meta_json
-from shelfsync.catalog.schedule import ATTEMPTS_MAX, retry_at
+from shelfsync.catalog.schedule import ATTEMPTS_MAX, deferred_until, retry_at
 from shelfsync.clock import to_iso
 from shelfsync.db.catalog import (
     ApplySummary,
@@ -40,6 +40,7 @@ from shelfsync.db.catalog import (
     apply_products,
     count_failed_read,
     guard_store,
+    is_auto_paused,
     reset_failed_reads,
 )
 
@@ -71,11 +72,12 @@ class NightRow:
     trashed: int | None
     not_seen: int | None
     variable: int | None
+    unconfirmed: int | None = None
 
 
 _NIGHT_COLUMNS = (
     "store_id, night, state, attempts, started_at, finished_at, next_try_at, reason, http_status, listing, products, "
-    "trashed, not_seen, variable"
+    "trashed, not_seen, variable, unconfirmed"
 )
 
 
@@ -152,13 +154,19 @@ def record_failed(
     attempt: int,
 ) -> bool:
     """An attempt that didn't work, in one transaction: counted as one failed read (unless its reason never counts),
-    then `retry` until the time `catalog.schedule.retry_at` gives from the state just written, or `failed`. Nothing
-    else changes. True when the store is auto-paused now."""
+    then `retry` until the time `catalog.schedule.retry_at` gives from the state just written, or `failed`. An
+    attempt the app's shutdown stopped gives its attempt back (review 1). Nothing else changes. True when this attempt
+    auto-paused the store."""
     stamp = to_iso(at)
     _begin(connection)
     try:
         paused = count_failed_read(connection, store_id, reason, stamp)
-        again = retry_at(reason, attempt, at, auto_paused=paused)
+        again = retry_at(reason, attempt, at, auto_paused=paused or is_auto_paused(connection, store_id))
+        if reason == "stopped":
+            connection.execute(
+                "UPDATE snapshot_night SET attempts = max(attempts - 1, 0) WHERE store_id = ? AND night = ?",
+                (store_id, night),
+            )
         connection.execute(
             "UPDATE snapshot_night SET state = ?, finished_at = ?, next_try_at = ?, reason = ?, http_status = ? "
             "WHERE store_id = ? AND night = ?",
@@ -177,6 +185,18 @@ def record_failed(
         _rollback(connection)
         raise
     return paused
+
+
+def record_deferred(connection: sqlite3.Connection, store_id: int, night: str, *, reason: str, at: datetime) -> None:
+    """The night couldn't start an attempt (`busy`, a database error before it): `retry` a few minutes later
+    (`catalog.schedule.deferred_until`), using no attempt and counting nothing (review 1)."""
+    connection.execute(
+        "INSERT INTO snapshot_night (store_id, night, state, attempts, finished_at, next_try_at, reason) "
+        "VALUES (?, ?, 'retry', 0, ?, ?, ?) ON CONFLICT (store_id, night) DO UPDATE SET state = 'retry', "
+        "finished_at = excluded.finished_at, next_try_at = excluded.next_try_at, reason = excluded.reason "
+        "WHERE snapshot_night.state IN ('retry', 'running')",
+        (store_id, night, to_iso(at), to_iso(deferred_until(at)), reason),
+    )
 
 
 def record_skipped(connection: sqlite3.Connection, store_id: int, night: str, *, reason: str, at: str) -> None:
@@ -285,6 +305,7 @@ def save_snapshot(
     deleted: Collection[int] = (),
     latest_night: str | None = None,
     sink: ChangeSink | None = None,
+    unconfirmed: int = 0,
 ) -> SnapshotSummary:
     """Save one store's snapshot that worked, in one transaction (the module text says what that does). `deleted`: the
     catalog products a 404 confirmed gone. `latest_night`: the latest night this attempt may save (F5).
@@ -323,9 +344,9 @@ def save_snapshot(
         reset_failed_reads(connection, store_id)
         connection.execute(
             "UPDATE snapshot_night SET state = 'ok', finished_at = ?, next_try_at = NULL, reason = NULL, "
-            "http_status = NULL, listing = ?, products = ?, trashed = ?, not_seen = ?, variable = ? "
+            "http_status = NULL, listing = ?, products = ?, trashed = ?, not_seen = ?, variable = ?, unconfirmed = ? "
             "WHERE store_id = ? AND night = ?",
-            (at, listing, len(products), trashed, catalog.not_seen, len(variations), store_id, night),
+            (at, listing, len(products), trashed, catalog.not_seen, len(variations), unconfirmed, store_id, night),
         )
         pruned_nights, pruned_rows = _prune(connection, store_id, night, retention_days)
         if sink is not None and catalog.changes:
@@ -343,26 +364,23 @@ def save_snapshot(
 
 
 def expected_products(connection: sqlite3.Connection, store_id: int, night: str) -> tuple[set[int], int]:
-    """F2: the catalog products a snapshot must find or confirm deleted (present, or seen on the store's previous
-    `ok` night), and the store's catalog size (its present products) for the cap on asking for them by id."""
-    present = {
-        row[0]
-        for row in connection.execute(
-            "SELECT wc_id FROM store_product WHERE store_id = ? AND gone_at IS NULL", (store_id,)
-        )
-    }
-    previous = previous_ok_night(connection, store_id, night)
-    seen: set[int] = set()
-    if previous is not None:
-        seen = {
-            row[0]
-            for row in connection.execute(
-                "SELECT s.wc_id FROM snapshot_state s JOIN store_product p ON p.store_id = s.store_id "
-                "AND p.wc_id = s.wc_id WHERE s.store_id = ? AND s.last_night = ?",
-                (store_id, previous),
-            )
-        }
-    return present | seen, len(present)
+    """F2 and review 1: the catalog products a snapshot must find or confirm deleted: every one not yet confirmed
+    deleted that is present, or that a snapshot has seen (so a product in the trash, then purged, is still looked
+    for, and a backlog left unconfirmed one night is looked for the next); and the store's catalog size (its present
+    products) for the cap on asking for them by id. `night` is kept for the callers' symmetry."""
+    del night
+    rows = connection.execute(
+        "SELECT p.wc_id, p.gone_at IS NULL FROM store_product p WHERE p.store_id = ? AND p.deleted_at IS NULL AND "
+        "(p.gone_at IS NULL OR EXISTS (SELECT 1 FROM snapshot_state s WHERE s.store_id = p.store_id "
+        "AND s.wc_id = p.wc_id))",
+        (store_id,),
+    )
+    expected: set[int] = set()
+    present = 0
+    for wc_id, is_present in rows:
+        expected.add(wc_id)
+        present += int(is_present)
+    return expected, present
 
 
 def restorable_nights(connection: sqlite3.Connection, store_id: int, wc_id: int) -> list[str]:

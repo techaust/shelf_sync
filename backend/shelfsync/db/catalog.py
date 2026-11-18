@@ -29,6 +29,7 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from shelfsync.catalog.changes import Change, ChangeSource, ProductState, detect, state_of
 from shelfsync.catalog.linking import KnownLink, Placed, plan_links
@@ -158,8 +159,7 @@ def counts(reason: str) -> bool:
 
 def count_failed_read(connection: sqlite3.Connection, store_id: int, reason: str, at: str) -> bool:
     """In the caller's open transaction: one failed read, unless its reason never counts. At `FAILED_READS_TO_PAUSE`
-    in a row the store is auto-paused with that reason. True when the store is auto-paused now (by this read, or it
-    already was)."""
+    in a row the store is auto-paused with that reason. True only when **this** read auto-paused it (review 1)."""
     _ensure_state(connection, store_id)
     if counts(reason):
         connection.execute(
@@ -173,7 +173,12 @@ def count_failed_read(connection: sqlite3.Connection, store_id: int, reason: str
             "UPDATE sync_state SET auto_paused_at = ?, auto_pause_reason = ? WHERE store_id = ?", (at, reason, store_id)
         )
         return True
-    return paused_at is not None
+    return False
+
+
+def is_auto_paused(connection: sqlite3.Connection, store_id: int) -> bool:
+    row = connection.execute("SELECT auto_paused_at FROM sync_state WHERE store_id = ?", (store_id,)).fetchone()
+    return row is not None and row[0] is not None
 
 
 def reset_failed_reads(connection: sqlite3.Connection, store_id: int) -> None:
@@ -196,7 +201,7 @@ def record_read_failed(
     at: str,
 ) -> bool:
     """A full read that didn't work: its outcome, counted as one failed read (`count_failed_read`) in the same
-    transaction. The catalog data and `last_ok_at` stay as they were. True when the store is auto-paused now."""
+    transaction. The catalog data and `last_ok_at` stay as they were. True when this read auto-paused the store."""
     _begin(connection)
     try:
         _ensure_state(connection, store_id)
@@ -254,6 +259,7 @@ class SaveSummary:
     main_by_single: int  # products whose main slot came from the one-download rule
     unslotted: int  # downloads not put in a slot (a repeated name on one product)
     duplicates_on_store: int  # present products of an item on this store besides the one that fills its slots
+    changes: tuple[Change, ...] = ()  # m3.2 review 1: what changed outside ShelfSync on products already saved
 
 
 def known_links(connection: sqlite3.Connection) -> list[KnownLink]:
@@ -311,19 +317,27 @@ def save_store_read(
     at: str,
     read_url: str,
     seconds: int = 0,
+    sink: ChangeSink | None = None,
 ) -> SaveSummary:
     """Save one store's successful full read in one transaction (the module text says what that does). Each store's
     `main_button` is read as it is when the read is saved. `read_url` is the address the read went to:
     `AddressMoved` (and nothing saved) when the store's address is another one by now, `StoreRemoved` (and nothing
-    saved) when the store has been removed. `seconds`: the read's own duration (the watermark steps back by it)."""
+    saved) when the store has been removed. `seconds`: the read's own duration (the watermark steps back by it).
+    m3.2 review 1: the changes it brings to products already in the catalog are detected and handed to `sink` in the
+    same transaction, as an incremental's are, so no kind of read loses a change made outside ShelfSync."""
     _begin(connection)
     try:
         url = guard_store(connection, store_id, read_url)
+        state = sync_state(connection, store_id)
         summary = _save(connection, store_id, products, at)
         reset_failed_reads(connection, store_id)
         # m3.2: the first incremental after a full read starts from the largest store date this read saved, less the
-        # read's own duration (F3).
+        # read's own duration (F3); a read with no usable date keeps the watermark there was (review 1).
         watermark = next_watermark(None, products, _moment(at), seconds)
+        if watermark is None and state is not None:
+            watermark = state.watermark_gmt
+        if sink is not None and summary.changes:
+            sink(connection, store_id, list(summary.changes))
         connection.execute(
             "UPDATE sync_state SET read_finished_at = ?, read_reason = NULL, read_http_status = NULL, read_pages = ?, "
             "read_rows = ?, read_total = ?, last_ok_at = ?, address_sha256 = ?, watermark_gmt = ? WHERE store_id = ?",
@@ -337,6 +351,9 @@ def save_store_read(
 
 
 def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Product], at: str) -> SaveSummary:
+    stored = _stored(connection, store_id, {product.wc_id for product in products})
+    before = {wc_id: row.state(wc_id) for wc_id, row in stored.items()}
+    after = {product.wc_id: state_of(product) for product in products if product.wc_id in stored}
     present_before = {
         row[0]
         for row in connection.execute(
@@ -349,7 +366,7 @@ def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Prod
         "ON CONFLICT (store_id, wc_id) DO UPDATE SET slug = excluded.slug, title = excluded.title, "
         "type = excluded.type, status = excluded.status, modified_gmt = excluded.modified_gmt, "
         "downloads_json = excluded.downloads_json, meta_json = excluded.meta_json, seen_at = excluded.seen_at, "
-        "gone_at = NULL, downloadable = 1",  # a full read asks `downloadable=true`
+        "gone_at = NULL, downloadable = 1, deleted_at = NULL",  # a full read asks `downloadable=true`
         [
             (
                 store_id,
@@ -398,7 +415,8 @@ def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Prod
         )
     }
     main_by_single, unslotted = _plan_slots(connection, touched, store_id)
-    return SaveSummary(len(products), len(gone), new_items, new_links, main_by_single, unslotted, duplicates)
+    changes = tuple(detect(store_id, before, after, "full"))
+    return SaveSummary(len(products), len(gone), new_items, new_links, main_by_single, unslotted, duplicates, changes)
 
 
 def _link_new(connection: sqlite3.Connection, store_id: int, products: Sequence[Product], at: str) -> tuple[int, int]:
@@ -573,12 +591,19 @@ class _Stored:
         return ProductState(wc_id, self.slug, self.status, self.type, downloads, self.downloadable, version)
 
 
-def _stored(connection: sqlite3.Connection, store_id: int) -> dict[int, _Stored]:
-    rows = connection.execute(
-        "SELECT wc_id, slug, title, type, status, modified_gmt, downloads_json, meta_json, gone_at, downloadable "
-        "FROM store_product WHERE store_id = ?",
-        (store_id,),
-    )
+def _stored(connection: sqlite3.Connection, store_id: int, wc_ids: Collection[int]) -> dict[int, _Stored]:
+    """The catalog rows of these products (review 1: only the rows a read needs, never the whole store)."""
+    wanted = sorted(set(wc_ids))
+    rows: list[tuple[Any, ...]] = []
+    for start in range(0, len(wanted), 500):  # SQLite's default limit on bound parameters is far above 500
+        chunk = wanted[start : start + 500]
+        rows.extend(
+            connection.execute(
+                "SELECT wc_id, slug, title, type, status, modified_gmt, downloads_json, meta_json, gone_at, "  # nosec B608
+                f"downloadable FROM store_product WHERE store_id = ? AND wc_id IN ({','.join('?' * len(chunk))})",
+                (store_id, *chunk),
+            )
+        )
     return {
         wc_id: _Stored(slug, title, kind, status, modified, downloads, meta, gone_at, bool(flag))
         for wc_id, slug, title, kind, status, modified, downloads, meta, gone_at, flag in rows
@@ -602,7 +627,7 @@ def apply_products(
 ) -> ApplySummary:
     """Bring `products` into the store's catalog rows, in the caller's open transaction (the section text says how).
     `deleted` (a snapshot only): the catalog products a 404 confirmed gone from the store."""
-    stored = _stored(connection, store_id)
+    stored = _stored(connection, store_id, {product.wc_id for product in products} | set(deleted))
     updates: list[tuple[object, ...]] = []
     inserts: list[Product] = []
     ignored = gone = 0
@@ -665,10 +690,14 @@ def apply_products(
             not_seen += 1
     connection.executemany(
         "UPDATE store_product SET slug = ?, title = ?, type = ?, status = ?, modified_gmt = ?, downloads_json = ?, "
-        "meta_json = ?, seen_at = ?, gone_at = ?, downloadable = ? WHERE store_id = ? AND wc_id = ?",
+        "meta_json = ?, seen_at = ?, gone_at = ?, downloadable = ?, deleted_at = NULL WHERE store_id = ? AND wc_id = ?",
         updates,
     )
     connection.executemany("UPDATE store_product SET gone_at = ? WHERE store_id = ? AND wc_id = ?", missing_gone)
+    connection.executemany(  # confirmed deleted: never asked for again (review 1)
+        "UPDATE store_product SET deleted_at = ? WHERE store_id = ? AND wc_id = ? AND deleted_at IS NULL",
+        [(at, store_id, wc_id) for wc_id in reported],
+    )
     connection.executemany(
         "INSERT INTO store_product (store_id, wc_id, slug, title, type, status, modified_gmt, downloads_json, "
         "meta_json, seen_at, gone_at, downloadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)",

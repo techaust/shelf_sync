@@ -45,11 +45,21 @@ def all_changes(rig: SyncRig) -> list[Change]:
 
 
 def test_sync_now_is_incremental_once_every_active_store_has_a_full_read() -> None:
-    rig, _ = rig_with("GF", "PW")
+    rig, ids = rig_with("GF", "PW")
     assert rig.run() == "incremental"
     assert rig.run("full") == "full"  # the wizard's Build catalog asks for one
-    rig.add_store("TS", [row(9)])  # a store with no full read yet: Sync now reads in full again
-    assert rig.run() == "full"
+    ts = rig.add_store("TS", [row(9)])  # a store with no full read yet: only it is read in full (review 1)
+    sent = len(rig.sites.requests)
+    assert rig.run() == "incremental"
+    assert set(rig.service.runner.state().outcomes) == {ids["GF"], ids["PW"], ts}
+    queries = [dict(request.url.params) for request in rig.sites.requests[sent:]]
+    full_hosts = {
+        request.url.host
+        for request, query in zip(rig.sites.requests[sent:], queries, strict=True)
+        if query.get("downloadable") == "true"
+    }
+    assert full_hosts == {"store-ts.example"}  # GF and PW read incrementally
+    assert rig.rows("SELECT read_reason, last_ok_at IS NOT NULL FROM sync_state WHERE store_id = ?", ts) == [(None, 1)]
     with closing(rig.db.connect()) as connection:
         connection.execute("UPDATE store SET state = 'paused' WHERE code = 'TS'")
     assert rig.run() == "incremental"  # a paused store doesn't count

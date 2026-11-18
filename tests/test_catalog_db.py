@@ -255,6 +255,7 @@ def test_the_mirror_keeps_only_the_fields_fetched(store: Db) -> None:
         "seen_at",
         "gone_at",
         "downloadable",  # 0004 (m3.2, F8): WooCommerce's flag
+        "deleted_at",  # 0004 (m3.2 review 1): a snapshot confirmed it deleted
     ]
     assert store.rows("SELECT downloads_json, meta_json FROM store_product") == [
         ('[{"id":"d1","name":"Download","file":"file-1"}]', "[]")

@@ -577,14 +577,16 @@ def is_retried(reason: str, status: int | None) -> bool:
     return reason in RETRIED_REASONS or (reason == "blocked" and status == 503)
 
 
+PRODUCT_GONE_CODE = "woocommerce_rest_product_invalid_id"  # the test site's answer for an unknown id (04-A V28)
+
+
 def is_missing(response: WooResponse) -> bool:
-    """A 404 whose body is a WordPress REST error other than `rest_no_route`: the product asked for by id doesn't
-    exist (WooCommerce's `woocommerce_rest_product_invalid_id`; item 9 records what the test site answers)."""
+    """The product asked for by id doesn't exist: a 404 whose body is WooCommerce's own error for that,
+    `woocommerce_rest_product_invalid_id` (review 1). Any other 404 doesn't confirm anything."""
     if response.status != 404:
         return False
     data = _json(response.body)
-    code = data.get("code") if isinstance(data, dict) else None
-    return isinstance(code, str) and code != "rest_no_route"
+    return isinstance(data, dict) and data.get("code") == PRODUCT_GONE_CODE
 
 
 def is_param_refused(response: WooResponse) -> bool:
@@ -760,9 +762,9 @@ class _Session:
         the last one, which the caller treats as the listing having shrunk while it was read (m3.1 review 2; not
         verified on a store). With `refusable` (m3.2: a parameter the store may not accept, `include_status`), a 400
         whose body is WordPress's `rest_invalid_param` error is returned as it is too, neither a success nor a
-        failure: the caller falls back to another listing. With `missing_ok` (m3.2 F2: one product asked for by id), a
-        404 whose body is a WordPress error other than `rest_no_route` (the product doesn't exist) is returned as it
-        is. Each attempt goes to `observe` when there is one, before anything else is done with it."""
+        failure: the caller falls back to another listing. With `missing_ok` (m3.2 F2: one product asked for by id),
+        any 404 is returned as it is: the caller tells a confirmed deletion (`is_missing`) from one it can't confirm.
+        Each attempt goes to `observe` when there is one, before anything else is done with it."""
         if method != "GET":
             raise NonGetRefused("only GET requests are sent or retried")
         delay = self._spacing if self._sent else 0.0
@@ -804,8 +806,8 @@ class _Session:
                 if refusable and is_param_refused(response):
                     self._note_answer(tried, "param_refused", response)
                     return response
-                if missing_ok and is_missing(response):
-                    self._note_answer(tried, "missing", response)
+                if missing_ok and response.status == 404:
+                    self._note_answer(tried, "missing" if is_missing(response) else "not_confirmed", response)
                     return response
                 answered = None if page is not None and response.status == 200 else classify(response)
                 self._note_answer(tried, answered or "ok", response)
@@ -1196,7 +1198,9 @@ def _meta(value: Any) -> tuple[tuple[tuple[str, str], ...], int]:
 # mismatch, hostile answers failing closed, the page and listing caps). Neither counts failures: the runner counts
 # the read once when it records it.
 #
-# **The incremental read (SYNC-01):** `system_status`, then `GET /products?modified_after=<watermark - 2 min>&
+# **The incremental read (SYNC-01):** no `system_status` (Lead (proposed), review 1: on the test site it costs as
+# much as an empty incremental page, about 1.2 s, and the version only needs checking on full reads and snapshots),
+# then `GET /products?modified_after=<watermark - 2 min>&
 # dates_are_gmt=true&status=any&orderby=id&order=asc&per_page=100&page=<n>&_fields=<the full read's>,downloadable`,
 # with no `downloadable` filter (a product whose flag was turned off must still be seen). No row is a result.
 #
@@ -1206,8 +1210,10 @@ def _meta(value: Any) -> tuple[tuple[tuple[str, str], ...], int]:
 # The listing is kept only when its trashed rows are as many as the probe's `X-WP-Total`; otherwise, or when the
 # store refuses the parameter (`rest_invalid_param`), it falls back to two listings, `status=any` then `status=trash`
 # (`listing` says which was used). **A catalog product the listing doesn't hold is asked for by id** (`GET
-# /products/{id}`, F2): only a 404 makes it deleted; a 200 is used as read. More missing products than the smaller
-# of 20 and 5 % of the store's catalog (at least 1) fails the night (`too_many_missing`) before any is asked for. Then
+# /products/{id}`, F2): only WooCommerce's 404 (`woocommerce_rest_product_invalid_id`) makes it deleted; a 200 is used
+# as read; any other 404 confirms nothing. At most the smaller of 20 and 5 % of the store's catalog (at least 1) are
+# asked for a night, lowest ids first (review 1): the rest are left as they are, counted (`unconfirmed`), and asked for
+# on later nights, so a bulk deletion clears over a few nights and never fails one. Then
 # each variable product's `GET /products/{id}/variations` (at most 50 variable products, else `too_many_variable`;
 # at most 4 pages of 100 variations each, else `too_many_pages`).
 
@@ -1221,7 +1227,7 @@ MISSING_SHARE = 0.05  # ... and at most 5 % of the store's catalog
 TRASH = "trash"
 INCLUDE_STATUS = "include_status"  # the listing used: one listing with `include_status=any,trash`
 TWO_LISTINGS = "two_listings"  # the fallback: `status=any`, then `status=trash`
-SNAPSHOT_REASONS = frozenset({"too_many_variable", "trash_unlisted", "too_many_missing"})
+SNAPSHOT_REASONS = frozenset({"too_many_variable", "trash_unlisted"})
 BY_ID_PAGE = 0  # `bad_page` for a product asked for by id
 
 
@@ -1296,6 +1302,7 @@ class SnapshotRead:
     bad_page: int | None = None
     deleted: tuple[int, ...] = ()
     seconds: int = 0
+    unconfirmed: int = 0  # catalog products missing from the listing and not confirmed either way tonight
 
     @property
     def ok(self) -> bool:
@@ -1377,7 +1384,6 @@ def read_incremental(
     totals = _Totals()
     wc_version: str | None = None
     try:
-        wc_version = _check_version(session)
         rows = _consistent(session, query, totals, page_max_bytes, listing_max_bytes, progress)
     except _End as end:
         return CatalogRead(
@@ -1470,17 +1476,23 @@ def _snapshot_products(
     return [merged[wc_id] for wc_id in sorted(merged)], TWO_LISTINGS
 
 
-def _confirm_missing(session: _Session, missing: list[int], page_max_bytes: int) -> tuple[list[Product], list[int]]:
-    """F2: each catalog product the listing didn't hold, asked for by id. Returns (the ones that answered 200, read
-    as any other row; the ones a 404 confirmed gone)."""
+def _confirm_missing(
+    session: _Session, missing: list[int], page_max_bytes: int
+) -> tuple[list[Product], list[int], int]:
+    """F2: catalog products the listing didn't hold, asked for by id. Returns (the ones that answered 200, read as any
+    other row; the ones WooCommerce's 404 confirmed gone; how many answered another 404, left unconfirmed)."""
     found: list[Product] = []
     gone: list[int] = []
+    unconfirmed = 0
     for wc_id in missing:
         response = session.request(
             "GET", product_path(wc_id), {"_fields": SNAPSHOT_FIELDS}, page_max_bytes, missing_ok=True
         )
         if is_missing(response):
             gone.append(wc_id)
+            continue
+        if response.status == 404:
+            unconfirmed += 1  # not WooCommerce's answer for a deleted product: nothing is concluded
             continue
         try:
             data = json.loads(response.body.decode("utf-8"))
@@ -1493,7 +1505,7 @@ def _confirm_missing(session: _Session, missing: list[int], page_max_bytes: int)
         if row.wc_id != wc_id:
             session.bad("id", BY_ID_PAGE)
         found.append(row)
-    return found, gone
+    return found, gone, unconfirmed
 
 
 def read_snapshot(
@@ -1524,9 +1536,9 @@ def read_snapshot(
         products, listing = _snapshot_products(session, totals, page_max_bytes, listing_max_bytes, progress)
         listed = {product.wc_id for product in products}
         missing = sorted(set(expected) - listed)
-        if len(missing) > missing_cap(catalog_size if catalog_size is not None else len(expected)):
-            raise _End("too_many_missing")
-        found, deleted = _confirm_missing(session, missing, page_max_bytes)
+        cap = missing_cap(catalog_size if catalog_size is not None else len(expected))
+        found, deleted, not_confirmed = _confirm_missing(session, missing[:cap], page_max_bytes)
+        unconfirmed = len(missing[cap:]) + not_confirmed  # left as they are; asked for on a later night
         if found:
             products = sorted([*products, *found], key=lambda product: product.wc_id)
         variable = [product.wc_id for product in products if product.type == "variable"]
@@ -1565,6 +1577,7 @@ def read_snapshot(
         session.requests,
         deleted=tuple(deleted),
         seconds=session.seconds,
+        unconfirmed=unconfirmed,
     )
 
 
