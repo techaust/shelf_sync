@@ -16,6 +16,9 @@ ALTER TABLE sync_state ADD COLUMN inc_http_status INTEGER;
 ALTER TABLE sync_state ADD COLUMN inc_rows INTEGER CHECK (inc_rows IS NULL OR inc_rows >= 0);
 ALTER TABLE sync_state ADD COLUMN inc_changed INTEGER CHECK (inc_changed IS NULL OR inc_changed >= 0);
 ALTER TABLE sync_state ADD COLUMN inc_last_ok_at TEXT;
+-- The store's snapshot listing: NULL tries `include_status=any,trash` first; `two_listings` once a by-id read found a
+-- product that listing left out (review 2).
+ALTER TABLE sync_state ADD COLUMN snapshot_listing TEXT CHECK (snapshot_listing IS NULL OR snapshot_listing = 'two_listings');
 
 -- A store whose full read worked before this migration starts its incrementals from the largest date it saved: only
 -- a date of the store's ASCII shape, and none more than a day ahead of this PC's clock (F7).
@@ -24,6 +27,8 @@ UPDATE sync_state SET watermark_gmt = (
     WHERE p.store_id = sync_state.store_id
       AND p.modified_gmt GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]'
       AND p.modified_gmt <= strftime('%Y-%m-%dT%H:%M:%S', 'now', '+1 day')
+      AND datetime(p.modified_gmt) IS NOT NULL
+      AND strftime('%Y-%m-%dT%H:%M:%S', p.modified_gmt) = p.modified_gmt  -- a real date (review 2)
 ) WHERE last_ok_at IS NOT NULL;
 
 -- WooCommerce's `downloadable` flag (F8): a product is in the catalog when it is true and the product isn't in the
@@ -32,6 +37,8 @@ ALTER TABLE store_product ADD COLUMN downloadable INTEGER NOT NULL DEFAULT 1 CHE
 -- When a snapshot confirmed the product deleted (WooCommerce's 404 for its id, review 1): a later snapshot doesn't ask
 -- for it again. NULL: not confirmed deleted.
 ALTER TABLE store_product ADD COLUMN deleted_at TEXT;
+-- When a snapshot last asked for the product by id (review 2): the ones asked longest ago are asked first.
+ALTER TABLE store_product ADD COLUMN asked_at TEXT;
 
 -- The nightly snapshot (SYNC-03, SYNC-04): one row per store per night. `night` is the local date of the night's
 -- `snapshot_time`. `state`: `ok` (it worked), `retry` (an attempt failed; another is due at `next_try_at`, the same

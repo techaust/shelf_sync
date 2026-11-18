@@ -530,4 +530,4 @@ def test_the_expected_products_are_the_present_ones_and_last_nights(rig: Db) -> 
     full(rig, gf, [p(1), p(2), p(3)])
     night(rig, gf, "2026-11-18", [p(1), p(2), p(3, downloadable=False)])
     with closing(rig.connect()) as connection:
-        assert snapshots.expected_products(connection, gf, "2026-11-19") == ({1, 2, 3}, 2)
+        assert snapshots.expected_products(connection, gf) == ([1, 2, 3], 2)

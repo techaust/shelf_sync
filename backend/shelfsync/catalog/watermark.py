@@ -40,6 +40,15 @@ def _earlier(date: str, by: timedelta) -> str:
         raise ValueError("a watermark is a store date, YYYY-MM-DDTHH:MM:SS") from None
 
 
+def _parses(date: str) -> bool:
+    """A real date and time (review 2: `2026-02-30T…` or hour 25 has the shape but isn't one)."""
+    try:
+        datetime.strptime(date, GMT_FORMAT)
+    except ValueError:
+        return False
+    return True
+
+
 def modified_after(watermark: str) -> str:
     """The incremental's `modified_after`: the watermark less 2 minutes, in the same form. `ValueError` for anything
     that isn't a store date."""
@@ -56,6 +65,7 @@ def next_watermark(current: str | None, products: Iterable[Product], now: dateti
         for product in products
         if product.modified_gmt is not None
         and _GMT.fullmatch(product.modified_gmt) is not None
+        and _parses(product.modified_gmt)
         and product.modified_gmt <= limit
     ]
     found: list[str] = [current] if current is not None else []

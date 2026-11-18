@@ -56,7 +56,7 @@ from shelfsync.apply.catalog_read import (
 )
 from shelfsync.apply.woocommerce import WooClient
 from shelfsync.catalog.changes import Change, counts
-from shelfsync.catalog.schedule import SnapshotTime, night_of
+from shelfsync.catalog.schedule import SnapshotTime, latest_slot, night_of
 from shelfsync.clock import to_iso, utc_now
 from shelfsync.db import snapshots
 from shelfsync.db.catalog import (
@@ -227,6 +227,7 @@ class SyncRunner:
         self._thread: threading.Thread | None = None
         self._closed = False
         self._last_started: dict[RunKind, datetime] = {}
+        self._night_attempt: int | None = None
 
     def state(self) -> RunState:
         with self._lock:
@@ -315,6 +316,7 @@ class SyncRunner:
 
     def _read_one(self, listed: StoreRow, plan: RunPlan = FULL_PLAN) -> str | None:
         """Read and save one store; its outcome. Never raises. The store's busy slot is held for the whole read."""
+        self._night_attempt = None  # the snapshot attempt this run started for this store, if any (review 2)
         with self._lock:
             self._state = replace(self._state, current=StoreProgress(listed.id, 0, 0, 0))
         try:
@@ -560,8 +562,11 @@ class SyncRunner:
         night: str,
     ) -> str | None:
         started = self._now()
+        settings = sync_settings(connection)
+        slot = latest_slot(started, self._local, settings.snapshot_time)
         try:
-            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(started))
+            attempt = snapshots.start_attempt(connection, row.id, night, to_iso(started), not_before=to_iso(slot))
+            self._night_attempt = attempt
         except ValueError:
             held = snapshots.night_row(connection, row.id, night)
             if held is not None and held.state == "running":  # its last attempt was cut off (the app ended)
@@ -582,14 +587,15 @@ class SyncRunner:
             return self._snapshot_failed(connection, row, night, attempt, SnapshotRead(failure or "internal"))
         if address_changed(connection, row.id, row.url):
             return self._snapshot_failed(connection, row, night, attempt, SnapshotRead("address_changed"))
-        expected, catalog_size = snapshots.expected_products(connection, row.id, night)
-        settings = sync_settings(connection)
+        expected, catalog_size = snapshots.expected_products(connection, row.id)
+        state = sync_state(connection, row.id)
         result = read_snapshot(
             client,
             spacing_ms=row.spacing_ms,
             stop=self._stop,
             expected=expected,
             catalog_size=catalog_size,
+            two_listings=state is not None and state.snapshot_listing == "two_listings",
             progress=self._progress(row.id),
             monotonic=self._monotonic,
             now=self._now,
@@ -614,9 +620,11 @@ class SyncRunner:
                 latest_night=latest,
                 sink=self._on_changes,
                 unconfirmed=result.unconfirmed,
+                asked=result.asked,
+                incomplete=result.incomplete,
             )
-        except snapshots.NightAhead:
-            _log.warning("Store %s snapshot of %s: refused, the night is ahead of this PC's clock", row.code, night)
+        except snapshots.NightAhead, snapshots.NightBehind:
+            _log.warning("Store %s snapshot of %s: refused, the night doesn't fit this PC's clock", row.code, night)
             return self._snapshot_failed(connection, row, night, attempt, SnapshotRead("internal"))
         log_snapshot(row.code, night, attempt, result)
         self._report(row, list(summary.catalog.changes))
@@ -640,14 +648,14 @@ class SyncRunner:
         attempt: int | None = None,
     ) -> None:
         """Record a failed attempt: counted once, then the same-night retry rule (`db.snapshots.record_failed`). With
-        no attempt started (a `busy` slot, a database error before it), the night is deferred a few minutes, using no
-        attempt and counting nothing (`db.snapshots.record_deferred`, review 1)."""
+        no attempt started by this run (a `busy` slot, a database error before it), the night is deferred a few
+        minutes, whatever its row says (a `running` row a crash left too, review 2), using no attempt and counting
+        nothing (`db.snapshots.record_deferred`, review 1)."""
         if attempt is None:
-            held = snapshots.night_row(connection, row.id, night)
-            if held is None or held.state != "running":
-                snapshots.record_deferred(connection, row.id, night, reason=reason, at=self._now())
-                return
-            attempt = held.attempts
+            attempt = self._night_attempt
+        if attempt is None:
+            snapshots.record_deferred(connection, row.id, night, reason=reason, at=self._now())
+            return
         paused = snapshots.record_failed(
             connection, row.id, night, reason=reason, http_status=http_status, at=self._now(), attempt=attempt
         )

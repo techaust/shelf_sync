@@ -91,12 +91,13 @@ class SyncStateRow:
     inc_rows: int | None = None
     inc_changed: int | None = None
     inc_last_ok_at: str | None = None
+    snapshot_listing: str | None = None  # `two_listings` once a by-id read proved the one listing incomplete
 
 
 _STATE_COLUMNS = (
     "store_id, read_started_at, read_finished_at, read_reason, read_http_status, read_pages, read_rows, read_total, "
     "last_ok_at, failures_in_row, auto_paused_at, auto_pause_reason, address_sha256, watermark_gmt, inc_started_at, "
-    "inc_finished_at, inc_reason, inc_http_status, inc_rows, inc_changed, inc_last_ok_at"
+    "inc_finished_at, inc_reason, inc_http_status, inc_rows, inc_changed, inc_last_ok_at, snapshot_listing"
 )
 
 

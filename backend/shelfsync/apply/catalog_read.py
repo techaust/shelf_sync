@@ -13,8 +13,8 @@ Rules this module keeps:
   retried up to 3 times, waiting 2, 4 and 8 s, or the `Retry-After` (seconds or an HTTP date) when given, never more
   than 60 s. Nothing else is retried. `_Session.request` refuses any method but GET before it sends or retries anything.
 - **Failures in a row (APL-12; the owner, 11 2026-11-18):** counted per **read**, not per request, by the runner when
-  it records the read's outcome (`db.catalog.count_read`); this module never counts. A read that still fails after
-  its retries counts once.
+  it records the read's outcome (`db.catalog.count_failed_read`); this module never counts. A read that still fails
+  after its retries counts once.
 - **The count check:** the rows read must equal page 1's `X-WP-Total`, with no id seen twice and the ids ascending
   across the pages. If not, the whole listing is read once more; if it still doesn't match, `count_mismatch`.
 - **Bounds:** 10 minutes for one store's whole read (`timeout`); 8 MiB per page (`PAGE_MAX_BYTES`) and 64 MiB per
@@ -53,7 +53,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -1126,6 +1126,11 @@ def parse_product(raw: Any, *, meta: bool = True, kind: str = "product") -> Prod
     modified = raw["date_modified_gmt"]
     if modified is not None and (not isinstance(modified, str) or _GMT.fullmatch(modified) is None):
         raise BadAnswer("date_modified_gmt")
+    if modified is not None:
+        try:  # review 2: the shape alone lets `2026-02-30T…` and hour 25 through
+            datetime.strptime(modified, "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            raise BadAnswer("date_modified_gmt") from None
     return Product(
         wc_id=wc_id,
         slug=slug,
@@ -1212,8 +1217,10 @@ def _meta(value: Any) -> tuple[tuple[tuple[str, str], ...], int]:
 # (`listing` says which was used). **A catalog product the listing doesn't hold is asked for by id** (`GET
 # /products/{id}`, F2): only WooCommerce's 404 (`woocommerce_rest_product_invalid_id`) makes it deleted; a 200 is used
 # as read; any other 404 confirms nothing. At most the smaller of 20 and 5 % of the store's catalog (at least 1) are
-# asked for a night, lowest ids first (review 1): the rest are left as they are, counted (`unconfirmed`), and asked for
-# on later nights, so a bulk deletion clears over a few nights and never fails one. Then
+# asked for a night, the ones asked longest ago first (review 2): the rest are left as they are, counted
+# (`unconfirmed`), and asked for on later nights, so a bulk deletion clears over a few nights and never fails one. A
+# by-id 200 for a product not in the trash proves the one listing left it out: the store then uses the two listings.
+# Then
 # each variable product's `GET /products/{id}/variations` (at most 50 variable products, else `too_many_variable`;
 # at most 4 pages of 100 variations each, else `too_many_pages`).
 
@@ -1303,6 +1310,8 @@ class SnapshotRead:
     deleted: tuple[int, ...] = ()
     seconds: int = 0
     unconfirmed: int = 0  # catalog products missing from the listing and not confirmed either way tonight
+    asked: tuple[int, ...] = ()  # the products asked for by id tonight (their `asked_at` moves: review 2)
+    incomplete: bool = False  # a by-id 200 for a product not in the trash: the listing left it out (review 2)
 
     @property
     def ok(self) -> bool:
@@ -1382,7 +1391,7 @@ def read_incremental(
     )
     query = Query(PRODUCTS_PATH, lambda page: incremental_params(page, since), _parse_synced, MAX_PAGES, empty_ok=True)
     totals = _Totals()
-    wc_version: str | None = None
+    wc_version = None  # the incremental doesn't ask `system_status` (review 1): `CatalogRead.wc_version` stays None
     try:
         rows = _consistent(session, query, totals, page_max_bytes, listing_max_bytes, progress)
     except _End as end:
@@ -1437,9 +1446,14 @@ def _snapshot_query(statuses: tuple[str, str], *, empty_ok: bool, refusable: boo
 
 
 def _snapshot_products(
-    session: _Session, totals: _Totals, page_max_bytes: int, listing_max_bytes: int, progress: Progress | None
+    session: _Session,
+    totals: _Totals,
+    page_max_bytes: int,
+    listing_max_bytes: int,
+    progress: Progress | None,
+    two_listings: bool = False,
 ) -> tuple[list[Product], str]:
-    probe = _probe_trash(session, page_max_bytes)
+    probe = None if two_listings else _probe_trash(session, page_max_bytes)
     if probe is not None and all(row.status == TRASH for row in probe[1]):
         query = _snapshot_query((INCLUDE_STATUS, "any," + TRASH), empty_ok=False, refusable=True)
         try:
@@ -1513,8 +1527,9 @@ def read_snapshot(
     *,
     spacing_ms: int,
     stop: Stop,
-    expected: Collection[int] = (),
+    expected: Sequence[int] = (),
     catalog_size: int | None = None,
+    two_listings: bool = False,
     progress: Progress | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = utc_now,
@@ -1523,9 +1538,10 @@ def read_snapshot(
     listing_max_bytes: int = LISTING_MAX_BYTES,
 ) -> SnapshotRead:
     """Every product of one store, trash included, and every variable product's variations (SYNC-03, SYNC-04; the
-    section text says how). `expected` are the catalog products whose absence would make them deleted; `catalog_size`
-    (default: as many as `expected`) sets the cap on asking for them by id. Never raises for anything the store
-    answers."""
+    section text says how). `expected` are the catalog products whose absence would make them deleted, in the order
+    to ask for them (oldest asked first, review 2); `catalog_size` (default: as many as `expected`) sets the cap on
+    asking for them by id; `two_listings` skips the `include_status` listing (a store whose one listing proved
+    incomplete). Never raises for anything the store answers."""
     session = _session(
         client, spacing_ms=spacing_ms, stop=stop, monotonic=monotonic, now=now, store_seconds=store_seconds
     )
@@ -1533,12 +1549,16 @@ def read_snapshot(
     wc_version: str | None = None
     try:
         wc_version = _check_version(session)
-        products, listing = _snapshot_products(session, totals, page_max_bytes, listing_max_bytes, progress)
+        products, listing = _snapshot_products(
+            session, totals, page_max_bytes, listing_max_bytes, progress, two_listings
+        )
         listed = {product.wc_id for product in products}
-        missing = sorted(set(expected) - listed)
+        missing = [wc_id for wc_id in dict.fromkeys(expected) if wc_id not in listed]  # in the caller's order
         cap = missing_cap(catalog_size if catalog_size is not None else len(expected))
-        found, deleted, not_confirmed = _confirm_missing(session, missing[:cap], page_max_bytes)
+        asked = tuple(missing[:cap])
+        found, deleted, not_confirmed = _confirm_missing(session, list(asked), page_max_bytes)
         unconfirmed = len(missing[cap:]) + not_confirmed  # left as they are; asked for on a later night
+        incomplete = any(row.status != TRASH for row in found)  # review 2: the listing left out a live product
         if found:
             products = sorted([*products, *found], key=lambda product: product.wc_id)
         variable = [product.wc_id for product in products if product.type == "variable"]
@@ -1578,6 +1598,8 @@ def read_snapshot(
         deleted=tuple(deleted),
         seconds=session.seconds,
         unconfirmed=unconfirmed,
+        asked=asked,
+        incomplete=incomplete,
     )
 
 

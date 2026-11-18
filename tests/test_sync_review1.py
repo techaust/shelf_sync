@@ -66,7 +66,8 @@ def test_25_purged_products_clear_over_two_nights_each_reported_deleted_once() -
 
 def test_a_listing_that_leaves_drafts_out_never_deletes_them_and_asks_for_cap_a_night() -> None:
     """A partly honoured `include_status`: the drafts are missing from the listing but exist. 100 products, cap 5:
-    each night 5 are asked for (200: read), the rest left unconfirmed; nothing deleted; the night `ok`."""
+    each night 5 are asked for (200: read), the rest left unconfirmed; nothing deleted; the night `ok`. Review 2: the
+    lookups rotate (91-95, then 96-100), and a by-id 200 for a live product makes the store use the two listings."""
     rig = make_sync_rig(START)
     rows = [row(wc_id) for wc_id in range(1, 91)] + [row(wc_id, status="draft") for wc_id in range(91, 101)]
     gf = rig.add_store("GF", rows)
@@ -77,7 +78,14 @@ def test_a_listing_that_leaves_drafts_out_never_deletes_them_and_asks_for_cap_a_
     assert rig.rows("SELECT state, unconfirmed FROM snapshot_night WHERE store_id = ?", gf) == [("ok", 5), ("ok", 5)]
     assert deleted_reports(rig) == []
     assert rig.rows("SELECT COUNT(*) FROM store_product WHERE gone_at IS NOT NULL OR deleted_at IS NOT NULL") == [(0,)]
-    assert by_id_requests(rig, "GF") == 10  # 5 a night
+    asked = [
+        int(request.url.path.rsplit("/", 1)[1])
+        for request in rig.store("GF").requests
+        if request.url.path.startswith(PRODUCTS + "/")
+    ]
+    assert asked == [91, 92, 93, 94, 95, 96, 97, 98, 99, 100]  # oldest asked first
+    assert rig.rows("SELECT snapshot_listing FROM sync_state") == [("two_listings",)]
+    assert rig.rows("SELECT listing FROM snapshot_night ORDER BY night") == [("include_status",), ("two_listings",)]
 
 
 # ---- the medium finding: a full read reports outside changes -------------------------------------------------------

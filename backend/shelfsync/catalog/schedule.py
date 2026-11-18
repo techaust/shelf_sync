@@ -10,7 +10,7 @@ catches up the latest one only.
 **The same-night retry (Lead (proposed), m3.2; L1: PluginWay stalled for about an hour one evening):** an attempt that
 failed is tried again 30 minutes later, at most 3 attempts a night, unless waiting can't change its reason (the store's
 state, its keys, its version, the snapshot's limits) or the store is auto-paused (the failure that paused it is
-counted first, in the same transaction, `db.snapshots.record_failed`). `too_many_missing` is retried like the others.
+counted first, in the same transaction, `db.snapshots.record_failed`).
 An attempt stopped by the app's shutdown is due again at the next start. One store's failure never holds up
 another's: each store's night is its own.
 
@@ -83,12 +83,22 @@ def night_of(now: datetime, local: LocalTime, at: SnapshotTime) -> str:
     return local.to_local(latest_slot(now, local, at)).date().isoformat()
 
 
-def night_due(state: str | None, next_try_at: str | None, now_iso: str) -> bool:
-    """Whether a store's night is due, from its row (`state` None: no row yet). Times are `clock.to_iso` texts."""
+def night_due(
+    state: str | None,
+    next_try_at: str | None,
+    now_iso: str,
+    started_at: str | None = None,
+    slot_iso: str | None = None,
+) -> bool:
+    """Whether a store's night is due, from its row (`state` None: no row yet). Times are `clock.to_iso` texts. An
+    `ok` night that started before the night's latest slot (`snapshot_time` was moved later the same day) is due
+    again (review 2)."""
     if state is None or state == "running":
         return True
     if state == "retry":
         return next_try_at is None or next_try_at <= now_iso
+    if state == "ok" and started_at is not None and slot_iso is not None:
+        return started_at < slot_iso
     return False
 
 

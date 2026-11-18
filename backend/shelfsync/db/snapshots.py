@@ -56,6 +56,10 @@ class NightAhead(Exception):
     """The night is later than the PC's night of the attempt's start plus a day (a clock that jumped): not saved."""
 
 
+class NightBehind(Exception):
+    """The night is earlier than the store's latest `ok` night (a clock moved back, review 2): not saved."""
+
+
 @dataclass(frozen=True)
 class NightRow:
     store_id: int
@@ -116,15 +120,30 @@ def latest_nights(connection: sqlite3.Connection) -> dict[int, NightRow]:
     return {row[0]: NightRow(*row) for row in rows}
 
 
-def start_attempt(connection: sqlite3.Connection, store_id: int, night: str, at: str) -> int:
+def latest_ok_nights(connection: sqlite3.Connection) -> dict[int, str]:
+    """Each store's latest `ok` night (review 2: no earlier night is taken after it)."""
+    rows = connection.execute("SELECT store_id, max(night) FROM snapshot_night WHERE state = 'ok' GROUP BY store_id")
+    return {store_id: str(night) for store_id, night in rows}
+
+
+def start_attempt(
+    connection: sqlite3.Connection, store_id: int, night: str, at: str, *, not_before: str | None = None
+) -> int:
     """A snapshot attempt starts: the night is `running` and its attempts go up by one. Returns the attempt's number
-    (1 to 3). `ValueError` when the night has no attempt left or is already done (`ok`, `failed`, `skipped`)."""
+    (1 to 3). `ValueError` when the night has no attempt left or is already done (`ok`, `failed`, `skipped`). An `ok`
+    night whose attempt started before `not_before` (the night's latest slot: `snapshot_time` was moved later the same
+    day, review 2) starts again with fresh attempts."""
     _begin(connection)
     try:
         row = connection.execute(
-            "SELECT state, attempts FROM snapshot_night WHERE store_id = ? AND night = ?", (store_id, night)
+            "SELECT state, attempts, started_at FROM snapshot_night WHERE store_id = ? AND night = ?", (store_id, night)
         ).fetchone()
-        if row is not None and (row[0] in ("ok", "failed", "skipped") or row[1] >= ATTEMPTS_MAX):
+        rerun = row is not None and row[0] == "ok" and not_before is not None and (row[2] or "") < not_before
+        if rerun:
+            connection.execute(
+                "UPDATE snapshot_night SET attempts = 0 WHERE store_id = ? AND night = ?", (store_id, night)
+            )
+        elif row is not None and (row[0] in ("ok", "failed", "skipped") or row[1] >= ATTEMPTS_MAX):
             raise ValueError("this night's snapshot is done")
         connection.execute(
             "INSERT INTO snapshot_night (store_id, night, state, attempts, started_at) VALUES (?, ?, 'running', 1, ?) "
@@ -306,6 +325,8 @@ def save_snapshot(
     latest_night: str | None = None,
     sink: ChangeSink | None = None,
     unconfirmed: int = 0,
+    asked: Sequence[int] = (),
+    incomplete: bool = False,
 ) -> SnapshotSummary:
     """Save one store's snapshot that worked, in one transaction (the module text says what that does). `deleted`: the
     catalog products a 404 confirmed gone. `latest_night`: the latest night this attempt may save (F5).
@@ -316,8 +337,20 @@ def save_snapshot(
     _begin(connection)
     try:
         guard_store(connection, store_id, read_url)
+        (latest_ok,) = connection.execute(
+            "SELECT max(night) FROM snapshot_night WHERE store_id = ? AND state = 'ok'", (store_id,)
+        ).fetchone()
+        if latest_ok is not None and night < latest_ok:
+            raise NightBehind
         fields = {product.wc_id: state_fields(product, variations.get(product.wc_id, ())) for product in products}
         previous = previous_ok_night(connection, store_id, night)
+        # The night saved again (review 2: `snapshot_time` moved later the same day): its first save is undone first.
+        connection.execute("DELETE FROM snapshot_state WHERE store_id = ? AND first_night = ?", (store_id, night))
+        if previous is not None:
+            connection.execute(
+                "UPDATE snapshot_state SET last_night = ? WHERE store_id = ? AND last_night = ?",
+                (previous, store_id, night),
+            )
         latest: dict[int, tuple[int, str]] = {}
         if previous is not None:
             for row_id, wc_id, digest in connection.execute(
@@ -348,6 +381,14 @@ def save_snapshot(
             "WHERE store_id = ? AND night = ?",
             (at, listing, len(products), trashed, catalog.not_seen, len(variations), unconfirmed, store_id, night),
         )
+        connection.executemany(  # review 2: the ones asked longest ago are asked first next time
+            "UPDATE store_product SET asked_at = ? WHERE store_id = ? AND wc_id = ?",
+            [(at, store_id, wc_id) for wc_id in asked],
+        )
+        if incomplete and listing == "include_status":
+            connection.execute(
+                "UPDATE sync_state SET snapshot_listing = 'two_listings' WHERE store_id = ?", (store_id,)
+            )
         pruned_nights, pruned_rows = _prune(connection, store_id, night, retention_days)
         if sink is not None and catalog.changes:
             sink(connection, store_id, list(catalog.changes))
@@ -363,22 +404,22 @@ def save_snapshot(
 # ---- what the runner and the API read ------------------------------------------------------------------------------
 
 
-def expected_products(connection: sqlite3.Connection, store_id: int, night: str) -> tuple[set[int], int]:
-    """F2 and review 1: the catalog products a snapshot must find or confirm deleted: every one not yet confirmed
+def expected_products(connection: sqlite3.Connection, store_id: int) -> tuple[list[int], int]:
+    """F2 and reviews 1-2: the catalog products a snapshot must find or confirm deleted: every one not yet confirmed
     deleted that is present, or that a snapshot has seen (so a product in the trash, then purged, is still looked
-    for, and a backlog left unconfirmed one night is looked for the next); and the store's catalog size (its present
-    products) for the cap on asking for them by id. `night` is kept for the callers' symmetry."""
-    del night
+    for, and a backlog left unconfirmed one night is looked for the next), **in the order to ask for them**: never
+    asked first, then the ones asked longest ago (review 2), then by id; and the store's catalog size (its present
+    products) for the cap on asking for them by id."""
     rows = connection.execute(
         "SELECT p.wc_id, p.gone_at IS NULL FROM store_product p WHERE p.store_id = ? AND p.deleted_at IS NULL AND "
         "(p.gone_at IS NULL OR EXISTS (SELECT 1 FROM snapshot_state s WHERE s.store_id = p.store_id "
-        "AND s.wc_id = p.wc_id))",
+        "AND s.wc_id = p.wc_id)) ORDER BY p.asked_at IS NOT NULL, p.asked_at, p.wc_id",
         (store_id,),
     )
-    expected: set[int] = set()
+    expected: list[int] = []
     present = 0
     for wc_id, is_present in rows:
-        expected.add(wc_id)
+        expected.append(wc_id)
         present += int(is_present)
     return expected, present
 
