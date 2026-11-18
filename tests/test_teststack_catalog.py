@@ -40,7 +40,7 @@ def site_store(db: Db, url: str = SITE_URL) -> int:
 
 
 def run_once(service: CatalogService) -> None:
-    assert service.start_sync()
+    assert service.start_sync("full")
     service.runner.join(600.0)
     assert not service.runner.state().running
 

@@ -171,6 +171,27 @@ def record_failure(connection: sqlite3.Connection, store_id: int, reason: str, a
     return bool(paused)
 
 
+def record_failure_capped(connection: sqlite3.Connection, store_id: int, cap: int) -> bool:
+    """One failed request of a snapshot attempt (m3.2's rule, `catalog/schedule.py`): counted, but never past `cap`,
+    and it never auto-pauses the store. True only when the store already was auto-paused."""
+    _begin(connection)
+    try:
+        _ensure_state(connection, store_id)
+        connection.execute(
+            "UPDATE sync_state SET failures_in_row = max(failures_in_row, min(failures_in_row + 1, ?)) "
+            "WHERE store_id = ?",
+            (cap, store_id),
+        )
+        (paused_at,) = connection.execute(
+            "SELECT auto_paused_at FROM sync_state WHERE store_id = ?", (store_id,)
+        ).fetchone()
+        connection.execute("COMMIT")
+    except BaseException:
+        _rollback(connection)
+        raise
+    return paused_at is not None
+
+
 def record_success(connection: sqlite3.Connection, store_id: int) -> None:
     """A request worked: the failures in a row go back to 0 (an auto-pause stays until the owner resumes)."""
     connection.execute(

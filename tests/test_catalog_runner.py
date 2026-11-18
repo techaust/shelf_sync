@@ -143,7 +143,7 @@ def test_a_stop_during_a_read_saves_nothing_and_starts_no_other_store() -> None:
     assert rig.time is not None
     rig.sites.stores["GF"].rows = [raw_product(1, "alpha"), raw_product(3, "new")]
     rig.time.stop_after = len(rig.time.waits) + 1  # the stop arrives during the next wait (before GF's products page)
-    assert rig.service.start_sync()
+    assert rig.service.start_sync("full")
     rig.service.runner.join(30.0)
     assert rig.service.runner.state().outcomes == {gf: "stopped"}
     after = [rig.db.rows(f"SELECT * FROM {table}") for table in ("store_product", "item_link")]

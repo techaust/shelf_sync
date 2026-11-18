@@ -1,0 +1,108 @@
+"""When the scheduled reads are due (SYNC-01, SYNC-03), and the same-night retry rule. Pure: no database, no clock.
+
+**The snapshot's night.** The snapshot runs at `snapshot_time`, Windows local time (the `db/daily.py` pattern: the
+local wall time turned into UTC through `LocalTime`, so a daylight-saving change neither skips nor repeats a night).
+The night is the local date of the latest `snapshot_time` at or before now. A store's night is due when it has no row
+yet, when it waits for a retry whose time has come, or when an attempt was left `running` (the app ended during it).
+A PC off or asleep at that time catches up at the next check after it starts or wakes; a sleep across several nights
+catches up the latest one only.
+
+**The same-night retry (Lead (proposed), m3.2; L1: PluginWay stalled for about an hour one evening):** an attempt that
+failed is tried again 30 minutes later, at most 3 attempts a night, unless waiting can't change its reason (the store's
+state, its keys, its version, the snapshot's limits) or the store is auto-paused. An attempt stopped by the app's
+shutdown is due again at the next start. One store's failure never holds up another's: each store's night is its own.
+
+**The auto-pause rule for snapshot attempts (Lead (proposed), m3.2):** APL-12 auto-pauses a store at 10 failed requests
+in a row, and one attempt can fail 4 times (a request and its 3 retries), so 3 attempts could pause a store that was
+only slow for an hour. So:
+1. a snapshot attempt's failed requests count toward the ten like any read's, but **never past nine**: a snapshot
+   attempt never auto-pauses a store by itself (`runner._NightFailures`);
+2. while a store's night waits for its retry, its **scheduled** incrementals are skipped (`snapshot_retry`), so a slow
+   store isn't read every 15 minutes besides;
+3. so a store slow through the night's attempts isn't paused, and its count goes back to 0 at its first usable page; a
+   store still failing after the night's last attempt sits at nine, and its next failed request (the next
+   incremental's first) pauses it.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from shelfsync.db.daily import LocalTime
+
+RETRY_AFTER = timedelta(minutes=30)
+ATTEMPTS_MAX = 3
+# Reasons waiting can't change: no retry the same night (the store's state, its keys, its version, the snapshot's
+# limits, an address that moved, a night already done).
+NOT_RETRIED = frozenset(
+    {
+        "paused",
+        "auto_paused",
+        "store_removed",
+        "address_changed",
+        "keys_missing",
+        "keys_refused",
+        "forbidden",
+        "wc_too_old",
+        "too_many_pages",
+        "too_many_variable",
+        "trash_unlisted",
+        "snapshot_too_large",
+        "no_catalog",
+    }
+)
+
+
+@dataclass(frozen=True)
+class SnapshotTime:
+    hour: int
+    minute: int
+
+    def __post_init__(self) -> None:
+        if not (0 <= self.hour <= 23 and 0 <= self.minute <= 59):
+            raise ValueError("a snapshot time is 00:00 to 23:59")
+
+
+def latest_slot(now: datetime, local: LocalTime, at: SnapshotTime) -> datetime:
+    """The latest `at` local time at or before `now` (aware), in UTC."""
+    wall = local.to_local(now).replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    slot = local.to_utc(wall)
+    if slot > now:
+        slot = local.to_utc(wall - timedelta(days=1))
+    return slot
+
+
+def next_slot(now: datetime, local: LocalTime, at: SnapshotTime) -> datetime:
+    """The first `at` local time after `now`, in UTC."""
+    wall = local.to_local(latest_slot(now, local, at)).replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+    return local.to_utc(wall + timedelta(days=1))
+
+
+def night_of(now: datetime, local: LocalTime, at: SnapshotTime) -> str:
+    """The night `now` belongs to: the local date of the latest snapshot time, `YYYY-MM-DD`."""
+    return local.to_local(latest_slot(now, local, at)).date().isoformat()
+
+
+def night_due(state: str | None, next_try_at: str | None, now_iso: str) -> bool:
+    """Whether a store's night is due, from its row (`state` None: no row yet). Times are `clock.to_iso` texts."""
+    if state is None or state == "running":
+        return True
+    if state == "retry":
+        return next_try_at is None or next_try_at <= now_iso
+    return False
+
+
+def retry_at(reason: str, attempt: int, finished: datetime, *, auto_paused: bool) -> datetime | None:
+    """When a failed attempt's night is tried again: 30 minutes later; at once for an attempt the app's shutdown
+    stopped (it is due at the next start); None when the night is over (`failed`)."""
+    if auto_paused or reason in NOT_RETRIED or attempt >= ATTEMPTS_MAX:
+        return None
+    if reason == "stopped":
+        return finished
+    return finished + RETRY_AFTER
+
+
+def incremental_due(since: datetime, last_started: datetime | None, interval_minutes: int) -> datetime:
+    """When the next scheduled incremental is due: one interval after the last one started (any incremental, Sync now
+    included), or after the scheduler started when none has since."""
+    base = since if last_started is None or last_started < since else last_started
+    return base + timedelta(minutes=interval_minutes)

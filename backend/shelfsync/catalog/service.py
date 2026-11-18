@@ -25,11 +25,23 @@ from datetime import datetime
 import httpx
 
 from shelfsync.apply.woocommerce import WooClient
-from shelfsync.catalog.runner import ClientFactory, KeysMissing, RunState, StopSignal, SyncRunner
+from shelfsync.catalog.runner import (
+    ChangeSink,
+    ClientFactory,
+    KeysMissing,
+    RunKind,
+    RunPlan,
+    RunState,
+    StopSignal,
+    SyncRunner,
+)
+from shelfsync.catalog.scheduler import SyncScheduler
 from shelfsync.clock import utc_now
 from shelfsync.db import catalog as db
 from shelfsync.db.connection import connect
+from shelfsync.db.daily import LocalTime
 from shelfsync.db.migrate import migrate
+from shelfsync.db.snapshots import NightRow, latest_nights, restorable_nights
 from shelfsync.db.stores import StoreRow, get_store, list_live, live_store_count
 from shelfsync.db.wizard import marks, set_mark
 from shelfsync.paths import DataPaths
@@ -67,8 +79,9 @@ def build_catalog_service(paths: DataPaths, secrets: SecretStore, stores: StoreS
     """The service the running app uses: the data folder's database, the stores' keys in Credential Manager, and
     **the stores service's own busy slots**, so the runner holds a store's slot for its whole read and an edit, a
     removal or a Test connection of that store answers `busy` meanwhile (m3.1 review 1, finding 1; review 2,
-    finding 1: built here, in one place, so no caller can leave the slots out)."""
-    return CatalogService(lambda: connect(paths.database), store_clients(secrets), slots=stores.slots)
+    finding 1: built here, in one place, so no caller can leave the slots out). m3.2: with the sync scheduler, which
+    the sync router's lifespan starts and stops."""
+    return CatalogService(lambda: connect(paths.database), store_clients(secrets), slots=stores.slots, scheduled=True)
 
 
 def _memory_database(name: str) -> tuple[Callable[[], sqlite3.Connection], sqlite3.Connection]:
@@ -92,12 +105,34 @@ class StoreSync:
     state: db.SyncStateRow | None
     this_run: str | None  # this (or the last) run's outcome for it; None also when the run didn't reach it
     reached: bool  # whether the run reached it
+    night: NightRow | None = None  # its latest snapshot night
+    next_incremental_at: datetime | None = None  # None: no scheduler, or no incremental for it
+    next_snapshot_at: datetime | None = None  # None: no scheduler
 
 
 @dataclass(frozen=True)
 class SyncStatus:
     run: RunState
     stores: list[StoreSync]
+
+
+@dataclass(frozen=True)
+class StoreSnapshots:
+    """The nights one of an item's store products can be restored to (local dates, newest first)."""
+
+    store_id: int
+    wc_id: int
+    nights: list[str]
+
+
+def choose_kind(active: set[int], states: dict[int, db.SyncStateRow]) -> RunKind:
+    """SYNC-05: Sync now is an incremental once every active store has had a full read that worked (and so has a
+    watermark), else a full read. Pure."""
+    built = bool(active) and all(
+        (state := states.get(store_id)) is not None and state.last_ok_at is not None and state.watermark_gmt is not None
+        for store_id in active
+    )
+    return "incremental" if built else "full"
 
 
 @dataclass(frozen=True)
@@ -125,12 +160,25 @@ class CatalogService:
         now: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         make_stop: Callable[[], StopSignal] = threading.Event,
+        scheduled: bool = False,
+        local: LocalTime | None = None,
+        on_changes: ChangeSink | None = None,
     ) -> None:
         self._open = open_connection
         self._slug_lock = threading.Lock()
         self.runner = SyncRunner(
-            open_connection, client_factory, now=now, monotonic=monotonic, make_stop=make_stop, slots=slots
+            open_connection,
+            client_factory,
+            now=now,
+            monotonic=monotonic,
+            make_stop=make_stop,
+            slots=slots,
+            on_changes=on_changes,
         )
+        # The scheduler (m3.2) exists for every service, so `GET /api/sync` can say when runs come next; only a
+        # `scheduled` service (the app's) starts its thread in the lifespan. Tests call `tick()` themselves.
+        self.scheduler = SyncScheduler(self.runner, open_connection, now=now, local=local)
+        self._scheduled = scheduled
         self._keeper: sqlite3.Connection | None = None  # holds a development database in memory
 
     @classmethod
@@ -149,11 +197,23 @@ class CatalogService:
 
     # ---- sync ------------------------------------------------------------------------------------------------------
 
-    def start_sync(self) -> bool:
-        """Start a full read of every active store in the background; False when one is already running."""
-        return self.runner.start()
+    def start_sync(self, kind: RunKind | None = None) -> RunKind | None:
+        """Start a run in the background: `full`, `incremental`, or (None) the one `choose_kind` picks (SYNC-05). The
+        kind started, or None when one is already running (or the app is stopping)."""
+        if kind is None:
+            with closing(self._open()) as connection:
+                kind = choose_kind(db.active_store_ids(connection), db.sync_states(connection))
+        if kind == "snapshot":
+            raise ValueError("a snapshot is the scheduler's")
+        return kind if self.runner.start(RunPlan(kind)) else None
+
+    def start_scheduler(self) -> None:
+        """The lifespan starts the scheduler's thread for the app's service only (`scheduled`)."""
+        if self._scheduled:
+            self.scheduler.start()
 
     def stop(self) -> None:
+        self.scheduler.stop()  # first, so no run starts while the runner stops
         self.runner.stop()
 
     def reopen(self) -> None:
@@ -165,13 +225,46 @@ class CatalogService:
 
     def sync_status(self) -> SyncStatus:
         run = self.runner.state()
+        upcoming = self.scheduler.next_runs()
         with closing(self._open()) as connection:
             stores = list_live(connection)
             states = db.sync_states(connection)
-        return SyncStatus(
-            run,
-            [StoreSync(row, states.get(row.id), run.outcomes.get(row.id), row.id in run.outcomes) for row in stores],
-        )
+            nights = latest_nights(connection)
+        entries: list[StoreSync] = []
+        for row in stores:
+            state = states.get(row.id)
+            can_increment = (
+                row.state == "active"
+                and state is not None
+                and state.watermark_gmt is not None
+                and state.auto_paused_at is None
+            )
+            entries.append(
+                StoreSync(
+                    row,
+                    state,
+                    run.outcomes.get(row.id),
+                    row.id in run.outcomes,
+                    nights.get(row.id),
+                    upcoming.incremental if can_increment else None,
+                    upcoming.snapshots.get(row.id),
+                )
+            )
+        return SyncStatus(run, entries)
+
+    def snapshots(self, item_id: int) -> list[StoreSnapshots] | None:
+        """The nights each of an item's store products can be restored to (APL-14's dates). None when there is no
+        such item, or no store that isn't removed holds it (as `GET /api/catalog/{id}` answers 404)."""
+        with closing(self._open()) as connection:
+            if db.item(connection, item_id) is None:
+                return None
+            links = db.links(connection, item_id)
+            if not links:
+                return None
+            return [
+                StoreSnapshots(link.store_id, link.wc_id, restorable_nights(connection, link.store_id, link.wc_id))
+                for link in links
+            ]
 
     def resume(self, store_id: int) -> bool:
         """Clear a store's auto-pause (and its failures in a row). False when there is no such live store."""
