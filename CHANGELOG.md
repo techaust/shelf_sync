@@ -2,6 +2,14 @@
 
 One line per merged PR, newest first.
 
+- 2026-11-18 [#69](https://github.com/techaust/shelf_sync/pull/69) feat(sync): incremental sync and the nightly snapshot (m3.2) [SYNC-01, SYNC-03, SYNC-04, SYNC-05, APL-12]
+- 2026-11-18 [#68](https://github.com/techaust/shelf_sync/pull/68) docs(runs): the PluginWay diagnostic reads; L1 complete
+- 2026-11-17 [#67](https://github.com/techaust/shelf_sync/pull/67) feat(catalog): diagnostics for the L1 dry read, to find why PluginWay stalls (t9) [CAT-01, APL-12]
+- 2026-11-17 [#66](https://github.com/techaust/shelf_sync/pull/66) docs(runs): m3.1 merged; L1 results and the plan to diagnose PluginWay's stalls
+- 2026-11-17 [#65](https://github.com/techaust/shelf_sync/pull/65) feat(catalog): read the stores' catalogs and link them (m3.1) [CAT-01, CAT-02, CAT-03, CAT-04, CAT-05, APL-12, ERR-02, UI-WIZ]
+- 2026-11-17 [#64](https://github.com/techaust/shelf_sync/pull/64) docs: the M3 plan and the owner's answers (m3.0)
+- 2026-11-17 [#63](https://github.com/techaust/shelf_sync/pull/63) docs(testenv): Laragon verified end to end; M2 exit test passed; opentelemetry-api 1.45.2 (CVE-2026-126360)
+- 2026-11-05 [#62](https://github.com/techaust/shelf_sync/pull/62) docs: end of day 2026-11-05
 - 2026-11-05 [#61](https://github.com/techaust/shelf_sync/pull/61) fix(stores): an unreadable redirect Location reads as redirected, never a crash (t8) [SET-01, ERR-01]
 - 2026-11-05 [#60](https://github.com/techaust/shelf_sync/pull/60) feat(testenv): the Laragon half of the test stack (m2.8)
 - 2026-11-05 [#59](https://github.com/techaust/shelf_sync/pull/59) docs: m2.0 Q2, Q3 and Q5 answered; Laragon replaces LocalWP for the test stack
