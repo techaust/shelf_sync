@@ -876,6 +876,8 @@ export interface components {
             state: "running" | "ok" | "retry" | "failed" | "skipped";
             /** Trashed */
             trashed: number | null;
+            /** Unconfirmed */
+            unconfirmed: number | null;
             /** Variable */
             variable: number | null;
         };
