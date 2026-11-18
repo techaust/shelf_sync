@@ -2,6 +2,7 @@
 // bodies are the schema's. The GitHub token is sent once, in a PUT body, and never read back. The App settings
 // writes are one at a time, and a theme change sends the stored values with only the theme changed (SET-06).
 import { describe, expect, it, vi } from "vitest";
+import { cacheSaved } from "../theme/useSavedTheme";
 import { createThemeStore } from "../theme/useTheme";
 import { CSRF_HEADER, createApiClient } from "./client";
 import {
@@ -14,6 +15,8 @@ import {
   rollBack,
   saveAppSettings,
   saveGithubToken,
+  storedOf,
+  valuesOf,
 } from "./settings";
 import { createSettingsWriter } from "./settingsWriter";
 
@@ -192,5 +195,39 @@ describe("the tab's one theme (shared by the app bar and Settings › App)", () 
     store.set("system");
     expect(h.root.dataset.theme).toBeUndefined();
     expect(h.data.has("shelfsync.theme")).toBe(false);
+  });
+});
+
+describe("the sync settings (m3.2)", () => {
+  const saved = {
+    ...stored,
+    sync_interval_minutes: 30,
+    snapshot_time: "03:45",
+    restart_needed: false,
+    start_with_windows_result: "applied" as const,
+  };
+
+  it("a PUT body from Settings › App leaves them out, so the stored ones are kept", () => {
+    expect(Object.keys(valuesOf(saved)).sort()).toEqual([
+      "log_retention_days",
+      "notifications",
+      "port",
+      "start_with_windows",
+      "theme",
+    ]);
+  });
+
+  it("the cache takes what a PUT answer says is stored, the sync settings too", () => {
+    expect(storedOf(saved)).toEqual({
+      port: 47616,
+      theme: "system",
+      start_with_windows: false,
+      notifications: true,
+      log_retention_days: 60,
+      sync_interval_minutes: 30,
+      snapshot_time: "03:45",
+    });
+    expect(cacheSaved(stored, saved)).toEqual({ ...stored, sync_interval_minutes: 30, snapshot_time: "03:45" });
+    expect(cacheSaved(undefined, saved)).toBeUndefined();
   });
 });

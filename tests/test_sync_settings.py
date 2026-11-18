@@ -106,6 +106,22 @@ def test_a_hand_edited_stored_value_reads_as_its_default(tmp_path: Path) -> None
     assert (body["sync_interval_minutes"], body["snapshot_time"]) == (15, "02:00")
 
 
+def test_the_put_answer_always_reports_both_as_stored_never_null(tmp_path: Path) -> None:
+    """The contract the screens type against: the request may leave the two out or null; the answer (like GET) has
+    both, never null."""
+    client, _ = _client(tmp_path)
+    schemas = client.app.openapi()["components"]["schemas"]  # type: ignore[attr-defined]
+    for name in ("AppSettingsSaved", "AppSettingsResponse"):
+        assert {"sync_interval_minutes", "snapshot_time"} <= set(schemas[name]["required"]), name
+        for key in ("sync_interval_minutes", "snapshot_time"):
+            assert "anyOf" not in schemas[name]["properties"][key] and "type" in schemas[name]["properties"][key]
+    assert not {"sync_interval_minutes", "snapshot_time"} & set(schemas["AppSettingsValues"]["required"])
+    answer = client.put(
+        APP_SETTINGS_PATH, json={**FIVE, "sync_interval_minutes": None, "snapshot_time": None}, headers=WRITE_HEADERS
+    ).json()
+    assert (answer["sync_interval_minutes"], answer["snapshot_time"]) == (15, "02:00")
+
+
 def test_the_put_body_names_the_two_optional_settings() -> None:
     """The backup import writes the two only when a file has them (`AppSettingsValues.OPTIONAL`, choice 9)."""
     body = AppSettingsValues(**FIVE, sync_interval_minutes=30, snapshot_time="03:00")

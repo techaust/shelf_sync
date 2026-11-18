@@ -65,13 +65,31 @@ export async function sessionCheck(api: ApiClient, signal?: AbortSignal): Promis
   }
 }
 
-/** The five saved values of a GET or PUT answer, as a PUT body (unknown fields are refused by the API). */
-export function valuesOf(settings: AppSettingsValues): AppSettingsValues {
+/** The five values Settings › App edits (the two sync settings, m3.2, are optional in a PUT and kept when absent). */
+export type AppValues = Pick<
+  AppSettingsValues,
+  "port" | "theme" | "start_with_windows" | "notifications" | "log_retention_days"
+>;
+
+/** The five saved values of a GET or PUT answer, as a PUT body (unknown fields are refused by the API). The two sync
+ *  settings are left out, so a save from Settings › App or the theme switch never overwrites them. */
+export function valuesOf(settings: AppValues): AppValues {
   return {
     port: settings.port,
     theme: settings.theme,
     start_with_windows: settings.start_with_windows,
     notifications: settings.notifications,
     log_retention_days: settings.log_retention_days,
+  };
+}
+
+/** Every value a PUT answer says is stored now (the five and the two sync settings), for the cached App settings. */
+export function storedOf(
+  saved: AppSettingsSaved,
+): Omit<AppSettingsSaved, "restart_needed" | "start_with_windows_result"> {
+  return {
+    ...valuesOf(saved),
+    sync_interval_minutes: saved.sync_interval_minutes,
+    snapshot_time: saved.snapshot_time,
   };
 }

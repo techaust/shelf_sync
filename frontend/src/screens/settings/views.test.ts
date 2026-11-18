@@ -221,6 +221,8 @@ describe("Settings › App", () => {
     start_with_windows: true,
     notifications: true,
     log_retention_days: 30,
+    sync_interval_minutes: 15,
+    snapshot_time: "02:00",
     installed: true,
   };
   const handlers = { onTheme: vi.fn(), onChange: vi.fn(), onSave: vi.fn(), onReset: vi.fn() };

@@ -5,7 +5,7 @@ import {
   type AppSettings,
   type AppSettingsSaved,
   getAppSettings,
-  valuesOf,
+  storedOf,
 } from "../api/settings";
 import { settingsWriter } from "../api/settingsWriter";
 import { useServices } from "../app/services";
@@ -13,9 +13,9 @@ import { isRestarting, useSwitchPhase } from "../lib/switchStore";
 import type { ThemePreference } from "./theme";
 import { type ThemeStore, themeStore, useTheme } from "./useTheme";
 
-/** After a save, the cached App settings hold what is stored now (the answer's five values). */
+/** After a save, the cached App settings hold what is stored now (the answer's values, the sync settings too). */
 export function cacheSaved(previous: AppSettings | undefined, saved: AppSettingsSaved): AppSettings | undefined {
-  return previous ? { ...previous, ...valuesOf(saved) } : previous;
+  return previous ? { ...previous, ...storedOf(saved) } : previous;
 }
 
 /**
