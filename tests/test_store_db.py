@@ -60,8 +60,8 @@ def test_0002_and_later_apply_to_a_0001_database_and_keep_the_settings(tmp_path:
     old.close()
 
     conn = connect(paths.database)
-    assert migrate_with_backup(conn, paths, now=lambda: datetime(2026, 10, 28, 9, 0, tzinfo=UTC)) == [2, 3]
-    assert applied_versions(conn) == {1, 2, 3}
+    assert migrate_with_backup(conn, paths, now=lambda: datetime(2026, 10, 28, 9, 0, tzinfo=UTC)) == [2, 3, 4]
+    assert applied_versions(conn) == {1, 2, 3, 4}
     assert conn.execute("SELECT key, value_json FROM setting ORDER BY key").fetchall() == [
         ("port", "47616"),
         ("theme", '"dark"'),
@@ -70,7 +70,7 @@ def test_0002_and_later_apply_to_a_0001_database_and_keep_the_settings(tmp_path:
     conn.close()
 
     [saved] = list(paths.backups.iterdir())  # the pre-migration backup
-    assert saved.name == "pre-migration-0001-to-0003-20261028T090000Z.db"
+    assert saved.name == "pre-migration-0001-to-0004-20261028T090000Z.db"
     check = sqlite3.connect(saved)
     assert applied_versions(check) == {1}
     assert check.execute("SELECT value_json FROM setting WHERE key = 'theme'").fetchone() == ('"dark"',)

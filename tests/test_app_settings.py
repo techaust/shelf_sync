@@ -18,7 +18,8 @@ from shelfsync.platform.autostart import AutostartError, FakeRunKey
 from shelfsync.ports import DEFAULT_PORT
 from tests.support import ORIGIN, WRITE_HEADERS, Harness, make_harness
 
-APP_KEYS = tuple(AppSettingsValues.model_fields)  # the five App settings (the backup settings have their own API)
+APP_KEYS = tuple(AppSettingsValues.model_fields)  # the seven App settings (the backup settings have their own API)
+SYNC_DEFAULTS: dict[str, Any] = {"sync_interval_minutes": 15, "snapshot_time": "02:00"}  # m3.2, kept when not sent
 APP_DEFAULTS: dict[str, Any] = {key: DEFAULTS[key] for key in APP_KEYS}
 
 GOOD: dict[str, Any] = {
@@ -80,9 +81,9 @@ def test_put_saves_all_five_and_says_what_it_did(rig: Rig) -> None:
     """SET-06: returns what was saved, `restart_needed` (the port changed) and the Run value's result."""
     response = put(rig, GOOD)
     assert response.status_code == 200
-    assert response.json() == {**GOOD, "restart_needed": True, "start_with_windows_result": "applied"}
-    assert rig.stored() == GOOD
-    assert rig.client.get(APP_SETTINGS_PATH).json() == {**GOOD, "installed": True}
+    assert response.json() == {**GOOD, **SYNC_DEFAULTS, "restart_needed": True, "start_with_windows_result": "applied"}
+    assert rig.stored() == {**GOOD, **SYNC_DEFAULTS}
+    assert rig.client.get(APP_SETTINGS_PATH).json() == {**GOOD, **SYNC_DEFAULTS, "installed": True}
 
 
 def test_the_same_port_needs_no_restart(rig: Rig) -> None:
@@ -128,7 +129,7 @@ def test_a_run_key_failure_is_reported_not_raised_and_the_rest_is_saved(
             response = put(rig, GOOD)
         assert response.status_code == 200
         assert response.json()["start_with_windows_result"] == "failed"
-        assert rig.stored() == GOOD
+        assert rig.stored() == {**GOOD, **SYNC_DEFAULTS}
         assert "couldn't be applied" in caplog.text
     finally:
         rig.close()
@@ -269,7 +270,7 @@ def test_the_default_service_keeps_settings_in_memory_and_never_the_real_run_key
     client = make_harness().signed_in_client()
     saved = client.put(APP_SETTINGS_PATH, json=GOOD, headers=WRITE_HEADERS).json()
     assert saved["start_with_windows_result"] == "not_installed"
-    assert client.get(APP_SETTINGS_PATH).json() == {**GOOD, "installed": False}
+    assert client.get(APP_SETTINGS_PATH).json() == {**GOOD, **SYNC_DEFAULTS, "installed": False}
 
 
 # ---- review fixes ---------------------------------------------------------------------------------------------------

@@ -12,6 +12,8 @@ from shelfsync.ports import DEFAULT_PORT, LAST_PORT
 BACKUPS_KEPT_MIN, BACKUPS_KEPT_MAX = 1, 30  # BAK-01: how many daily database backups are kept
 SNAPSHOT_DAYS_MIN, SNAPSHOT_DAYS_MAX = 1, 365  # SET-05: how long catalog snapshots are kept (stored now, used in M3)
 KEEP_PREVIOUS_MIN, KEEP_PREVIOUS_MAX = 1, 5  # SET-02: previous files kept per slot (PRD: 1; the range is the lead's)
+SYNC_INTERVAL_MIN, SYNC_INTERVAL_MAX = 5, 240  # SYNC-01: minutes between incremental reads (the range: Lead (proposed))
+SNAPSHOT_TIME_PATTERN = r"([01][0-9]|2[0-3]):[0-5][0-9]"  # SYNC-03: `HH:MM`, Windows local time
 LINK_TEMPLATE_MAX = 200
 # SET-02 (03): what the stores' downloads point at today. A template is filled with `template.replace("{key}", key)`,
 # never `str.format`, so no other brace may be in it (`check_link_template`).
@@ -25,6 +27,8 @@ DEFAULTS: dict[str, Any] = {
     "log_retention_days": 30,
     "db_backups_kept": 7,
     "snapshot_retention_days": 30,
+    "sync_interval_minutes": 15,  # SYNC-01
+    "snapshot_time": "02:00",  # SYNC-03
     # Storage (SET-02). Empty means not set yet: no default region or bucket is decided, so the Storage Test (M2.7)
     # needs both. An empty endpoint is AWS itself.
     "s3_endpoint": "",
@@ -119,6 +123,18 @@ def check_link_template(value: str) -> None:
         )
 
 
+def check_snapshot_time(value: str) -> None:
+    if re.fullmatch(SNAPSHOT_TIME_PATTERN, value) is None:
+        raise ValueError("Setting 'snapshot_time' must be HH:MM, 00:00 to 23:59.")
+
+
+def snapshot_hour_minute(value: str) -> tuple[int, int]:
+    """`HH:MM` as (hour, minute); ValueError for anything else."""
+    check_snapshot_time(value)
+    hour, minute = value.split(":")
+    return int(hour), int(minute)
+
+
 def _in_range(key: str, low: int, high: int) -> Callable[[Any], None]:
     def check(value: Any) -> None:
         if not low <= value <= high:
@@ -137,6 +153,8 @@ _VALIDATORS: dict[str, Callable[[Any], None]] = {
     "s3_endpoint": check_s3_endpoint,
     "s3_region": check_s3_region,
     "s3_bucket": check_s3_bucket,
+    "sync_interval_minutes": _in_range("sync_interval_minutes", SYNC_INTERVAL_MIN, SYNC_INTERVAL_MAX),
+    "snapshot_time": check_snapshot_time,
     "keep_previous_files": _in_range("keep_previous_files", KEEP_PREVIOUS_MIN, KEEP_PREVIOUS_MAX),
     "download_link_template": check_link_template,
 }
