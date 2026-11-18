@@ -10,15 +10,44 @@ import json
 import math
 import re
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 
-from tests.catalog_support import FakeTime, download
-from tests.store_support import PRODUCTS, SYSTEM_STATUS, system_status, unread, wp_error
+from shelfsync.catalog.runner import RunKind, RunPlan
+from shelfsync.catalog.service import CatalogService, store_clients
+from shelfsync.db.daily import LocalTime
+from shelfsync.platform.secrets import MemorySecretStore
+from shelfsync.secure.credentials import StoreCredentials
+from shelfsync.store_service import StoreService
+from tests.catalog_support import Db, FakeTime, Sites, download, make_db
+from tests.store_support import KEY, PRODUCTS, SECRET, SYSTEM_STATUS, system_status, unread, wp_error
 
 _VARIATIONS = re.compile(r".*/wp-json/wc/v3/products/(\d+)/variations")
+
+UTC_ZONE = LocalTime(
+    to_local=lambda moment: moment.replace(tzinfo=None), to_utc=lambda naive: naive.replace(tzinfo=UTC)
+)
+
+# A fake New York (as `tests/test_db_daily.py`): UTC-4 before 2026-11-01 06:00 UTC, UTC-5 after (the clocks go back).
+FALL = datetime(2026, 11, 1, 6, 0, tzinfo=UTC)
+FAKE_NEW_YORK = LocalTime(
+    to_local=lambda moment: (moment + timedelta(hours=-4 if moment < FALL else -5)).replace(tzinfo=None),
+    to_utc=lambda naive: (
+        summer if (summer := (naive + timedelta(hours=4)).replace(tzinfo=UTC)) < FALL else naive + timedelta(hours=5)
+    ).replace(tzinfo=UTC),
+)
+# A fake zone whose clocks go forward: UTC+1 before 2026-03-29 01:00 UTC, UTC+2 after (02:00 local becomes 03:00).
+SPRING = datetime(2026, 3, 29, 1, 0, tzinfo=UTC)
+FAKE_BERLIN = LocalTime(
+    to_local=lambda moment: (moment + timedelta(hours=1 if moment < SPRING else 2)).replace(tzinfo=None),
+    to_utc=lambda naive: (
+        winter if (winter := (naive - timedelta(hours=1)).replace(tzinfo=UTC)) < SPRING else naive - timedelta(hours=2)
+    ).replace(tzinfo=UTC),
+)
 
 
 def row(
@@ -145,3 +174,95 @@ class FakeSyncStore:
 
     def find(self, wc_id: int) -> dict[str, Any]:
         return next(item for item in self.rows if item["id"] == wc_id)
+
+
+# ---- a database, fake stores and a scheduled service on one fake clock ---------------------------------------------
+
+
+class SyncTime(FakeTime):
+    """`FakeTime` whose wall clock starts at `base` and can be set (`set_wall`, never backwards). Waits move both."""
+
+    def __init__(self, base: datetime) -> None:
+        super().__init__()
+        self.base = base
+
+    def wall(self) -> datetime:
+        return self.base + timedelta(seconds=self.now - 1000.0)
+
+    def set_wall(self, moment: datetime) -> None:
+        target = 1000.0 + (moment - self.base).total_seconds()
+        if target < self.now:
+            raise ValueError("the fake clock never goes back")
+        self.now = target
+
+
+@dataclass
+class SyncRig:
+    db: Db
+    sites: Sites
+    secrets: MemorySecretStore
+    service: CatalogService
+    time: SyncTime
+    stores: StoreService
+    changes: list[tuple[int, list[Any]]]
+
+    def add_store(self, code: str, rows: list[dict[str, Any]], **options: Any) -> int:
+        store_id = self.db.add_store(code, **options)
+        StoreCredentials(self.secrets).save(store_id, KEY, SECRET)
+        self.sites.stores[code] = FakeSyncStore(rows=rows, time=self.time)  # type: ignore[assignment]
+        return store_id
+
+    def store(self, code: str) -> FakeSyncStore:
+        found = self.sites.stores[code]
+        assert isinstance(found, FakeSyncStore)
+        return found
+
+    def run(self, kind: RunKind | None = None) -> RunKind:
+        started = self.service.start_sync(kind)
+        assert started is not None
+        self.service.runner.join(30.0)
+        assert not self.service.runner.state().running
+        return started
+
+    def tick(self) -> RunPlan | None:
+        plan = self.service.scheduler.tick()
+        if plan is not None:
+            self.service.runner.join(30.0)
+            assert not self.service.runner.state().running
+        return plan
+
+    def at(self, moment: datetime) -> None:
+        self.time.set_wall(moment)
+
+    def rows(self, sql: str, *args: Any) -> list[tuple[Any, ...]]:
+        return self.db.rows(sql, *args)
+
+    def set(self, key: str, value_json: str) -> None:
+        with closing(self.db.connect()) as connection:
+            connection.execute(
+                "INSERT INTO setting (key, value_json) VALUES (?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                (key, value_json),
+            )
+
+
+def make_sync_rig(start: datetime, local: LocalTime = UTC_ZONE) -> SyncRig:
+    """A database, fake stores and a `CatalogService` with its scheduler, every wait, clock and stop on one
+    `SyncTime` (no real waiting). The scheduler's thread isn't started: a test calls `tick()`."""
+    db = make_db()
+    sites = Sites()
+    secrets = MemorySecretStore()
+    clock = SyncTime(start)
+    stores = StoreService(open_connection=db.connect, secrets=secrets, transport=httpx.MockTransport(sites))
+    changes: list[tuple[int, list[Any]]] = []
+    service = CatalogService(
+        db.connect,
+        store_clients(secrets, sites.transport, monotonic=clock.monotonic),
+        now=clock.wall,
+        monotonic=clock.monotonic,
+        make_stop=lambda: clock,
+        slots=stores.slots,
+        local=local,
+        on_changes=lambda store_id, found: changes.append((store_id, found)),
+    )
+    return SyncRig(db, sites, secrets, service, clock, stores, changes)
