@@ -20,12 +20,15 @@ import hashlib
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
+from shelfsync.catalog.changes import TRASH, Change, ChangeSource, ProductState, detect, state_of
 from shelfsync.catalog.linking import KnownLink, Placed, plan_links
 from shelfsync.catalog.model import Download, Product, downloads_json, meta_json
 from shelfsync.catalog.slots import SlotRef, StoreDownloads, plan_item_slots
+from shelfsync.catalog.watermark import next_watermark
 
 
 def address_sha256(url: str) -> str:
@@ -72,11 +75,21 @@ class SyncStateRow:
     auto_paused_at: str | None
     auto_pause_reason: str | None
     address_sha256: str | None
+    # m3.2: the incremental's watermark and its last run (`inc_reason` None: it worked, or none ran)
+    watermark_gmt: str | None = None
+    inc_started_at: str | None = None
+    inc_finished_at: str | None = None
+    inc_reason: str | None = None
+    inc_http_status: int | None = None
+    inc_rows: int | None = None
+    inc_changed: int | None = None
+    inc_last_ok_at: str | None = None
 
 
 _STATE_COLUMNS = (
     "store_id, read_started_at, read_finished_at, read_reason, read_http_status, read_pages, read_rows, read_total, "
-    "last_ok_at, failures_in_row, auto_paused_at, auto_pause_reason, address_sha256"
+    "last_ok_at, failures_in_row, auto_paused_at, auto_pause_reason, address_sha256, watermark_gmt, inc_started_at, "
+    "inc_finished_at, inc_reason, inc_http_status, inc_rows, inc_changed, inc_last_ok_at"
 )
 
 
@@ -234,6 +247,25 @@ def _slots_of(connection: sqlite3.Connection, item_ids: Iterable[int]) -> dict[i
     return found
 
 
+def guard_store(connection: sqlite3.Connection, store_id: int, read_url: str) -> str:
+    """Inside a save's transaction: the store's address, which must still be `read_url` (`AddressMoved`), on a store
+    that isn't removed (`StoreRemoved`)."""
+    row = connection.execute("SELECT url, removed_at FROM store WHERE id = ?", (store_id,)).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError("no such store")
+    url, removed_at = row
+    if removed_at is not None:
+        raise StoreRemoved
+    if url != read_url:
+        raise AddressMoved
+    return str(url)
+
+
+def _moment(at: str) -> datetime:
+    """A time this module was given (`clock.to_iso`) as an aware datetime."""
+    return datetime.fromisoformat(at)
+
+
 def save_store_read(
     connection: sqlite3.Connection,
     store_id: int,
@@ -250,20 +282,15 @@ def save_store_read(
     saved) when the store has been removed."""
     _begin(connection)
     try:
-        row = connection.execute("SELECT url, removed_at FROM store WHERE id = ?", (store_id,)).fetchone()
-        if row is None:
-            raise sqlite3.IntegrityError("no such store")
-        url, removed_at = row
-        if removed_at is not None:
-            raise StoreRemoved
-        if url != read_url:
-            raise AddressMoved
+        url = guard_store(connection, store_id, read_url)
         summary = _save(connection, store_id, products, at)
         _ensure_state(connection, store_id)
+        # m3.2: the first incremental after a full read starts from the largest store date this read saved.
+        watermark = next_watermark(None, products, _moment(at))
         connection.execute(
             "UPDATE sync_state SET read_finished_at = ?, read_reason = NULL, read_http_status = NULL, read_pages = ?, "
-            "read_rows = ?, read_total = ?, last_ok_at = ?, address_sha256 = ? WHERE store_id = ?",
-            (at, pages, len(products), total, at, address_sha256(url), store_id),
+            "read_rows = ?, read_total = ?, last_ok_at = ?, address_sha256 = ?, watermark_gmt = ? WHERE store_id = ?",
+            (at, pages, len(products), total, at, address_sha256(url), watermark, store_id),
         )
         connection.execute("COMMIT")
     except BaseException:
@@ -308,29 +335,7 @@ def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Prod
         [(at, store_id, wc_id) for wc_id in sorted(gone)],
     )
 
-    # An item that only removed stores hold gives up its canonical slug, so a live store's product with that slug
-    # can take it (Lead (proposed), m3.1 review 1).
-    connection.execute(
-        "UPDATE catalog_item SET canonical_slug = NULL WHERE canonical_slug IS NOT NULL AND id NOT IN "
-        "(SELECT l.catalog_item_id FROM item_link l JOIN store s ON s.id = l.store_id WHERE s.removed_at IS NULL)"
-    )
-    plan = plan_links(store_id, products, known_links(connection), _taken_slugs(connection))
-    new_ids: list[int] = []
-    for item in plan.new_items:
-        cursor = connection.execute(
-            "INSERT INTO catalog_item (canonical_slug, title, type, created_at) VALUES (?, ?, ?, ?)",
-            (item.canonical_slug, item.title, item.type, at),
-        )
-        if cursor.lastrowid is None:  # an INSERT always has one
-            raise sqlite3.DatabaseError("the insert gave no row id")
-        new_ids.append(cursor.lastrowid)
-    connection.executemany(
-        "INSERT INTO item_link (catalog_item_id, store_id, wc_id) VALUES (?, ?, ?)",
-        [
-            (link.item_id if link.item_id is not None else new_ids[link.new_item or 0], store_id, link.wc_id)
-            for link in plan.links
-        ],
-    )
+    new_items, new_links = _link_new(connection, store_id, products, at)
 
     item_of = {
         wc_id: item_id
@@ -356,9 +361,36 @@ def _save(connection: sqlite3.Connection, store_id: int, products: Sequence[Prod
         )
     }
     main_by_single, unslotted = _plan_slots(connection, touched, store_id)
-    return SaveSummary(
-        len(products), len(gone), len(plan.new_items), len(plan.links), main_by_single, unslotted, duplicates
+    return SaveSummary(len(products), len(gone), new_items, new_links, main_by_single, unslotted, duplicates)
+
+
+def _link_new(connection: sqlite3.Connection, store_id: int, products: Sequence[Product], at: str) -> tuple[int, int]:
+    """Link the products not linked yet (`catalog.linking.plan_links`; their `store_product` rows must exist). Returns
+    (new items, new links)."""
+    # An item that only removed stores hold gives up its canonical slug, so a live store's product with that slug
+    # can take it (Lead (proposed), m3.1 review 1).
+    connection.execute(
+        "UPDATE catalog_item SET canonical_slug = NULL WHERE canonical_slug IS NOT NULL AND id NOT IN "
+        "(SELECT l.catalog_item_id FROM item_link l JOIN store s ON s.id = l.store_id WHERE s.removed_at IS NULL)"
     )
+    plan = plan_links(store_id, products, known_links(connection), _taken_slugs(connection))
+    new_ids: list[int] = []
+    for item in plan.new_items:
+        cursor = connection.execute(
+            "INSERT INTO catalog_item (canonical_slug, title, type, created_at) VALUES (?, ?, ?, ?)",
+            (item.canonical_slug, item.title, item.type, at),
+        )
+        if cursor.lastrowid is None:  # an INSERT always has one
+            raise sqlite3.DatabaseError("the insert gave no row id")
+        new_ids.append(cursor.lastrowid)
+    connection.executemany(
+        "INSERT INTO item_link (catalog_item_id, store_id, wc_id) VALUES (?, ?, ?)",
+        [
+            (link.item_id if link.item_id is not None else new_ids[link.new_item or 0], store_id, link.wc_id)
+            for link in plan.links
+        ],
+    )
+    return len(plan.new_items), len(plan.links)
 
 
 def _present_downloads(connection: sqlite3.Connection, items: set[int]) -> dict[int, list[StoreDownloads]]:
@@ -451,6 +483,242 @@ def _refresh_titles(connection: sqlite3.Connection, items: Iterable[int]) -> Non
         "UPDATE catalog_item SET title = ?, type = ? WHERE id = ? AND (title <> ? OR type <> ?)",
         [(title, kind, item_id, title, kind) for item_id, (_, _, title, kind) in best.items()],
     )
+
+
+# ---- m3.2: the incremental save and the snapshot's part of the catalog ---------------------------------------------
+#
+# Both bring a store's current state into the catalog and report what changed (`catalog.changes`), in the caller's one
+# transaction, with `apply_products`:
+# - a product already in the catalog takes its new slug, type, status, date, downloads and meta (and, from an
+#   incremental, its title: a snapshot doesn't ask for titles). One with no downloads now is kept with them emptied
+#   (m3.3 reports it; it stays present until a full read, which reads downloadable products only, marks it gone). One
+#   in the trash now is gone (`gone_at`), as a full read would have it. One that has downloads is present again.
+# - a product not in the catalog is linked as a full read would (CAT-02) when it comes from an incremental, has
+#   downloads and isn't in the trash; any other is ignored (the snapshot leaves new products to the incrementals).
+# - a snapshot's listing holds every product of the store, trash included, so a catalog product it doesn't hold is
+#   gone (`gone_at`) and reported deleted; reported once: when it was present, or was seen on the store's previous
+#   snapshot night.
+# A row is written only when something in it differs, so the same read saved twice changes nothing.
+
+
+@dataclass(frozen=True)
+class ApplySummary:
+    """What an incremental save or a snapshot did to one store's catalog rows."""
+
+    rows: int  # products the read returned
+    updated: int  # catalog rows that changed (deleted ones included)
+    added: int  # products added to the catalog (an incremental's new downloadable products)
+    new_items: int
+    new_links: int
+    ignored: int  # products neither in the catalog nor added
+    gone: int  # catalog rows gone now that weren't (trashed, or missing from a snapshot)
+    changes: tuple[Change, ...]
+
+
+@dataclass(frozen=True)
+class _Stored:
+    slug: str
+    title: str
+    type: str
+    status: str
+    modified_gmt: str | None
+    downloads_json: str
+    meta_json: str
+    gone_at: str | None
+
+    def state(self, wc_id: int) -> ProductState:
+        downloads = tuple(Download(d["id"], d["name"], d["file"]) for d in json.loads(self.downloads_json))
+        return ProductState(wc_id, self.slug, self.status, self.type, downloads)
+
+
+def _stored(connection: sqlite3.Connection, store_id: int) -> dict[int, _Stored]:
+    rows = connection.execute(
+        "SELECT wc_id, slug, title, type, status, modified_gmt, downloads_json, meta_json, gone_at FROM store_product "
+        "WHERE store_id = ?",
+        (store_id,),
+    )
+    return {row[0]: _Stored(*row[1:]) for row in rows}
+
+
+def _gone_at(product: Product, old: _Stored, at: str) -> str | None:
+    if product.status == TRASH:
+        return old.gone_at or at
+    return None if product.downloads else old.gone_at
+
+
+def apply_products(
+    connection: sqlite3.Connection,
+    store_id: int,
+    products: Sequence[Product],
+    *,
+    at: str,
+    source: ChangeSource,
+    seen_last_night: Collection[int] = (),
+) -> ApplySummary:
+    """Bring `products` into the store's catalog rows, in the caller's open transaction (the section text says how).
+    `seen_last_night` (a snapshot only): the products the store's previous snapshot night saw."""
+    snapshot = source == "snapshot"
+    stored = _stored(connection, store_id)
+    updates: list[tuple[object, ...]] = []
+    inserts: list[Product] = []
+    ignored = gone = 0
+    touched: set[int] = set()
+    before: dict[int, ProductState] = {}
+    after: dict[int, ProductState] = {}
+    for product in sorted(products, key=lambda row: row.wc_id):
+        old = stored.get(product.wc_id)
+        if old is None:
+            if snapshot or not product.downloads or product.status == TRASH:
+                ignored += 1
+            else:
+                inserts.append(product)
+            continue
+        new = _Stored(
+            product.slug,
+            old.title if snapshot else product.title,
+            product.type,
+            product.status,
+            product.modified_gmt,
+            downloads_json(product.downloads),
+            meta_json(product.meta),
+            _gone_at(product, old, at),
+        )
+        if new != old:
+            touched.add(product.wc_id)
+            gone += old.gone_at is None and new.gone_at is not None
+            updates.append(
+                (
+                    new.slug,
+                    new.title,
+                    new.type,
+                    new.status,
+                    new.modified_gmt,
+                    new.downloads_json,
+                    new.meta_json,
+                    at,
+                    new.gone_at,
+                    store_id,
+                    product.wc_id,
+                )
+            )
+        before[product.wc_id] = old.state(product.wc_id)
+        after[product.wc_id] = state_of(product)
+    deleted: list[int] = []
+    missing_gone: list[tuple[str, int, int]] = []
+    if snapshot:
+        read = {product.wc_id for product in products}
+        last = set(seen_last_night)
+        for wc_id in sorted(set(stored) - read):
+            old = stored[wc_id]
+            if old.gone_at is None or wc_id in last:
+                deleted.append(wc_id)
+                before[wc_id] = old.state(wc_id)
+            if old.gone_at is None:
+                missing_gone.append((at, store_id, wc_id))
+                touched.add(wc_id)
+                gone += 1
+    connection.executemany(
+        "UPDATE store_product SET slug = ?, title = ?, type = ?, status = ?, modified_gmt = ?, downloads_json = ?, "
+        "meta_json = ?, seen_at = ?, gone_at = ? WHERE store_id = ? AND wc_id = ?",
+        updates,
+    )
+    connection.executemany("UPDATE store_product SET gone_at = ? WHERE store_id = ? AND wc_id = ?", missing_gone)
+    connection.executemany(
+        "INSERT INTO store_product (store_id, wc_id, slug, title, type, status, modified_gmt, downloads_json, "
+        "meta_json, seen_at, gone_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        [
+            (
+                store_id,
+                product.wc_id,
+                product.slug,
+                product.title,
+                product.type,
+                product.status,
+                product.modified_gmt,
+                downloads_json(product.downloads),
+                meta_json(product.meta),
+                at,
+            )
+            for product in inserts
+        ],
+    )
+    new_items, new_links = _link_new(connection, store_id, inserts, at) if inserts else (0, 0)
+    touched.update(product.wc_id for product in inserts)
+    if touched:
+        items = {
+            item_id
+            for item_id, wc_id in connection.execute(
+                "SELECT catalog_item_id, wc_id FROM item_link WHERE store_id = ?", (store_id,)
+            )
+            if wc_id in touched
+        }
+        _refresh_titles(connection, items)
+        _plan_slots(connection, items, store_id)
+    changes = detect(store_id, before, after, source, deleted)
+    return ApplySummary(
+        len(products),
+        len(updates) + len(missing_gone),
+        len(inserts),
+        new_items,
+        new_links,
+        ignored,
+        gone,
+        tuple(changes),
+    )
+
+
+def record_incremental_started(connection: sqlite3.Connection, store_id: int, at: str) -> None:
+    _begin(connection)
+    try:
+        _ensure_state(connection, store_id)
+        connection.execute("UPDATE sync_state SET inc_started_at = ? WHERE store_id = ?", (at, store_id))
+        connection.execute("COMMIT")
+    except BaseException:
+        _rollback(connection)
+        raise
+
+
+def record_incremental_failed(
+    connection: sqlite3.Connection, store_id: int, *, reason: str, http_status: int | None, at: str
+) -> None:
+    """An incremental that didn't work: its outcome only. The catalog and the watermark stay as they were."""
+    _begin(connection)
+    try:
+        _ensure_state(connection, store_id)
+        connection.execute(
+            "UPDATE sync_state SET inc_finished_at = ?, inc_reason = ?, inc_http_status = ?, inc_rows = 0, "
+            "inc_changed = 0 WHERE store_id = ?",
+            (at, reason, http_status, store_id),
+        )
+        connection.execute("COMMIT")
+    except BaseException:
+        _rollback(connection)
+        raise
+
+
+def save_incremental(
+    connection: sqlite3.Connection, store_id: int, products: Sequence[Product], *, at: str, read_url: str
+) -> ApplySummary:
+    """Save one store's incremental that fully worked, in one transaction: its products (`apply_products`), its
+    outcome, and the watermark moved to the largest store date it returned (never back, never from the PC's clock).
+    `AddressMoved` or `StoreRemoved` (and nothing saved) as for a full read."""
+    _begin(connection)
+    try:
+        guard_store(connection, store_id, read_url)
+        state = sync_state(connection, store_id)
+        summary = apply_products(connection, store_id, products, at=at, source="incremental")
+        watermark = next_watermark(state.watermark_gmt if state is not None else None, products, _moment(at))
+        _ensure_state(connection, store_id)
+        connection.execute(
+            "UPDATE sync_state SET inc_finished_at = ?, inc_reason = NULL, inc_http_status = NULL, inc_rows = ?, "
+            "inc_changed = ?, inc_last_ok_at = ?, watermark_gmt = ? WHERE store_id = ?",
+            (at, len(products), summary.updated + summary.added, at, watermark, store_id),
+        )
+        connection.execute("COMMIT")
+    except BaseException:
+        _rollback(connection)
+        raise
+    return summary
 
 
 # ---- what the API reads ------------------------------------------------------------------------------------------
